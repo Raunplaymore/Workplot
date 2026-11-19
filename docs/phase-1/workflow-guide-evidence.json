@@ -1,0 +1,10 @@
+{
+  "cliVersion": "0.166.0",
+  "waitingResults": ["draft.md", "critique.md"],
+  "completedResults": ["draft.md", "critique.md", "revision.md"],
+  "verified": [
+    "saved definition",
+    "approval gate",
+    "two input documents and global criterion in final result"
+  ]
+}

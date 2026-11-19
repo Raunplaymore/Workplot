@@ -1,0 +1,33 @@
+{
+  "name": "모퉁이서점 안내문 · Codex 승인 검증",
+  "input": "가상 매장 모퉁이서점. 주소는 느티로 12, 영업시간은 10:00–18:00, 취급 품목은 독립출판물. 이 네 가지가 전체 자료입니다.",
+  "steps": [
+    {
+      "id": "draft",
+      "title": "초안 작성",
+      "position": { "x": 0, "y": 90 },
+      "kind": "task",
+      "instructions": "제공된 네 사실을 모두 담아 한국어 목록 형식의 초안을 작성하세요. 제목은 \"매장 정보 초안\"입니다.",
+      "agent": "codex",
+      "skill": "source-check"
+    },
+    {
+      "id": "review",
+      "title": "사용자 검토",
+      "position": { "x": 240, "y": 90 },
+      "kind": "review"
+    },
+    {
+      "id": "revision",
+      "title": "수정본 작성",
+      "position": { "x": 480, "y": 90 },
+      "kind": "task",
+      "instructions": "승인된 초안을 바탕으로 제목을 \"방문 안내\"로 바꾸고 목록을 자연스러운 한 문단으로 고쳐 쓰세요. 모퉁이서점, 느티로 12, 10:00–18:00, 독립출판물 표기를 보존하세요.",
+      "agent": "codex"
+    }
+  ],
+  "links": [
+    { "from": "draft", "to": "review" },
+    { "from": "review", "to": "revision" }
+  ]
+}

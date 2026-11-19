@@ -1,0 +1,882 @@
+<!doctype html>
+<html lang="ko">
+  <meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  />
+  <title>문서 작성 흐름 · 워크플로 스튜디오 설계 시안</title>
+  <style>
+    :root {
+      font-family:
+        -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo',
+        'Malgun Gothic', sans-serif;
+      color: #23372f;
+      background: #fcfdf9;
+      --line: #d4ded5;
+      --green: #285740;
+      --ink: #23372f;
+      --sub: #56675f;
+      --wash: #f1f5ef;
+      --gold: #79521c;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+    }
+    button,
+    textarea {
+      font: inherit;
+      color: inherit;
+    }
+    button,
+    summary {
+      cursor: pointer;
+    }
+    button {
+      background: white;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      min-height: 38px;
+      padding: 7px 12px;
+      font-weight: 600;
+    }
+    button:hover {
+      border-color: var(--green);
+    }
+    button:focus-visible,
+    summary:focus-visible,
+    textarea:focus-visible {
+      outline: 3px solid #277b67;
+      outline-offset: 2px;
+    }
+    button:disabled {
+      opacity: 0.55;
+      cursor: default;
+    }
+    button.main {
+      background: var(--green);
+      color: white;
+      border-color: var(--green);
+    }
+    button[aria-pressed='true'] {
+      background: #e0ece1;
+      border-color: #68967b;
+    }
+    h1,
+    h2,
+    h3,
+    p {
+      margin: 0;
+    }
+    h1 {
+      font-size: 18px;
+    }
+    h2 {
+      font-size: 24px;
+      letter-spacing: -0.045em;
+    }
+    h3 {
+      font-size: 16px;
+    }
+    p {
+      line-height: 1.6;
+    }
+    small,
+    .sub {
+      color: var(--sub);
+      font-size: 13px;
+    }
+    code,
+    .mono {
+      font:
+        12px ui-monospace,
+        SFMono-Regular,
+        monospace;
+    }
+    svg.ico {
+      width: 20px;
+      height: 20px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.7;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .symbols {
+      position: absolute;
+      width: 0;
+      height: 0;
+      overflow: hidden;
+    }
+    #app {
+      height: 100vh;
+      height: 100dvh;
+      display: grid;
+      grid-template-columns: 88px minmax(0, 1fr);
+      grid-template-rows: 62px minmax(0, 1fr) 30px;
+    }
+    nav {
+      grid-row: 1/-1;
+      background: #18392e;
+      color: white;
+      display: flex;
+      align-items: center;
+      flex-direction: column;
+      gap: 7px;
+      padding: 13px 6px;
+    }
+    .brand {
+      display: grid;
+      place-items: center;
+      background: #d1ec9a;
+      color: #173b2d;
+      border-radius: 10px;
+      width: 35px;
+      height: 35px;
+      margin-bottom: 28px;
+    }
+    .brand .ico {
+      width: 23px;
+      height: 23px;
+    }
+    nav button {
+      width: 100%;
+      min-height: 57px;
+      background: transparent;
+      color: #d5e2d8;
+      border: 0;
+      display: grid;
+      gap: 4px;
+      justify-items: center;
+      place-content: center;
+      font-size: 12px;
+    }
+    nav button[aria-pressed='true'] {
+      background: #335746;
+      color: white;
+    }
+    header,
+    footer,
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    header {
+      justify-content: space-between;
+      padding: 0 24px;
+      border-bottom: 1px solid var(--line);
+      background: white;
+    }
+    .crumb {
+      color: var(--sub);
+      font-size: 13px;
+    }
+    .tag,
+    .status {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 4px;
+      padding: 4px 7px;
+      background: #edf2ed;
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .status {
+      background: #f7eccf;
+      color: #694916;
+    }
+    .scope {
+      grid-column: 2;
+      min-width: 0;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) clamp(270px, 23vw, 344px);
+    }
+    footer {
+      grid-column: 2;
+      border-top: 1px solid var(--line);
+      justify-content: space-between;
+      padding: 0 17px;
+      font-size: 11px;
+      color: var(--sub);
+      background: #f9fbf8;
+    }
+    .canvas,
+    .board,
+    .paper {
+      position: relative;
+      overflow: auto;
+      min-width: 0;
+      min-height: 0;
+    }
+    .canvas {
+      display: flex;
+      flex-direction: column;
+      background-color: #f1f5ed;
+      background-image: radial-gradient(#ccd7c8 0.9px, transparent 0.9px);
+      background-size: 17px 17px;
+    }
+    .board,
+    .paper {
+      background: #f9fbf7;
+      padding: clamp(18px, 3vw, 48px);
+    }
+    .stagehead {
+      padding: 26px 28px 12px;
+    }
+    .stagehead .row {
+      margin-bottom: 6px;
+    }
+    .stagehead small {
+      font-weight: 650;
+      color: #47634e;
+    }
+    .nodes {
+      display: grid;
+      grid-template-columns:
+        minmax(0, 1fr) minmax(24px, 0.33fr) minmax(0, 1fr)
+        minmax(24px, 0.33fr) minmax(0, 1fr);
+      align-items: center;
+      width: 100%;
+      max-width: 1080px;
+      margin: auto;
+      min-height: 225px;
+      padding: 25px clamp(15px, 3vw, 52px);
+    }
+    .node {
+      position: relative;
+      display: grid;
+      gap: 12px;
+      text-align: left;
+      align-content: center;
+      padding: 14px;
+      min-height: 132px;
+      background: #fffefa;
+      border-radius: 9px;
+      border: 1px solid #a2b2a4;
+      box-shadow: 0 3px 0 #23372f12;
+    }
+    .node[aria-pressed='true'] {
+      background: #fffefa;
+      border: 2px solid var(--green);
+      box-shadow: 0 0 0 4px #39694d20;
+      padding: 13px;
+    }
+    .node:before,
+    .node:after {
+      position: absolute;
+      content: '';
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      border: 1px solid #4f745a;
+      background: white;
+      top: 50%;
+      transform: translateY(-50%);
+    }
+    .node:before {
+      left: -5px;
+    }
+    .node:after {
+      right: -5px;
+    }
+    .node:first-child:before,
+    .node:last-child:after {
+      display: none;
+    }
+    .node .kind {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--sub);
+    }
+    .glyph {
+      display: inline-grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      background: #e6efe5;
+      color: #285740;
+      border-radius: 5px;
+    }
+    .gate .glyph {
+      background: #f7ebcd;
+      color: #795523;
+    }
+    .node strong {
+      font-size: clamp(14px, 1.4vw, 21px);
+      letter-spacing: -0.045em;
+    }
+    .node code {
+      color: #52645a;
+      font-size: 11px;
+    }
+    .wire {
+      height: 2px;
+      background: #698471;
+      position: relative;
+    }
+    .wire:after {
+      content: '';
+      position: absolute;
+      right: 5px;
+      top: -3px;
+      width: 6px;
+      height: 6px;
+      border-right: 2px solid #698471;
+      border-top: 2px solid #698471;
+      transform: rotate(45deg);
+    }
+    .guidebox {
+      margin: 18px clamp(15px, 3vw, 52px) 28px;
+      background: #fcfdf8;
+      border: 1px solid #c8d7c5;
+      border-radius: 8px;
+      padding: 16px 18px;
+    }
+    .guidebox summary {
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .guidebox p {
+      font-size: 14px;
+      margin-top: 9px;
+    }
+    aside {
+      border-left: 1px solid var(--line);
+      background: white;
+      overflow: auto;
+      padding: 24px 21px;
+      min-width: 0;
+    }
+    aside h2 {
+      font-size: 21px;
+      margin: 10px 0 18px;
+    }
+    aside h3 {
+      margin: 22px 0 8px;
+    }
+    aside p,
+    article p,
+    li {
+      font-size: 14px;
+    }
+    aside dl {
+      margin: 0;
+      display: grid;
+      gap: 0;
+    }
+    dl div {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+      border-bottom: 1px solid var(--line);
+      padding: 12px 0;
+      font-size: 13px;
+    }
+    dt {
+      color: var(--sub);
+    }
+    dd {
+      margin: 0;
+      font-weight: 650;
+    }
+    label {
+      display: grid;
+      gap: 8px;
+      margin: 17px 0 8px;
+      font-size: 13px;
+      font-weight: 650;
+    }
+    textarea {
+      width: 100%;
+      background: #fafcf8;
+      border: 1px solid #a7b8ab;
+      border-radius: 5px;
+      min-height: 98px;
+      padding: 10px;
+      font-size: 14px;
+      line-height: 1.6;
+      resize: vertical;
+    }
+    .actions {
+      display: flex;
+      gap: 7px;
+      flex-wrap: wrap;
+      margin-top: 14px;
+    }
+    .actions button {
+      font-size: 13px;
+    }
+    .board h2,
+    .paper h2 {
+      margin: 7px 0 22px;
+    }
+    .runrow {
+      display: grid;
+      gap: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: white;
+      padding: 18px;
+    }
+    .runrow .row {
+      justify-content: space-between;
+    }
+    .runrow button {
+      justify-self: start;
+    }
+    .paper article {
+      max-width: 70ch;
+      border: 1px solid var(--line);
+      background: white;
+      padding: clamp(18px, 3vw, 38px);
+      margin: 0 auto;
+    }
+    .paper article h3 {
+      margin: 19px 0 7px;
+    }
+    .paper article li {
+      line-height: 1.7;
+    }
+    .paper article ul {
+      padding-left: 20px;
+    }
+    .log {
+      padding-left: 20px;
+      color: var(--sub);
+      line-height: 1.8;
+    }
+    .notice {
+      min-height: 22px;
+      font-size: 12px;
+      color: var(--green);
+    }
+    [hidden] {
+      display: none !important;
+    }
+    @media (max-width: 1080px) {
+      #app {
+        grid-template-columns: 72px minmax(0, 1fr);
+      }
+      .scope {
+        grid-template-columns: minmax(0, 1fr) 255px;
+      }
+      .nodes {
+        padding-inline: 14px;
+        grid-template-columns: minmax(0, 1fr) 19px minmax(0, 1fr) 19px minmax(
+            0,
+            1fr
+          );
+      }
+      .node {
+        padding: 11px;
+      }
+      .node[aria-pressed='true'] {
+        padding: 10px;
+      }
+      aside {
+        padding: 19px 15px;
+      }
+    }
+    @media (max-width: 800px) {
+      #app {
+        grid-template-columns: 1fr;
+        grid-template-rows: 49px 47px minmax(0, 1fr) 25px;
+      }
+      nav {
+        grid-row: 1;
+        flex-direction: row;
+        padding: 0 12px;
+        gap: 8px;
+      }
+      .brand {
+        margin: 0 8px 0 0;
+        width: 30px;
+        height: 30px;
+      }
+      nav button {
+        width: auto;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        min-height: 38px;
+      }
+      header {
+        grid-row: 2;
+        padding: 0 14px;
+      }
+      .crumb {
+        display: none;
+      }
+      h1 {
+        font-size: 16px;
+      }
+      .scope {
+        grid-column: 1;
+        grid-row: 3;
+        grid-template-columns: 1fr;
+        grid-template-rows: minmax(172px, 44%) minmax(0, 1fr);
+      }
+      .scope.reviewing {
+        grid-template-rows: minmax(180px, 55%) minmax(0, 1fr);
+      }
+      .scope.monitor {
+        display: block;
+        overflow: auto;
+      }
+      .monitor .board {
+        min-height: 100%;
+      }
+      .monitor aside {
+        display: none;
+      }
+      aside {
+        border-left: 0;
+        border-top: 1px solid var(--line);
+        padding: 15px 17px;
+      }
+      .stagehead {
+        padding: 12px 14px 4px;
+      }
+      .stagehead h2 {
+        font-size: 18px;
+      }
+      .stagehead .row {
+        margin: 0;
+      }
+      .nodes {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        min-height: 0;
+        padding: 8px 16px;
+        margin: 0;
+      }
+      .node,
+      .node[aria-pressed='true'] {
+        display: flex;
+        align-items: center;
+        min-height: 44px;
+        gap: 8px;
+        padding: 6px 9px;
+      }
+      .node code {
+        margin-left: auto;
+      }
+      .node .kind {
+        font-size: 0;
+        gap: 0;
+      }
+      .node .glyph {
+        width: 24px;
+        height: 24px;
+      }
+      .node:before,
+      .node:after,
+      .wire:after {
+        display: none;
+      }
+      .wire {
+        width: 2px;
+        height: 8px;
+        margin-left: 22px;
+        flex: none;
+      }
+      .guidebox {
+        margin: 4px 16px 12px;
+        padding: 8px 12px;
+      }
+      footer {
+        grid-column: 1;
+        grid-row: 4;
+        font-size: 10px;
+      }
+      .board,
+      .paper {
+        padding: 16px;
+      }
+      aside h2 {
+        margin: 5px 0 10px;
+      }
+    }
+  </style>
+  <svg class="symbols" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <symbol id="flow" viewBox="0 0 24 24">
+        <rect x="2" y="3" width="7" height="7" rx="1.6" />
+        <rect x="15" y="14" width="7" height="7" rx="1.6" />
+        <path d="M9 6h6a3 3 0 013 3v5M5.5 10v6a2 2 0 002 2H15" />
+      </symbol>
+      <symbol id="list" viewBox="0 0 24 24">
+        <path d="M4 5h6v6H4zM14 5h6M14 10h6M4 15h6v5H4zM14 15h6M14 20h6" />
+      </symbol>
+      <symbol id="doc" viewBox="0 0 24 24">
+        <path d="M6 3h8l4 4v14H6zM13 3v5h5M9 12h6M9 16h5" />
+      </symbol>
+      <symbol id="person" viewBox="0 0 24 24">
+        <circle cx="12" cy="8" r="3.5" />
+        <path d="M5 20v-2a7 7 0 0114 0v2" />
+      </symbol>
+    </defs>
+  </svg>
+  <div id="app">
+    <nav aria-label="작업공간">
+      <span class="brand" aria-label="워크플로 스튜디오"
+        ><svg aria-hidden="true" class="ico"><use href="#flow" /></svg
+      ></span>
+      <button id="designNav" aria-pressed="true">
+        <svg class="ico" aria-hidden="true"><use href="#flow" /></svg>흐름 설계
+      </button>
+      <button id="runsNav" aria-pressed="false">
+        <svg class="ico" aria-hidden="true"><use href="#list" /></svg>실행 현황
+      </button>
+    </nav>
+    <header>
+      <div class="row">
+        <span class="crumb">내 작업공간　/</span>
+        <h1 id="title">문서 작성 흐름</h1>
+      </div>
+      <span class="tag" id="version">설계 v3</span>
+    </header>
+    <main class="scope" id="scope">
+      <section id="canvas" class="canvas" aria-labelledby="canvasTitle">
+        <div class="stagehead">
+          <div class="row"><small>와이어 편집기</small></div>
+          <h2 id="canvasTitle">문서 작성 흐름</h2>
+        </div>
+        <div class="nodes" aria-label="실행 순서"></div>
+        <details class="guidebox">
+          <summary>업무 설계서</summary>
+          <p>
+            입력 자료로 초안을 작성합니다. 사용자가 초안을 읽고 승인하면 Codex가
+            승인된 문서를 바탕으로 수정본을 작성합니다.
+          </p>
+        </details>
+      </section>
+      <section class="board" id="board" hidden aria-labelledby="boardTitle">
+        <small>대시보드</small>
+        <h2 id="boardTitle">실행 현황</h2>
+        <div class="runrow">
+          <div class="row">
+            <strong>문서 작성 흐름</strong
+            ><span class="status runStatus"></span>
+          </div>
+          <small>실행 #018 · v3 · Codex</small
+          ><button id="openRun" class="main">실행 열기</button>
+        </div>
+      </section>
+      <section class="paper" id="paper" hidden aria-labelledby="paperTitle">
+        <small>실행 #018　/　검토 문서</small>
+        <h2 id="paperTitle">사용자 검토</h2>
+        <div id="documentArea"></div>
+      </section>
+      <aside id="inspector" aria-label="선택 항목 상세"></aside>
+    </main>
+    <footer>
+      <span>설계 시안 · 예시 데이터</span
+      ><span id="footState" aria-live="polite">3개 단계 · 2개 연결</span>
+    </footer>
+  </div>
+  <script>
+    const byId = (id) => document.getElementById(id);
+    const steps = [
+      {
+        title: '초안 작성',
+        role: 'Codex',
+        input: '입력 자료',
+        file: 'draft.md',
+        prompt:
+          '입력 자료에서 매장 이름, 주소, 영업시간, 취급 품목을 찾아 방문 안내 초안을 작성하세요.',
+      },
+      {
+        title: '사용자 검토',
+        role: '사용자',
+        input: 'draft.md',
+        file: '승인 후 계속',
+        prompt: '초안의 범위와 완료 기준을 확인한 뒤 승인하거나 거절하세요.',
+      },
+      {
+        title: '수정본 작성',
+        role: 'Codex',
+        input: '승인한 draft.md',
+        file: 'revised.md',
+        prompt:
+          '승인된 초안을 바탕으로 표현과 구성을 다듬고 수정본을 작성하세요.',
+      },
+    ];
+    const edits = steps.map((s) => s.prompt);
+    let selected = 0,
+      view = 'design',
+      opened = false,
+      decision = '',
+      version = 3;
+    function icon(name) {
+      return (
+        '<svg class="ico" aria-hidden="true"><use href="#' + name + '"/></svg>'
+      );
+    }
+    const nodes = document.querySelector('.nodes');
+    steps.forEach((step, i) => {
+      if (i) {
+        const edge = document.createElement('span');
+        edge.className = 'wire';
+        edge.setAttribute('aria-hidden', 'true');
+        nodes.append(edge);
+      }
+      const node = document.createElement('button');
+      node.className = 'node' + (i === 1 ? ' gate' : '');
+      node.innerHTML =
+        '<span class="kind"><span class="glyph">' +
+        icon(i === 1 ? 'person' : 'doc') +
+        '</span>' +
+        step.role +
+        '</span><strong>' +
+        step.title +
+        '</strong><code>' +
+        step.file +
+        '</code>';
+      node.onclick = () => {
+        selected = i;
+        render();
+      };
+      nodes.append(node);
+    });
+    const status = () =>
+      decision === 'accept'
+        ? '수정본 작성 중'
+        : decision === 'decline'
+          ? '중단'
+          : '사용자 검토 대기';
+    function render() {
+      byId('scope').className =
+        'scope ' + { design: '', runs: 'monitor', review: 'reviewing' }[view];
+      byId('canvas').hidden = view !== 'design';
+      byId('board').hidden = view !== 'runs';
+      byId('paper').hidden = view !== 'review';
+      byId('title').textContent =
+        view === 'runs' ? '실행 현황' : '문서 작성 흐름';
+      byId('version').textContent =
+        view === 'design' ? '설계 v' + version : '실행 #018 · v3';
+      byId('designNav').setAttribute('aria-pressed', String(view === 'design'));
+      byId('runsNav').setAttribute('aria-pressed', String(view !== 'design'));
+      byId('footState').textContent =
+        view === 'design' ? '3개 단계 · 2개 연결' : status();
+      const panel = byId('inspector');
+      if (view === 'design') {
+        const s = steps[selected];
+        nodes
+          .querySelectorAll('button')
+          .forEach((b, i) =>
+            b.setAttribute('aria-pressed', String(selected === i)),
+          );
+        panel.innerHTML =
+          '<small>단계 속성</small><h2>' +
+          s.title +
+          '</h2><dl><div><dt>담당</dt><dd>' +
+          s.role +
+          '</dd></div><div><dt>받는 자료</dt><dd>' +
+          s.input +
+          '</dd></div><div><dt>결과</dt><dd>' +
+          s.file +
+          '</dd></div></dl><label for="prompt">작업 지침</label><textarea id="prompt" maxlength="2000"></textarea><div class="actions"><button id="save" disabled>시안에 저장</button></div><p class="notice" id="note" role="status"></p>';
+        const field = byId('prompt'),
+          save = byId('save');
+        field.value = edits[selected];
+        if (selected === 1) {
+          field.readOnly = true;
+          panel.querySelector('label').textContent = '검토 안내';
+          save.hidden = true;
+        }
+        save.disabled = !field.value.trim() || field.value.trim() === s.prompt;
+        field.oninput = () => {
+          edits[selected] = field.value;
+          save.disabled =
+            !field.value.trim() || field.value.trim() === s.prompt;
+          byId('note').textContent = save.disabled ? '' : '저장 전 변경 사항';
+        };
+        save.onclick = () => {
+          s.prompt = field.value.trim();
+          version++;
+          byId('version').textContent = '설계 v' + version;
+          save.disabled = true;
+          byId('note').textContent = '이 시안에 저장했습니다.';
+        };
+      } else if (view === 'runs') {
+        document.querySelector('.runStatus').textContent = status();
+        panel.innerHTML =
+          '<small>선택한 실행</small><h2>문서 작성 흐름</h2><dl><div><dt>고정 버전</dt><dd>v3</dd></div><div><dt>현재 상태</dt><dd>' +
+          status() +
+          '</dd></div><div><dt>생성된 결과</dt><dd>draft.md</dd></div></dl>';
+      } else {
+        byId('documentArea').innerHTML = opened
+          ? '<article><code>draft.md</code><h3>모퉁이서점 방문 안내 초안</h3><p>모퉁이서점은 독립출판물을 소개하는 서점입니다.</p><h3>매장 정보</h3><ul><li>주소　느티로 12</li><li>영업시간　10:00–18:00</li><li>취급 품목　독립출판물</li></ul></article>'
+          : '<button class="main" id="read">검토할 문서 열기 · draft.md</button>';
+        panel.innerHTML =
+          '<small>실행 #018 · 고정 버전 v3</small><h2>' +
+          status() +
+          '</h2><p>' +
+          (decision === 'accept'
+            ? '수정 단계에 승인한 초안을 전달했습니다.'
+            : decision === 'decline'
+              ? '거절 결정을 기록했습니다. 초안은 결과 목록에 남습니다.'
+              : '초안의 매장 이름, 주소, 영업시간, 취급 품목을 확인하세요.') +
+          '</p>' +
+          (decision
+            ? ''
+            : '<div class="actions"><button id="approve" class="main" ' +
+              (opened ? '' : 'disabled') +
+              '>승인하고 계속</button><button id="decline">거절</button></div>') +
+          '<h3>실행 로그</h3><ol class="log"><li>초안 작성 완료 · draft.md</li><li>사용자 검토 대기</li>' +
+          (decision
+            ? '<li>' +
+              (decision === 'accept'
+                ? '승인 · 수정본 작성 시작'
+                : '거절 · 실행 중단') +
+              '</li>'
+            : '') +
+          '</ol>';
+        if (!opened)
+          byId('read').onclick = () => {
+            opened = true;
+            render();
+            focusHeading('paperTitle');
+          };
+        if (!decision) {
+          byId('approve').onclick = () => decide('accept');
+          byId('decline').onclick = () => decide('decline');
+        }
+      }
+    }
+    function focusHeading(id) {
+      const el = byId(id);
+      el.tabIndex = -1;
+      el.focus({ preventScroll: true });
+    }
+    function decide(value) {
+      decision = value;
+      render();
+      focusHeading('paperTitle');
+    }
+    function navigate(next) {
+      view = next;
+      render();
+      focusHeading(
+        next === 'design'
+          ? 'canvasTitle'
+          : next === 'runs'
+            ? 'boardTitle'
+            : 'paperTitle',
+      );
+    }
+    byId('designNav').onclick = () => navigate('design');
+    byId('runsNav').onclick = () => navigate('runs');
+    byId('openRun').onclick = () => navigate('review');
+    render();
+  </script>
+</html>

@@ -1,0 +1,22 @@
+[
+  {
+    "name": "browser edit save reload",
+    "version": 1,
+    "width": 390
+  },
+  {
+    "name": "real draft and review hold",
+    "status": "waiting",
+    "results": ["draft.md"],
+    "cli": "0.166.0"
+  },
+  {
+    "name": "real approval and revised file",
+    "files": ["draft.md", "revision.md"]
+  },
+  {
+    "name": "real CLI process stopped",
+    "status": "stopped",
+    "pidGone": true
+  }
+]
