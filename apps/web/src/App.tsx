@@ -8,11 +8,11 @@ export function App() {
   const [tools, setTools] = useState<ToolStatus[] | null>(null);
   const [toolsError, setToolsError] = useState(false);
   const toolsPanel = useRef<HTMLDetailsElement>(null);
-  const toolsSummary = useRef<HTMLElement>(null);
+  const toolsTitle = useRef<HTMLHeadingElement>(null);
 
   function showTools() {
     if (toolsPanel.current) toolsPanel.current.open = true;
-    toolsSummary.current?.focus({ preventScroll: true });
+    toolsTitle.current?.focus({ preventScroll: true });
   }
 
   useEffect(() => {
@@ -67,9 +67,11 @@ export function App() {
       <footer className={styles.footer}>
         <span role="status">{connection}</span>
         <details className={styles.tools} ref={toolsPanel}>
-          <summary ref={toolsSummary}>내 에이전트 도구</summary>
+          <summary>내 에이전트 도구</summary>
           <section aria-labelledby="tools-title">
-            <h2 id="tools-title">내 에이전트 도구</h2>
+            <h2 id="tools-title" ref={toolsTitle} tabIndex={-1}>
+              내 에이전트 도구
+            </h2>
             <p>
               설치를 먼저 확인하고, 실행할 때 Codex의 ChatGPT 로그인 상태를
               확인합니다.
