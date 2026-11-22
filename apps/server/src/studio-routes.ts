@@ -1,3 +1,4 @@
+import { inspectGit } from './git-target.js';
 import { choosePath, AttachmentError } from './request-files.js';
 import { z } from 'zod';
 import type { createDelegation } from './delegation.js';
@@ -122,6 +123,29 @@ export function registerStudioRoutes(
       }
     });
 
+    protectedRoutes.get('/git/targets', async () => store.bindings());
+    protectedRoutes.post('/git/inspect', async (request, reply) => {
+      const data = z
+        .strictObject({ path: z.string().trim().min(1).max(4096) })
+        .safeParse(request.body);
+      if (!data.success)
+        return reply.code(400).send({ error: 'invalid_request' });
+      return { location: await inspectGit(data.data.path) };
+    });
+    protectedRoutes.post('/git/targets', async (request, reply) => {
+      const data = z
+        .strictObject({
+          path: z.string().trim().min(1).max(4096),
+          service: z.string().trim().min(1).max(100),
+        })
+        .safeParse(request.body);
+      if (!data.success)
+        return reply.code(400).send({ error: 'invalid_request' });
+      const location = await inspectGit(data.data.path);
+      if (!location)
+        throw new AttachmentError('Git 저장소 안의 서비스 폴더를 선택하세요.');
+      return store.bind(data.data.service, location);
+    });
     protectedRoutes.post('/request-files/choose', async (request, reply) => {
       const params = z
         .strictObject({ kind: z.enum(['file', 'folder']) })
@@ -882,6 +906,9 @@ export function registerStudioRoutes(
           wait = view.gate && delegation.assessmentWait(id.data);
         return {
           ...view,
+          ...(view.summary.developmentTaskId && {
+            aiCalls: store.calls(id.data),
+          }),
           ...(wait &&
             wait.gate === view.gate?.id && { quotaRetryAt: wait.retry_at }),
           retention: history.info(id.data),

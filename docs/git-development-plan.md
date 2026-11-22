@@ -78,3 +78,13 @@ SQLite가 승인·실행·인계 이력을 보관하고 Git이 소스 내용과 
 - [실행 계약](../packages/contracts/src/workflows.ts) · [Codex 호출과 샌드박스](../apps/server/src/codex-runner.ts) · [첨부 사본](../apps/server/src/request-files.ts)
 - [자동 위임](../apps/server/src/delegation.ts) · [예약 실행](../apps/server/src/scheduler.ts) · [스킬 실행 진입점](../apps/server/src/workflow-skills.ts)
 - [기존 전체 QA 기록](../.local/qa-EosA3B/report.md) · [기존 마스터 통합 실증](../.local/master-integration-qa/live-hdlOXj/evidence.json) · [첨부·후속 세션 실증](../.local/qa-attachments-tOdVVD/report.json). 이 세 링크는 점검한 로컬 환경의 보관 자료다.
+
+## G0·G1 로컬 인수 결과 · 2026-11-22
+
+G0 기준 커밋은 `e07b0a34f94163fd545bcedb252c5730832f37bf`, 로컬 ref는 `refs/workplot/baselines/g0-e07b0a34f941`다. 이전 main을 부모로 삼아 별도 인덱스로 변경·미추적 소스 126개를 포함했다. 만들기 전후의 원래 인덱스 및 대상 파일 해시를 대조했다. 이 커밋의 깨끗한 복제본에서 잠금 파일로 설치한 뒤 빌드와 테스트 73개가 통과했다. 격리 DB에 흐름 정의를 넣고 Chromium으로 실행 목록·와이어 설계·라이브러리 첨부 입력을 확인했다.
+
+G1은 **내 워크플로 또는 와이어 편집기 → 개발 작업 실행 → 서비스 이름과 Git 폴더 등록 → 이 대상으로 실행** 순서다. 이전에 등록한 서비스는 목록에서 선택한다. 같은 원격의 다른 복제본과 한 저장소의 여러 서비스 폴더를 구분한다. 하위 폴더는 서비스 범위를 표시한다. 실행 시점의 SHA는 커밋된 기준을 가리키며 미커밋 변경 유무는 별도로 표시한다. 개발 작업은 현재 지정된 폴더에서 이뤄진다. 개별 worktree 격리와 통합 큐는 G2·G3 범위다.
+
+격리 Git 저장소와 실제 Codex로 작업 ID `36c66e2f-e1c5-4a16-a321-06519a22f79d`의 첫 실행 및 후속 회차 `4b58e2aa-7269-46ca-83ba-3548073cec48`를 확인했다. 두 실행의 서비스·작업 ID·시작 SHA가 일치하고, 실행 상세에는 각 호출의 노드·PID·서로 다른 Codex 세션 ID가 남았다. 승인 대기 중 원본 첨부를 바꾸고 결과 파일을 지운 뒤에도 다음 회차가 최초 첨부값을 작업 폴더에 다시 썼다.
+
+자동 검사에는 대상 미확인·미등록·브랜치 변경 시 실행 거절, 서비스·복제본 구별, 위치 이동·교체, 서버 재시작 뒤 승인 대기 및 호출 기록 보존이 포함된다. Git 없는 문서 실행은 기존 경로를 사용한다.

@@ -292,3 +292,23 @@
   max-width: 100%;
   min-width: 0;
 }
+
+.gitFields {
+  display: grid;
+  gap: 12px;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.gitFields label {
+  display: grid;
+  gap: 4px;
+}
+.gitFields input,
+.gitFields select,
+.gitFields textarea {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+}

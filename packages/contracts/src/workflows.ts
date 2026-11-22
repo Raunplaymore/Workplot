@@ -258,13 +258,29 @@ const reviewReceiptSchema = z.strictObject({
   at: z.iso.datetime(),
 });
 export type ReviewReceipt = z.infer<typeof reviewReceiptSchema>;
+export const gitTargetSchema = z.strictObject({
+  serviceId: z.uuid(),
+  service: z.string().trim().min(1).max(100),
+  path: z.string(),
+  root: z.string(),
+  repository: z.string(),
+  repositoryId: z.string(),
+  checkoutId: z.string(),
+  subpath: z.string(),
+  branch: z.string(),
+  sha: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
+  dirty: z.boolean(),
+});
+export type GitTarget = z.infer<typeof gitTargetSchema>;
 export const requestFilesSchema = z.strictObject({
+  gitTarget: gitTargetSchema.optional(),
   references: z.array(z.string().trim().min(1).max(4096)).max(32),
   workspace: z.string().trim().min(1).max(4096).optional(),
 });
 export type RequestFiles = z.infer<typeof requestFilesSchema>;
 const taskRequestSchema = z.string().trim().min(1).max(2000).optional();
 export const runSummarySchema = z.strictObject({
+  developmentTaskId: z.uuid().optional(),
   requestFiles: requestFilesSchema.optional(),
   snapshotId: z.uuid().optional(),
   taskRequest: taskRequestSchema,
@@ -431,6 +447,16 @@ export const runDecisionSchema = z.discriminatedUnion('decision', [
 export type RunDecision = z.infer<typeof runDecisionSchema>;
 export type RunSummary = z.infer<typeof runSummarySchema>;
 export const runViewSchema = z.strictObject({
+  aiCalls: z
+    .array(
+      z.object({
+        step: z.string(),
+        pid: z.number(),
+        session: z.string().nullable(),
+        observedAt: z.string(),
+      }),
+    )
+    .optional(),
   retention: z
     .strictObject({
       expiresAt: z.iso.datetime().nullable(),

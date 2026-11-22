@@ -113,11 +113,17 @@ export function WorkflowLibrary({
   rows,
   prepare,
   startSaved,
+  develop,
   edit,
   canEdit,
   busy,
 }: {
   rows: RunList | null;
+  develop: (
+    version: WorkflowVersion,
+    request?: string,
+    files?: RequestFiles,
+  ) => void;
   startSaved: (
     version: WorkflowVersion,
     request?: string,
@@ -608,6 +614,19 @@ export function WorkflowLibrary({
                     }
                   >
                     새 자료로 실행
+                  </button>
+                  <button
+                    disabled={
+                      busy ||
+                      version.definition.steps.some(
+                        (s) => s.kind === 'task' && s.agent === 'unassigned',
+                      )
+                    }
+                    onClick={() =>
+                      develop(version, request.trim() || undefined, attached)
+                    }
+                  >
+                    개발 작업 실행
                   </button>
                 </div>
                 {activeRun && (

@@ -61,6 +61,14 @@ async function canonical(input: string) {
     throw new AttachmentError('개별 파일이나 작업용 하위 폴더를 선택하세요.');
   return path;
 }
+export async function canonicalWorkspace(value: string) {
+  try {
+    return await checkWorkspace(await canonical(value));
+  } catch (e) {
+    if (e instanceof AttachmentError) throw e;
+    throw new AttachmentError('작업 폴더의 경로와 접근 권한을 확인하세요.');
+  }
+}
 export async function checkWorkspace(path: string) {
   if ((await canonical(path)) !== path || !(await lstat(path)).isDirectory())
     throw new AttachmentError('수정할 작업 폴더를 확인하세요.');

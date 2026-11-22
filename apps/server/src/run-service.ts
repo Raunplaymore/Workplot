@@ -1,4 +1,9 @@
-import { snapshotFiles, checkWorkspace } from './request-files.js';
+import { verifyGit, inspectGit } from './git-target.js';
+import {
+  AttachmentError,
+  snapshotFiles,
+  checkWorkspace,
+} from './request-files.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { extname } from 'node:path';
@@ -642,6 +647,13 @@ export function createRunService(
                   },
                 }
               : {};
+          if (state.summary.requestFiles?.gitTarget && workspace)
+            await verifyGit(
+              state.summary.requestFiles.gitTarget,
+              workspace,
+              false,
+            );
+          let callId: number | undefined;
           const observe: Parameters<DocumentRunner['write']>[2] = ({
             pid,
             sessionId,
@@ -649,6 +661,10 @@ export function createRunService(
             if (pid) execution.process = { ownerId, pid };
             if (sessionId) execution.sessionId = sessionId;
             try {
+              if (state.summary.developmentTaskId) {
+                if (pid) callId = store.startCall(id, step.id, pid);
+                if (sessionId && callId) store.identifyCall(callId, sessionId);
+              }
               persist(execution, 'running');
             } catch {
               execution.storageFailed = true;
@@ -865,6 +881,7 @@ export function createRunService(
                   .slice(0, 7800 - execution.delegatedBrief.length)
               : previous.text.trim(),
           finish,
+          execution.redirected,
         );
         launch(child, definition);
       } else {
@@ -898,7 +915,9 @@ export function createRunService(
             ? error.exitSignal
               ? `Codex 프로세스가 ${error.exitSignal} 신호로 종료됐습니다.`
               : failureText[reason]
-            : null;
+            : error instanceof AttachmentError
+              ? error.message
+              : null;
       if (execution.storageFailed)
         state.note = '실행 정보를 저장하지 못했습니다. 종료 상태를 확인하세요.';
       try {
@@ -1120,11 +1139,36 @@ export function createRunService(
       const snapshot = requestFiles
         ? await snapshotFiles(requestFiles)
         : undefined;
+      const target = requestFiles?.gitTarget;
+      if (target && !snapshot?.workspace)
+        throw new AttachmentError('등록한 대상 폴더를 확인하세요.');
       const cliVersion = await runner.ready();
+      if (snapshot?.workspace) {
+        if (target) {
+          if (
+            !store
+              .bindings()
+              .some(
+                (b) =>
+                  b.serviceId === target.serviceId &&
+                  b.path === target.path &&
+                  b.checkoutId === target.checkoutId &&
+                  b.repositoryId === target.repositoryId &&
+                  b.service === target.service,
+              )
+          )
+            throw new AttachmentError(
+              '등록한 서비스와 체크아웃을 다시 선택하세요.',
+            );
+          await verifyGit(target, snapshot.workspace, true);
+        } else if (await inspectGit(snapshot.workspace))
+          throw new AttachmentError('Git 작업은 먼저 실행 대상을 확인하세요.');
+      }
       const duplicate = existing();
       if (duplicate) return duplicate;
       if (blocked()) throw new StoreConflict();
       const record: RunInput = {
+        developmentTaskId: target ? id : undefined,
         requestFiles,
         snapshotId: snapshot ? id : undefined,
         workflowId,
@@ -1293,6 +1337,7 @@ export function createRunService(
           origin: { runId: id, stepId },
           material: source.material,
           taskRequest: source.summary.taskRequest,
+          developmentTaskId: source.summary.developmentTaskId,
           requestFiles: source.summary.requestFiles,
           snapshotId: source.summary.snapshotId,
         },

@@ -5,6 +5,7 @@ import type Database from 'better-sqlite3';
 import {
   masterPlanSchema,
   type RunMaterial,
+  type GitTarget,
   runInputSchema,
   runListSchema,
   runSummarySchema,
@@ -225,7 +226,63 @@ export function openStudioStore(db: Database.Database) {
   db.exec(
     'CREATE TABLE IF NOT EXISTS request_snapshots(id TEXT PRIMARY KEY, data TEXT NOT NULL)',
   );
+  db.exec(`CREATE TABLE IF NOT EXISTS development_services(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE);
+    CREATE TABLE IF NOT EXISTS git_bindings(service_id TEXT NOT NULL REFERENCES development_services(id),checkout_id TEXT NOT NULL,path TEXT NOT NULL,repo_id TEXT NOT NULL, PRIMARY KEY(service_id,checkout_id,path));
+    CREATE TABLE IF NOT EXISTS development_calls(id INTEGER PRIMARY KEY,run TEXT NOT NULL REFERENCES runs(id),step TEXT NOT NULL,pid INTEGER NOT NULL,session TEXT,observedAt TEXT NOT NULL);`);
+  function bindings() {
+    return db
+      .prepare(
+        'SELECT s.name AS service,s.id AS serviceId,b.checkout_id AS checkoutId,b.repo_id AS repositoryId,b.path FROM development_services s JOIN git_bindings b ON b.service_id=s.id ORDER BY s.name,b.path',
+      )
+      .all() as Pick<
+      GitTarget,
+      'service' | 'serviceId' | 'checkoutId' | 'repositoryId' | 'path'
+    >[];
+  }
   return {
+    bindings,
+    bind: db.transaction(
+      (service: string, location: Omit<GitTarget, 'service' | 'serviceId'>) => {
+        db.prepare(
+          'INSERT INTO development_services VALUES(?,?) ON CONFLICT(name) DO NOTHING',
+        ).run(randomUUID(), service);
+        const serviceId = db
+          .prepare('SELECT id FROM development_services WHERE name=?')
+          .pluck()
+          .get(service) as string;
+        db.prepare(
+          'INSERT INTO git_bindings VALUES(?,?,?,?) ON CONFLICT(service_id,checkout_id,path) DO UPDATE SET repo_id=excluded.repo_id',
+        ).run(
+          serviceId,
+          location.checkoutId,
+          location.path,
+          location.repositoryId,
+        );
+        return { service, serviceId, ...location };
+      },
+    ).immediate,
+    startCall(run: string, step: string, pid: number) {
+      return Number(
+        db
+          .prepare(
+            'INSERT INTO development_calls(run,step,pid,observedAt) VALUES(?,?,?,?)',
+          )
+          .run(run, step, pid, new Date().toISOString()).lastInsertRowid,
+      );
+    },
+    identifyCall(id: number, session: string) {
+      db.prepare('UPDATE development_calls SET session=? WHERE id=?').run(
+        session,
+        id,
+      );
+    },
+    calls(run: string) {
+      return db
+        .prepare(
+          'SELECT step,pid,session,observedAt FROM development_calls WHERE run=? ORDER BY id',
+        )
+        .all(run);
+    },
     recordWithSnapshot: db.transaction(
       (
         input: RunInput,
@@ -475,7 +532,12 @@ export function openStudioStore(db: Database.Database) {
       return definition.input?.trim() || definition.goal || '';
     },
     recordNextSession: db.transaction(
-      (parentId: string, source: string, finish: () => void) => {
+      (
+        parentId: string,
+        source: string,
+        finish: () => void,
+        newTask = false,
+      ) => {
         const parent = run(parentId);
         if (parent.summary.status !== 'waiting' || parent.summary.nextSessionId)
           throw new StoreConflict();
@@ -485,6 +547,11 @@ export function openStudioStore(db: Database.Database) {
           workflowVersion,
           cliVersion,
           previousSessionId: parentId,
+          developmentTaskId: parent.summary.developmentTaskId
+            ? newTask
+              ? randomUUID()
+              : parent.summary.developmentTaskId
+            : undefined,
           taskRequest: parent.summary.taskRequest,
           snapshotId: parent.summary.snapshotId,
           requestFiles: parent.summary.requestFiles,

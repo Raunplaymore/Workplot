@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+import { mkdir } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, rm, unlink, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -971,6 +973,76 @@ test('master children restore separate approval gates and decisions after restar
         'right/draft',
         'right/revision',
       ]);
+    },
+  );
+});
+
+test('checks the confirmed Git binding before starting and keeps node calls across restart', async () => {
+  let writes = 0;
+  const thread = randomUUID();
+  await withStudio(
+    {
+      ready: async () => '0.166.0',
+      async write(_prompt, _signal, observe) {
+        writes++;
+        observe({ pid: 123 });
+        observe({ sessionId: thread });
+        return { kind: 'document', text: '초안' };
+      },
+    },
+    async ({ path, inject, restart }) => {
+      const workspace = join(path, 'repo');
+      await mkdir(workspace);
+      const git = (...args: string[]) =>
+        execFileSync('git', [
+          '-c',
+          'user.name=QA',
+          '-c',
+          'user.email=qa@localhost',
+          '-c',
+          'commit.gpgsign=false',
+          '-C',
+          workspace,
+          ...args,
+        ]);
+      git('init', '-q', '-b', 'main');
+      git('commit', '-qm', 'initial', '--allow-empty');
+      const version = await setup(inject),
+        id = randomUUID(),
+        base = { id, workflowId: version.id, workflowVersion: version.version };
+      const target = (
+        await inject('POST', '/git/targets', {
+          service: 'Workplot',
+          path: workspace,
+        })
+      ).json() as NonNullable<
+        NonNullable<RunView['summary']['requestFiles']>['gitTarget']
+      >;
+      const start = (gitTarget?: typeof target) =>
+        inject('POST', '/runs', {
+          ...base,
+          requestFiles: { references: [], workspace, gitTarget },
+        });
+      expect((await start()).statusCode).toBe(400);
+      expect(
+        (await start({ ...target, serviceId: randomUUID() })).statusCode,
+      ).toBe(400);
+      git('switch', '-q', '-c', 'other');
+      expect((await start(target)).statusCode).toBe(400);
+      expect(writes).toBe(0);
+      expect((await inject('GET', '/runs')).json()).toEqual([]);
+      git('switch', '-q', 'main');
+      expect((await start(target)).statusCode).toBe(200);
+      let v = await until(inject, id, 'waiting');
+      expect(v.summary.developmentTaskId).toBe(id);
+      expect(v.aiCalls).toEqual([
+        expect.objectContaining({ step: 'draft', session: thread }),
+      ]);
+      await restart();
+      v = await until(inject, id, 'waiting');
+      expect(v.summary.requestFiles?.gitTarget).toEqual(target);
+      expect(v.aiCalls?.[0]?.session).toBe(thread);
+      expect(writes).toBe(1);
     },
   );
 });

@@ -1,3 +1,4 @@
+import { GitRun, GitRunInfo } from './GitRun';
 import { NodeInstructions } from './NodeInstructions';
 import { LinkedInstructions } from './LinkedInstructions';
 import { documentSourceLabel, type DocumentSource } from './document-source';
@@ -412,6 +413,7 @@ export function WorkflowStudio({
         setAnswer('');
       }
       setMaterialVersion(null);
+      setGitPrep(null);
       setLogRoute(location.hash.endsWith('/log'));
       setMasterId(routeMaster());
       setTarget(designTarget());
@@ -743,6 +745,7 @@ export function WorkflowStudio({
   }
   function openRun(id: string) {
     location.hash = '/runs/' + id;
+    setSurface('detail');
   }
   function move(offset: number) {
     const index = steps.findIndex((item) => item.id === step?.id);
@@ -841,6 +844,21 @@ export function WorkflowStudio({
       await updateList();
     });
   }
+  const [gitPrep, setGitPrep] = useState<{
+    version: WorkflowVersion;
+    material?: RunMaterial;
+    request?: string;
+    files?: RequestFiles;
+  } | null>(null);
+  function prepareGit(
+    version: WorkflowVersion,
+    request?: string,
+    files?: RequestFiles,
+    material?: RunMaterial,
+  ) {
+    setError('');
+    setGitPrep({ version, request, files, material });
+  }
   function start(
     version: WorkflowVersion | null = saved,
     material?: RunMaterial,
@@ -849,6 +867,17 @@ export function WorkflowStudio({
   ) {
     if (!version) return;
     perform(async () => {
+      if (requestFiles?.workspace && !requestFiles.gitTarget) {
+        const { location } = await (
+          await localRequest('/git/inspect', 'POST', {
+            path: requestFiles.workspace,
+          })
+        ).json();
+        if (location) {
+          prepareGit(version, taskRequest, requestFiles, material);
+          return;
+        }
+      }
       const key = JSON.stringify([
         version.id,
         version.version,
@@ -874,6 +903,7 @@ export function WorkflowStudio({
         const started = runViewSchema.parse(await response.json());
         if (material) storeMaterialDraft(version, emptyMaterialDraft);
         setMaterialVersion(null);
+        setGitPrep(null);
         setRun(started);
         setRunId(id);
         sessionStorage.setItem('studio-run', id);
@@ -1385,6 +1415,15 @@ export function WorkflowStudio({
                 <ListTree size={16} aria-hidden="true" /> 흐름 목록
               </button>{' '}
               <div className={styles.buttons}>
+                {saved && (
+                  <button
+                    type="button"
+                    disabled={!!startHint}
+                    onClick={() => prepareGit(saved)}
+                  >
+                    개발 작업 실행
+                  </button>
+                )}
                 {button('되돌리기', undo, busy || history.length === 0)}
                 {button(
                   '변경 취소',
@@ -1568,7 +1607,40 @@ export function WorkflowStudio({
             }}
           />
         )}
-        {materialVersion && (
+        {gitPrep && (
+          <GitRun
+            flow={
+              gitPrep.version.definition.name + ' · v' + gitPrep.version.version
+            }
+            folder={gitPrep.files?.workspace ?? ''}
+            request={gitPrep.request ?? ''}
+            error={error}
+            busy={busy}
+            onClose={() => setGitPrep(null)}
+            onStart={(gitTarget, request) => {
+              const files = {
+                ...gitPrep.files,
+                references: gitPrep.files?.references ?? [],
+                workspace: gitTarget.path,
+                gitTarget,
+              };
+              if (
+                !gitPrep.material &&
+                !gitPrep.version.definition.input?.trim()
+              ) {
+                prepareMaterial(gitPrep.version, request || undefined, files);
+                setGitPrep(null);
+              } else
+                start(
+                  gitPrep.version,
+                  gitPrep.material,
+                  request || undefined,
+                  files,
+                );
+            }}
+          />
+        )}
+        {materialVersion && !gitPrep && (
           <MaterialDialog
             key={materialVersion.id + ':' + materialVersion.version}
             version={materialVersion}
@@ -1585,6 +1657,7 @@ export function WorkflowStudio({
           <WorkflowLibrary
             rows={rows}
             starting={starting}
+            develop={prepareGit}
             startSaved={(v, request, files) =>
               start(v, undefined, request, files)
             }
@@ -2925,6 +2998,7 @@ export function WorkflowStudio({
               <h2>
                 {rows?.find((row) => row.id === runId)?.name ?? '작업 흐름'}
               </h2>{' '}
+              {run && <GitRunInfo run={run} />}
               {run?.summary.requestFiles && (
                 <details>
                   <summary>첨부 · 작업 폴더</summary>
