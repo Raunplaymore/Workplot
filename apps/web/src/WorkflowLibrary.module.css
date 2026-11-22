@@ -1,0 +1,294 @@
+.library {
+  display: grid;
+  grid-template-columns: minmax(230px, 34%) minmax(0, 1fr);
+  min-height: 0;
+  flex: 1;
+  background: white;
+}
+.list,
+.detail {
+  overflow: auto;
+  padding: clamp(16px, 3vw, 36px);
+  min-width: 0;
+}
+.list {
+  background: var(--page);
+  border-right: 1px solid var(--border);
+}
+.library .search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.list ul {
+  list-style: none;
+  padding: 0;
+}
+.list li {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  padding: 6px;
+}
+.list li[data-selected='true'] {
+  background: #e4efe4;
+  border-radius: 6px;
+}
+.list li button {
+  background: transparent;
+  border: 0;
+  min-height: 42px;
+  color: inherit;
+}
+.itemInfo {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  padding: 5px 6px;
+}
+.list .itemInfo button {
+  min-height: 0;
+  text-align: left;
+  padding: 0;
+}
+.itemInfo button::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+.failureLink {
+  position: relative;
+  color: var(--focus);
+  text-underline-offset: 3px;
+}
+.list small,
+.detail small {
+  display: block;
+  color: var(--muted);
+}
+.detail header,
+.dialog footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.library .detail h3 {
+  margin: 22px 0 6px;
+}
+.detail pre {
+  font: inherit;
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--wash);
+  padding: 14px;
+  max-height: 40vh;
+  overflow: auto;
+}
+.detail button,
+.dialog button {
+  border: 1px solid var(--border);
+  background: white;
+  border-radius: 6px;
+  padding: 9px 14px;
+  color: var(--text);
+}
+.taskRequest {
+  display: block;
+  margin: 12px 0;
+  font-weight: 600;
+}
+.taskRequest small {
+  font-weight: 400;
+  color: var(--muted);
+}
+.taskRequest textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  max-width: 44rem;
+  margin-top: 4px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-weight: 400;
+  color: var(--text);
+  background: var(--surface);
+  resize: vertical;
+}
+.runActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-block: 12px;
+}
+.detail .primary,
+.dialog .primary {
+  background: #28533d;
+  color: white;
+}
+.dialog .primary {
+  margin-block: 12px;
+}
+.dialog {
+  width: min(480px, 94vw);
+  max-height: 88dvh;
+  overflow: auto;
+  padding: 24px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+.dialog::backdrop {
+  background: #12251c66;
+}
+.dialog form {
+  display: grid;
+  gap: 12px;
+}
+.dialog footer {
+  justify-content: flex-end;
+}
+@media (max-width: 800px) {
+  .library {
+    display: flex;
+    flex-direction: column;
+    overflow: auto;
+  }
+  .list,
+  .detail {
+    flex: none;
+    overflow: visible;
+  }
+  .list {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .list ul {
+    max-height: 28vh;
+    overflow: auto;
+  }
+}
+
+.detail header {
+  margin-bottom: 12px;
+}
+.detail a {
+  color: var(--focus);
+  text-underline-offset: 3px;
+}
+.history {
+  margin-top: 24px;
+}
+.history summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.history li {
+  margin: 8px 0;
+}
+.history time {
+  color: var(--muted);
+  font-size: var(--type-caption);
+}
+
+.schedule {
+  margin-block: 14px;
+  padding-block: 4px 12px;
+  border-block: 1px solid var(--border);
+}
+.schedule h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.schedule form,
+.schedule label {
+  display: grid;
+  gap: 5px;
+}
+.schedule form {
+  max-width: 30rem;
+  gap: 10px;
+}
+.schedule input,
+.schedule textarea,
+.schedule select {
+  font: inherit;
+  color: inherit;
+  background: var(--surface);
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.schedule small {
+  overflow-wrap: anywhere;
+}
+.schedule button + button {
+  margin-inline-start: 5px;
+}
+
+.materialPreview {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 12rem;
+  overflow: auto;
+}
+
+.autoSession {
+  border-top: 1px solid var(--border);
+  margin-top: 14px;
+}
+.autoSession h3 small {
+  font-size: var(--type-caption);
+  color: var(--muted);
+  font-weight: 400;
+}
+.autoSession fieldset {
+  min-width: 0;
+  max-width: 36rem;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.autoSession label {
+  display: grid;
+  gap: 4px;
+  margin-block: 8px;
+}
+.autoSession :is(input, textarea) {
+  min-width: 0;
+  font: inherit;
+  color: inherit;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.autoSession button + button {
+  margin-inline-start: 5px;
+}
+
+.attachments {
+  margin-block: 0.5rem 1rem;
+  overflow-wrap: anywhere;
+}
+.attachments summary {
+  cursor: pointer;
+  width: fit-content;
+}
+.attachments > div,
+.attachments > label {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-block: 0.45rem;
+}
+.attachments input {
+  max-width: 100%;
+  min-width: 0;
+}

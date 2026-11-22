@@ -1,0 +1,43 @@
+.menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 180px;
+  max-width: calc(100vw - 8px);
+  max-height: calc(100dvh - 8px);
+  overflow: auto;
+  display: grid;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--page, #fff);
+  color: var(--text);
+  box-shadow: 0 6px 24px #0003;
+}
+.menu button {
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  border: 0;
+  border-radius: 4px;
+  padding: 8px 11px;
+  font: inherit;
+}
+.menu button:hover,
+.menu button:focus-visible {
+  background: var(--wash);
+  outline: 1px solid var(--focus);
+}
+.menu button[data-divider='true'] {
+  border-top: 1px solid var(--border);
+}
+.menu button[data-danger='true'] {
+  color: #ae3834;
+}
+.menu button small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.85em;
+}
+.menu button:disabled {
+  opacity: 0.5;
+}

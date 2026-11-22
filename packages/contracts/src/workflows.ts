@@ -7,8 +7,24 @@ export const versionSchema = z
   .positive()
   .max(Number.MAX_SAFE_INTEGER);
 const stepId = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
+export const codexSkillRefSchema = z.strictObject({
+  id: z.string().regex(/^[a-f0-9]{64}$/),
+  digest: z.string().regex(/^[a-f0-9]{64}$/),
+});
+export const taskSkillSchema = codexSkillRefSchema.extend({
+  title: z.string().min(1).max(256),
+});
+export type TaskSkill = z.infer<typeof taskSkillSchema>;
+const documentLabel = z.string().trim().min(1).max(100);
+export const nodeDocumentsSchema = z.strictObject({
+  needs: z.array(documentLabel).max(4),
+  output: documentLabel,
+});
 const stepFields = {
   id: stepId,
+  templateOrigin: z
+    .strictObject({ id: z.uuid(), version: versionSchema })
+    .optional(),
   title: z.string().trim().min(1).max(100),
   position: z.strictObject({ x: z.number(), y: z.number() }),
 };
@@ -17,6 +33,7 @@ export const workflowDefinitionSchema = z
   .strictObject({
     name: z.string().trim().min(1).max(100),
     input: z.string().max(8_000).optional(),
+    inputFields: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
     goal: z.string().trim().max(1_000).optional(),
     doneWhen: z.string().trim().max(2_000).optional(),
     steps: z
@@ -25,12 +42,22 @@ export const workflowDefinitionSchema = z
           z.strictObject({
             ...stepFields,
             kind: z.literal('task'),
+            workflowRef: z
+              .strictObject({ id: workflowIdSchema, version: versionSchema })
+              .optional(),
+            templateDocuments: nodeDocumentsSchema.optional(),
             instructions: z.string().trim().min(1).max(8_000),
             inputFrom: z.array(stepId).max(4).optional(),
             agent: z.enum(['codex', 'unassigned']).optional(),
+            codexSkill: taskSkillSchema.optional(),
+            tool: z.enum(['market-calendar', 'workplot-ui']).optional(),
             skill: z.enum(['none', 'source-check']).optional(),
           }),
-          z.strictObject({ ...stepFields, kind: z.literal('review') }),
+          z.strictObject({
+            ...stepFields,
+            kind: z.literal('review'),
+            startNextSession: z.literal(true).optional(),
+          }),
         ]),
       )
       .min(1)
@@ -87,6 +114,23 @@ export const workflowDefinitionSchema = z
     const byId = new Map(
       steps.map((step, index) => [step.id, { step, index }]),
     );
+    const chain = [...visited];
+    for (const [i, id] of chain.entries()) {
+      const step = byId.get(id)!.step;
+      if (
+        step.kind === 'review' &&
+        step.startNextSession &&
+        (i !== chain.length - 1 ||
+          byId.get(chain[i - 1] ?? '')?.step.kind !== 'task')
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['steps'],
+          message:
+            '다음 세션 승인은 인계 문서를 작성하는 작업 바로 뒤, 흐름 끝에 놓으세요.',
+        });
+      }
+    }
     const earlierTasks = new Set<string>();
     for (const id of visited) {
       const entry = byId.get(id);
@@ -112,6 +156,33 @@ export const workflowVersionSchema = z.strictObject({
   savedAt: z.iso.datetime(),
   definition: workflowDefinitionSchema,
 });
+// Editing permits unfinished fields and disconnected wires until the user saves.
+const [taskStep, reviewStep] =
+  workflowDefinitionSchema.shape.steps.element.options;
+const editorText = z.string().max(100);
+const editorDefinition = z.strictObject({
+  ...workflowDefinitionSchema.shape,
+  name: editorText,
+  steps: z
+    .array(
+      z.discriminatedUnion('kind', [
+        taskStep.extend({
+          title: editorText,
+          instructions: z.string().max(8000),
+        }),
+        reviewStep.extend({ title: editorText }),
+      ]),
+    )
+    .min(1)
+    .max(32),
+});
+export const editorRecoverySchema = z.strictObject({
+  draft: editorDefinition,
+  baseline: editorDefinition,
+  saved: workflowVersionSchema.nullable(),
+  selected: z.string(),
+  flowSettings: z.boolean(),
+});
 export const workflowUpdateSchema = z.strictObject({
   baseVersion: versionSchema,
   definition: workflowDefinitionSchema,
@@ -126,11 +197,88 @@ export const workflowListSchema = z.array(
     .extend({ name: z.string() }),
 );
 
+export const libraryLocationSchema = z.enum(['active', 'archived', 'trash']);
+export const libraryMoveSchema = z.strictObject({
+  from: libraryLocationSchema,
+  action: z.enum(['archive', 'trash', 'restore']),
+});
+export const librarySchema = z.array(
+  z.object({
+    id: workflowIdSchema,
+    version: versionSchema,
+    name: z.string(),
+    goal: z.string(),
+    savedAt: z.iso.datetime(),
+    favorite: z.boolean(),
+    location: libraryLocationSchema.default('active'),
+  }),
+);
+export const matchRequestSchema = z.strictObject({
+  goal: z.string().trim().min(1).max(1000),
+});
+export const matchResultSchema = z.strictObject({
+  match: z
+    .strictObject({
+      id: workflowIdSchema,
+      version: versionSchema,
+      name: z.string(),
+      reason: z.string().trim().min(1).max(500),
+    })
+    .nullable(),
+});
+export type WorkflowMatch = NonNullable<
+  z.infer<typeof matchResultSchema>['match']
+>;
+const skillRegistration = z.strictObject({
+  name: z
+    .string()
+    .max(64)
+    .regex(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/),
+  version: versionSchema,
+});
+export const skillRegistrationListSchema = z.array(skillRegistration);
+export const skillRegistrationRequestSchema = skillRegistration.extend({
+  expectedVersion: versionSchema.nullable(),
+});
+export const favoriteSchema = z.strictObject({ favorite: z.boolean() });
+const runMaterialSchema = z.strictObject({
+  name: z.string().trim().max(100),
+  source: z.string().trim().min(1).max(8000),
+});
+export type RunMaterial = z.infer<typeof runMaterialSchema>;
+
+export const rerunSchema = z.strictObject({
+  stepId,
+  instructions: z.string().trim().min(1).max(8_000),
+});
+const reviewReceiptSchema = z.strictObject({
+  gateId: z.uuid(),
+  stepId,
+  decision: z.enum(['accept', 'decline', 'finish']),
+  at: z.iso.datetime(),
+});
+export type ReviewReceipt = z.infer<typeof reviewReceiptSchema>;
+export const requestFilesSchema = z.strictObject({
+  references: z.array(z.string().trim().min(1).max(4096)).max(32),
+  workspace: z.string().trim().min(1).max(4096).optional(),
+});
+export type RequestFiles = z.infer<typeof requestFilesSchema>;
+const taskRequestSchema = z.string().trim().min(1).max(2000).optional();
 export const runSummarySchema = z.strictObject({
+  requestFiles: requestFilesSchema.optional(),
+  snapshotId: z.uuid().optional(),
+  taskRequest: taskRequestSchema,
   id: z.uuid(),
   workflowId: workflowIdSchema,
   workflowVersion: versionSchema,
   recordedAt: z.iso.datetime(),
+  lastReview: reviewReceiptSchema.optional(),
+  master: z
+    .strictObject({ runId: z.uuid(), planId: z.uuid(), taskId: stepId })
+    .optional(),
+  previousSessionId: z.uuid().optional(),
+  nextSessionId: z.uuid().optional(),
+  origin: z.strictObject({ runId: z.uuid(), stepId }).optional(),
   status: z.enum([
     'queued',
     'running',
@@ -152,10 +300,19 @@ export const runListSchema = z.array(
     .pick({
       id: true,
       workflowVersion: true,
+      workflowId: true,
       recordedAt: true,
       status: true,
     })
-    .extend({ name: z.string() }),
+    .extend({
+      name: z.string(),
+      quotaRetryAt: z.number().int().positive().nullish(),
+      gateKind: z.enum(['review', 'question']).optional(),
+      masterRunId: z.uuid().nullish(),
+      previousSessionId: z.uuid().nullable().optional(),
+      sessionSummary: z.string().optional(),
+      comparable: z.union([z.literal(0), z.literal(1)]).optional(),
+    }),
 );
 export type RunList = z.infer<typeof runListSchema>;
 
@@ -167,9 +324,11 @@ export const runInputSchema = runSummarySchema
   .omit({
     id: true,
     recordedAt: true,
+    lastReview: true,
     provider: true,
   })
   .extend({
+    material: runMaterialSchema.optional(),
     sessionId: z
       .string()
       .regex(/^[a-zA-Z0-9_-]{1,128}$/)
@@ -186,14 +345,28 @@ export type RunInput = z.infer<typeof runInputSchema>;
 
 export const runRetrySchema = z.strictObject({ failureId: z.uuid() });
 const retryCheckpointSchema = runRetrySchema.extend({
+  failureNote: z.string().max(400).optional(),
+  timedOut: z.literal(true).optional(),
+  quotaRetryAt: z.number().int().positive().optional(),
+  answerContext: z.string().optional(),
+  questionCount: z.number().int().min(0).max(2).optional(),
   stepId,
   documentHashes: z.array(z.string().regex(/^[0-9a-f]{64}$/)).max(32),
 });
 export type RetryCheckpoint = z.infer<typeof retryCheckpointSchema>;
 
+const pausedReviewSchema = z.strictObject({
+  gateId: z.uuid(),
+  stepId,
+  documentHashes: retryCheckpointSchema.shape.documentHashes,
+});
+export type PausedReview = z.infer<typeof pausedReviewSchema>;
 export const storedRunSchema = z.strictObject({
   summary: runSummarySchema,
+  material: runMaterialSchema.optional(),
   retry: retryCheckpointSchema.optional(),
+  pausedReview: pausedReviewSchema.optional(),
+  completedHashes: retryCheckpointSchema.shape.documentHashes.optional(),
   sessionId: runInputSchema.shape.sessionId,
   process: runInputSchema.shape.process,
   results: runInputSchema.shape.results,
@@ -237,12 +410,18 @@ export function workflowPlan(definition: WorkflowDefinition) {
 }
 
 export const runStartSchema = z.strictObject({
+  requestFiles: requestFilesSchema.optional(),
+  taskRequest: taskRequestSchema,
+  material: runMaterialSchema.optional(),
   id: z.uuid(),
   workflowId: workflowIdSchema,
   workflowVersion: versionSchema,
 });
 export const runDecisionSchema = z.discriminatedUnion('decision', [
-  z.strictObject({ gateId: z.uuid(), decision: z.enum(['accept', 'decline']) }),
+  z.strictObject({
+    gateId: z.uuid(),
+    decision: z.enum(['accept', 'decline', 'finish']),
+  }),
   z.strictObject({
     gateId: z.uuid(),
     decision: z.literal('answer'),
@@ -252,7 +431,17 @@ export const runDecisionSchema = z.discriminatedUnion('decision', [
 export type RunDecision = z.infer<typeof runDecisionSchema>;
 export type RunSummary = z.infer<typeof runSummarySchema>;
 export const runViewSchema = z.strictObject({
+  retention: z
+    .strictObject({
+      expiresAt: z.iso.datetime().nullable(),
+      kept: z.array(artifactName),
+      expired: z.boolean(),
+      summary: z.string().nullable(),
+    })
+    .optional(),
   failureId: z.uuid().optional(),
+  timedOut: z.literal(true).optional(),
+  quotaRetryAt: z.number().int().positive().optional(),
   summary: runSummarySchema,
   stepId: stepId.nullable(),
   note: z.string().nullable(),
@@ -260,6 +449,8 @@ export const runViewSchema = z.strictObject({
     .strictObject({
       id: z.uuid(),
       kind: z.enum(['review', 'question']),
+      startNextSession: z.literal(true).optional(),
+      repeatsSession: z.uuid().optional(),
       text: z.string(),
     })
     .nullable(),
@@ -271,6 +462,9 @@ export const runEventsSchema = z.array(
   z.object({
     status: runSummarySchema.shape.status,
     at: z.iso.datetime(),
+    reviewCompleted: z.literal(true).optional(),
+    reviewDeclined: z.literal(true).optional(),
+    failureReason: z.string().trim().min(1).max(300).optional(),
     stepId: stepId.nullable(),
     gate: z.enum(['question', 'review']).nullable(),
   }),

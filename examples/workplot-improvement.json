@@ -1,0 +1,86 @@
+{
+  "name": "워크플롯 개선 세션",
+  "goal": "사용자가 흐름을 설계하고 실행을 관제하며 문서를 리뷰하는 웹 작업공간을 한 세션에 하나의 검증 가능한 변경으로 개선한다.",
+  "doneWhen": "실행별 작업본의 실제 변경과 검사 결과를 리뷰하고 다음 세션 시작 여부를 사용자가 결정한다.",
+  "inputFields": [],
+  "input": "실행 상세의 결과 파일 목록에서 현재 열어 읽는 파일을 구분하기 어렵다. WorkflowStudio.tsx에서 현재 표시한 파일 버튼에 aria-pressed를 설정하고 활성 상태가 육안으로 구별되게 한다. 승인·중단 동작과 다른 파일 열기는 보존한다.",
+  "steps": [
+    {
+      "id": "session-plan",
+      "title": "이번 세션 계획",
+      "instructions": "이전 인계 또는 입력의 과제 하나를 대상으로 사용자에게 이번 세션에서 어떤 불편을 어떻게 고칠지 5문장 이내로 설명한다. 재현 시나리오, 구체적인 합격 기준과 제외 범위를 명시한다. 개발 완료를 미리 주장하지 않는다. 목표는 Orca처럼 작업 상태를 보고, n8n처럼 흐름을 고치고, Figma처럼 작업 맥락을 잃지 않는 웹 작업공간이다.",
+      "inputFrom": [],
+      "kind": "task",
+      "agent": "codex",
+      "position": {
+        "x": 0,
+        "y": 90
+      }
+    },
+    {
+      "id": "change-evidence",
+      "title": "구현·검증 기록",
+      "instructions": "이번 세션에서 합의한 화면 개선 하나를 실행별 작업본에 구현한다. 로컬 검증 결과와 변경 내역을 기록한다.",
+      "inputFrom": ["session-plan"],
+      "kind": "task",
+      "agent": "codex",
+      "position": {
+        "x": 245,
+        "y": 90
+      },
+      "tool": "workplot-ui"
+    },
+    {
+      "id": "session-review",
+      "title": "세션 리뷰",
+      "instructions": "전달된 구현 기록의 실제 변경과 검사 결과를 기준으로 계획 대비 통과·미달·미검증을 구분한다. 이번 실행에서 확인되지 않은 사용자 경험이나 운영 반영을 주장하지 않는다. 질문 없이 리뷰 문서를 작성한다.",
+      "inputFrom": ["session-plan", "change-evidence"],
+      "kind": "task",
+      "agent": "codex",
+      "position": {
+        "x": 490,
+        "y": 90
+      }
+    },
+    {
+      "id": "next-plan",
+      "title": "다음 세션 인계안",
+      "instructions": "이번 리뷰의 결론과 다음 세션에서 해결할 사용자 불편 하나, 실제 시작 시나리오, 합격 기준, 범위와 남은 한계를 1200자 안에 담는다. 전달받은 구현 기록에 다음 후보가 있으면 이를 우선 검토한다. 다음 세션이 이 문서만 받아도 시작할 수 있게 작성한다. 사용자가 무엇을 승인하는지 구체적으로 설명하고 다음 일을 실행하지 않는다.",
+      "inputFrom": ["change-evidence", "session-review"],
+      "kind": "task",
+      "agent": "codex",
+      "position": {
+        "x": 735,
+        "y": 90
+      }
+    },
+    {
+      "id": "next-session",
+      "kind": "review",
+      "title": "다음 세션 시작 승인",
+      "startNextSession": true,
+      "position": {
+        "x": 980,
+        "y": 90
+      }
+    }
+  ],
+  "links": [
+    {
+      "from": "session-plan",
+      "to": "change-evidence"
+    },
+    {
+      "from": "change-evidence",
+      "to": "session-review"
+    },
+    {
+      "from": "session-review",
+      "to": "next-plan"
+    },
+    {
+      "from": "next-plan",
+      "to": "next-session"
+    }
+  ]
+}

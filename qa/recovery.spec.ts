@@ -193,7 +193,9 @@ for (const [code, title, step, target] of cases) {
         });
         await button('검토할 문서 열기').click();
         reviewedDraft = await readFile(join(runDir, 'draft.md'), 'utf8');
-        await expect(page.locator('pre')).toHaveText(reviewedDraft.trim());
+        await expect(page.locator('[data-markdown-source]')).toHaveText(
+          reviewedDraft.trim(),
+        );
         if (step === 'revision') await button('승인하고 계속').click();
       }
       let writer: number | undefined;
@@ -320,7 +322,7 @@ for (const [code, title, step, target] of cases) {
       });
       if (results.length) {
         await button('draft.md').click();
-        await expect(page.locator('pre')).toHaveText(
+        await expect(page.locator('[data-markdown-source]')).toHaveText(
           (await readFile(join(runDir, 'draft.md'), 'utf8')).trim(),
         );
       }
@@ -430,7 +432,9 @@ for (const [code, title, step, target] of cases) {
         ).toBeVisible();
         await expect(button('revision.md')).toHaveCount(0);
         await button('draft.md').click();
-        await expect(page.locator('pre')).toHaveText(edited.trim());
+        await expect(page.locator('[data-markdown-source]')).toHaveText(
+          edited.trim(),
+        );
         await delay(2000);
         const finalView = await (
           await page.request.get('/api/runs/' + id + '/view')
@@ -523,7 +527,9 @@ for (const [code, title, step, target] of cases) {
           const restoredFiles = await snapshot();
           expect(restoredFiles).toEqual(after);
           await button('draft.md').click();
-          await expect(page.locator('pre')).toHaveText(reviewedDraft.trim());
+          await expect(page.locator('[data-markdown-source]')).toHaveText(
+            reviewedDraft.trim(),
+          );
           evidence.restoredDraftSha256 = restoredFiles['draft.md'];
         }
       }
@@ -571,7 +577,7 @@ for (const [code, title, step, target] of cases) {
             await tab
               .getByRole('button', { name: 'revision.md', exact: true })
               .click();
-            await expect(tab.locator('pre')).toHaveText(
+            await expect(tab.locator('[data-markdown-source]')).toHaveText(
               (await readFile(join(runDir, 'revision.md'), 'utf8')).trim(),
             );
           }
@@ -631,7 +637,7 @@ for (const [code, title, step, target] of cases) {
         } else {
           await row.getByRole('button').click();
           await button('검토할 문서 열기').click();
-          await expect(page.locator('pre')).toHaveText(
+          await expect(page.locator('[data-markdown-source]')).toHaveText(
             (await readFile(join(runDir, 'draft.md'), 'utf8')).trim(),
           );
         }
@@ -654,3 +660,187 @@ for (const [code, title, step, target] of cases) {
     }
   });
 }
+
+test('정상 업데이트 후 같은 인계문을 두 탭에서 승인해 후속 세션을 하나만 만든다', async ({
+  page,
+  context,
+}) => {
+  const dir = join(root, 'review-update');
+  await mkdir(join(dir, 'scratch'), { recursive: true });
+  let server = start(dir);
+  try {
+    await server.ready;
+    const headers = {
+      origin: 'http://127.0.0.1:5173',
+      'x-studio-client': 'browser',
+    };
+    await page.request.post('/api/session', { headers });
+    const fixture = JSON.parse(await readFile('qa/workflow.json', 'utf8'));
+    const response = await page.request.post('/api/workflows', {
+      headers,
+      data: {
+        ...fixture,
+        steps: [
+          fixture.steps[0],
+          { ...fixture.steps[1], startNextSession: true },
+        ],
+        links: fixture.links.slice(0, 1),
+      },
+    });
+    expect(response.status()).toBe(201);
+    const flow = await response.json();
+    const id = crypto.randomUUID(),
+      path = '/api/runs/' + id;
+    expect(
+      (
+        await page.request.post('/api/runs', {
+          headers,
+          data: { id, workflowId: flow.id, workflowVersion: flow.version },
+        })
+      ).ok(),
+    ).toBe(true);
+    const link = '/#/runs/' + id + '/review';
+    await page.goto(link);
+    const view = async () => (await page.request.get(path + '/view')).json();
+    const accept = (p: Page) =>
+      p.getByRole('button', { name: '승인하고 다음 세션 시작' });
+    await expect(accept(page)).toBeEnabled({ timeout: 120000 });
+    const before = await view();
+    const body = (await page.locator('[data-markdown-source]').textContent())!;
+    expect(body.trim()).not.toBe('');
+    const doc = join(dir, 'runs', id, 'draft.md');
+    const digest = async () =>
+      createHash('sha256')
+        .update(await readFile(doc))
+        .digest('hex');
+    const sha = await digest();
+    const calls = () => readFile(join(dir, 'cli.jsonl'), 'utf8');
+    const previousCalls = await calls();
+    const oldPid = server.child.pid;
+    server.child.kill('SIGTERM');
+    expect(await server.exit).toEqual({ code: 0, signal: null });
+    server = start(dir);
+    await server.ready;
+    expect(server.child.pid).not.toBe(oldPid);
+    const second = await context.newPage();
+    const tabs = [page, second];
+    await Promise.all(
+      tabs.map(async (tab) => {
+        await tab.goto(link);
+        await tab.reload();
+        await expect(accept(tab)).toBeEnabled();
+        await expect(tab.locator('[data-markdown-source]')).toHaveText(
+          body.trim(),
+        );
+      }),
+    );
+    expect(await view()).toEqual(before);
+    expect(await digest()).toBe(sha);
+    expect(await calls()).toBe(previousCalls);
+    await page.screenshot({ path: join(dir, 'restored-review.png') });
+    let release!: () => void;
+    const together = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let count = 0;
+    const responses = await Promise.all(
+      tabs.map(async (tab) => {
+        await tab.route(
+          '**' + path + '/decision',
+          async (route) => {
+            if (++count === 2) release();
+            await together;
+            await route.continue();
+          },
+          { times: 1 },
+        );
+        const [r] = await Promise.all([
+          tab.waitForResponse(
+            (r) =>
+              r.url().endsWith(path + '/decision') &&
+              r.request().method() === 'POST',
+          ),
+          accept(tab).click(),
+        ]);
+        expect(r.request().postDataJSON().gateId).toBe(before.gate.id);
+        return r.status();
+      }),
+    );
+    expect(responses.some((s) => s === 200)).toBe(true);
+    expect(responses.every((s) => s === 200 || s === 409)).toBe(true);
+    await expect
+      .poll(async () => (await view()).summary.status)
+      .toBe('completed');
+    const successor = (await view()).summary.nextSessionId;
+    await expect
+      .poll(
+        async () =>
+          (
+            await (
+              await page.request.get('/api/runs/' + successor + '/view')
+            ).json()
+          ).summary.status,
+        { timeout: 120000 },
+      )
+      .toBe('waiting');
+    const runs = await (await page.request.get('/api/runs')).json();
+    expect(runs.map((r: { id: string }) => r.id).sort()).toEqual(
+      [id, successor].sort(),
+    );
+    const writes = (await calls())
+      .trim()
+      .split('\n')
+      .map((s) => JSON.parse(s))
+      .filter((c) => c.event === 'write');
+    expect(writes.map((c) => c.run)).toEqual([id, successor]);
+    expect(await digest()).toBe(sha);
+    const restoredPid = server.child.pid;
+    const childPath = '/api/runs/' + successor;
+    const gate = (await (await page.request.get(childPath + '/view')).json())
+      .gate;
+    const callsBeforeTamper = await calls();
+    server.child.kill('SIGTERM');
+    await server.exit;
+    await writeFile(join(dir, 'runs', successor, 'draft.md'), '승인 문서 변경');
+    server = start(dir);
+    await server.ready;
+    await page.reload();
+    await page.request.post('/api/session', { headers });
+    const invalid = await (await page.request.get(childPath + '/view')).json();
+    expect(invalid).toMatchObject({
+      summary: { status: 'failed' },
+      gate: null,
+    });
+    expect(invalid.note).toContain('문서와 일치하지 않아');
+    expect(
+      (
+        await page.request.post(childPath + '/decision', {
+          headers,
+          data: { gateId: gate.id, decision: 'accept' },
+        })
+      ).status(),
+    ).toBe(409);
+    expect(await calls()).toBe(callsBeforeTamper);
+    await writeFile(
+      join(dir, 'result.json'),
+      JSON.stringify(
+        {
+          id,
+          successor,
+          sha,
+          oldPid,
+          newPid: restoredPid,
+          changedDocumentBlocked: true,
+          responses,
+          callsBeforeApproval: 0,
+          successors: 1,
+        },
+        null,
+        2,
+      ),
+    );
+  } finally {
+    server.child.kill('SIGTERM');
+    await server.exit;
+  }
+});

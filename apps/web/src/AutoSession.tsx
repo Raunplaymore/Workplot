@@ -1,0 +1,347 @@
+import { useEffect, useRef, useState } from 'react';
+import {
+  MAX_ADDITIONAL_SESSIONS,
+  completionGoalSchema,
+  delegationStatusSchema,
+  type CompletionGoal,
+  type DelegationStatus,
+} from '@studio/contracts';
+import { localRequest } from './local-request';
+function morning() {
+  const d = new Date();
+  d.setHours(7, 0, 0, 0);
+  if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000)
+    .toISOString()
+    .slice(0, 16);
+}
+export function AutoSession({
+  id,
+  canConfigure,
+  canRetry = false,
+  openEvidence,
+}: {
+  id: string;
+  canConfigure: boolean;
+  canRetry?: boolean;
+  openEvidence?: (file: string, quote: string) => void;
+}) {
+  const path = '/runs/' + id + '/delegation';
+  const [state, setState] = useState<DelegationStatus | null>(null),
+    [editing, edit] = useState(false),
+    [draft, setDraft] = useState<CompletionGoal | null>(null),
+    [lines, setLines] = useState(''),
+    [mission, setMission] = useState(''),
+    [max, setMax] = useState(3),
+    [until, setUntil] = useState(morning),
+    [busy, setBusy] = useState(false),
+    [error, say] = useState('');
+  const generation = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const c = new AbortController();
+    let t: ReturnType<typeof setTimeout>;
+    async function read() {
+      try {
+        const v = delegationStatusSchema.parse(
+          await (await localRequest(path, 'GET', undefined, c.signal)).json(),
+        );
+        if (!c.signal.aborted) setState(v);
+      } catch (e) {
+        if (!c.signal.aborted) say((e as Error).message);
+      } finally {
+        if (!c.signal.aborted && canConfigure) t = setTimeout(read, 2500);
+      }
+    }
+    void read();
+    return () => {
+      c.abort();
+      clearTimeout(t);
+      generation.current?.abort();
+    };
+  }, [path, canConfigure]);
+  async function propose() {
+    generation.current?.abort();
+    const c = new AbortController();
+    generation.current = c;
+    setBusy(true);
+    say('');
+    edit(true);
+    try {
+      const suggestion = await (
+        await localRequest(
+          path + '/goal',
+          'POST',
+          {
+            includeMission: true,
+            ...(draft && { editedGoal: draft.goal.trim() }),
+          },
+          c.signal,
+        )
+      ).json();
+      const g = completionGoalSchema.parse(suggestion.goal);
+      if (!c.signal.aborted) {
+        setMission(suggestion.originalMission);
+        setDraft((previous) => ({
+          ...g,
+          target: previous?.target ?? g.target,
+        }));
+        setLines(g.criteria.join('\n'));
+      }
+    } catch (e) {
+      if (!c.signal.aborted) {
+        say((e as Error).message);
+        setDraft(
+          (previous) => previous ?? { goal: '', criteria: [], target: 100 },
+        );
+      }
+    } finally {
+      if (!c.signal.aborted) {
+        generation.current = null;
+        setBusy(false);
+      }
+    }
+  }
+  async function save(on: boolean) {
+    setBusy(true);
+    say('');
+    try {
+      const payload = on
+        ? {
+            ...draft,
+            criteria: lines
+              .split('\n')
+              .map((s) => s.trim())
+              .filter(Boolean),
+            maxSessions: max,
+            until: new Date(until).toISOString(),
+          }
+        : null;
+      const v = delegationStatusSchema.parse(
+        await (
+          await localRequest(
+            path,
+            on ? 'PUT' : 'DELETE',
+            on ? payload : undefined,
+          )
+        ).json(),
+      );
+      setState(v);
+      edit(false);
+      setDraft(null);
+    } catch (e) {
+      say((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  if (!canConfigure && !state?.config) return null;
+  return (
+    <section aria-label="다음 세션 자동승인" style={{ marginBlock: '12px' }}>
+      {state?.config && (
+        <>
+          <strong>{state.enabled ? '자동승인 켜짐' : '자동승인 종료'}</strong>
+          <p>
+            {state.config.goal} · 달성률 {state.score ?? '미평가'}
+            {state.score !== null ? '%' : ''} / 목표 {state.config.target}% ·
+            추가 세션 {state.used}/{state.config.maxSessions} ·{' '}
+            {new Date(state.config.until).toLocaleString('ko-KR')}까지
+          </p>
+          <p>{state.note}</p>
+          {state.checks.length > 0 && (
+            <details>
+              <summary>기준별 판정</summary>
+              <ul>
+                {state.checks.map((c) => {
+                  const quote = c.quote;
+                  const file = state.evidenceFiles?.[quote];
+                  return (
+                    <li key={c.criterion}>
+                      {c.criterion} ·{' '}
+                      {
+                        { met: '충족', unmet: '미달', unknown: '미검증' }[
+                          c.status
+                        ]
+                      }{' '}
+                      {quote}
+                      {c.status !== 'unknown' && file && openEvidence && (
+                        <>
+                          {' '}
+                          <button
+                            type="button"
+                            onClick={() => openEvidence(file, quote)}
+                          >
+                            검사 근거 열기
+                          </button>
+                        </>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </details>
+          )}
+        </>
+      )}
+      {!editing &&
+        state?.config &&
+        !state.enabled &&
+        ((canConfigure && state.note.startsWith('평가 또는 인계')) ||
+          (canRetry &&
+            (state.note === '실행이 끝나 위임을 마쳤습니다.' ||
+              state.note.startsWith('단계 응답 시간') ||
+              state.note.startsWith('평가 또는 인계')))) &&
+        Date.parse(state.config.until) > Date.now() && (
+          <button
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                setState(
+                  delegationStatusSchema.parse(
+                    await (
+                      await localRequest(path + '/resume', 'POST', {})
+                    ).json(),
+                  ),
+                );
+                say('');
+              } catch (e) {
+                say((e as Error).message);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            기존 위임으로 재개
+          </button>
+        )}
+      {state?.enabled ? (
+        <button disabled={busy} onClick={() => void save(false)}>
+          자동승인 해제
+        </button>
+      ) : (
+        canConfigure &&
+        !editing && (
+          <button onClick={() => void propose()}>자동승인 설정</button>
+        )
+      )}
+      {editing && (
+        <fieldset>
+          <legend>완성 목표 설정</legend>
+          <p>
+            충족한 기준 수로 달성률을 계산합니다. 목표 달성·횟수 소진·시각 도달
+            시 다음 승인 단계에서 루프가 끝납니다. 일반 검토와 질문은 직접
+            결정합니다.
+          </p>
+          {busy && generation.current && (
+            <p role="status">
+              {draft
+                ? '작성한 목표를 다듬고 합격 기준을 제안하고 있습니다…'
+                : '첫 세션의 작업 자료에서 완성 목표를 제안하고 있습니다…'}
+            </p>
+          )}
+          {draft && (
+            <>
+              {mission && (
+                <details>
+                  <summary>첫 세션의 작업 자료</summary>
+                  <p style={{ whiteSpace: 'pre-wrap' }}>{mission}</p>
+                </details>
+              )}
+              <label>
+                완성 목표
+                <textarea
+                  readOnly={busy}
+                  aria-label="완성 목표"
+                  maxLength={500}
+                  value={draft.goal}
+                  onChange={(e) => setDraft({ ...draft, goal: e.target.value })}
+                />
+              </label>
+              <label>
+                합격 기준 · 한 줄에 하나
+                <textarea
+                  readOnly={busy}
+                  aria-label="합격 기준 · 한 줄에 하나"
+                  rows={4}
+                  value={lines}
+                  onChange={(e) => setLines(e.target.value)}
+                />
+              </label>
+              <label>
+                목표 달성률 (%)
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={draft.target}
+                  onChange={(e) =>
+                    setDraft({ ...draft, target: Number(e.target.value) })
+                  }
+                />
+              </label>
+              <label>
+                최대 추가 세션 (1~{MAX_ADDITIONAL_SESSIONS}개)
+                <input
+                  type="number"
+                  min={1}
+                  max={MAX_ADDITIONAL_SESSIONS}
+                  value={max}
+                  onChange={(e) => setMax(Number(e.target.value))}
+                />
+              </label>
+              <label>
+                종료 시각 (24시간 이내)
+                <input
+                  type="datetime-local"
+                  value={until}
+                  onChange={(e) => setUntil(e.target.value)}
+                />
+              </label>
+              <button
+                disabled={
+                  busy ||
+                  !completionGoalSchema.safeParse({
+                    ...draft,
+                    criteria: lines
+                      .split('\n')
+                      .map((s) => s.trim())
+                      .filter(Boolean),
+                  }).success ||
+                  !Number.isInteger(max) ||
+                  max < 1 ||
+                  max > MAX_ADDITIONAL_SESSIONS ||
+                  !(
+                    Date.parse(until) > Date.now() &&
+                    Date.parse(until) <= Date.now() + 86400000
+                  )
+                }
+                onClick={() => void save(true)}
+              >
+                위임 시작
+              </button>
+            </>
+          )}
+          {!busy && (
+            <button
+              disabled={!!draft && !draft.goal.trim()}
+              onClick={() => void propose()}
+            >
+              목표 다시 제안
+            </button>
+          )}
+          <button
+            onClick={() => {
+              generation.current?.abort();
+              setBusy(false);
+              edit(false);
+              setDraft(null);
+            }}
+          >
+            닫기
+          </button>
+        </fieldset>
+      )}
+      {error && <p role="alert">{error}</p>}
+    </section>
+  );
+}

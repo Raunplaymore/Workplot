@@ -14,7 +14,7 @@
   border-top: 1px solid var(--border);
   padding: 0 20px;
   background: #f9fbf7;
-  font-size: 12px;
+  font-size: var(--type-caption);
   color: var(--muted);
   position: relative;
   z-index: 6;
@@ -40,7 +40,7 @@
 }
 .tools h2 {
   margin: 0;
-  font-size: 17px;
+  font-size: var(--type-section);
 }
 .tools ul {
   list-style: none;

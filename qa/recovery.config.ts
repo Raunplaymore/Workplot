@@ -5,7 +5,7 @@ const dir = process.env.STUDIO_QA_DIR!;
 export default defineConfig({
   ...base,
   webServer: undefined, // Each crash test owns its server child and waits for its exit.
-  projects: [{ name: 'recovery', testMatch: 'qa/recovery.spec.ts' }],
+  projects: [{ name: 'recovery', testDir: '.', testMatch: 'recovery.spec.ts' }],
   outputDir: join(dir, 'recovery-browser'),
   reporter: [['list'], ['json', { outputFile: join(dir, 'recovery.json') }]],
 });

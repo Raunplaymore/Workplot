@@ -1,0 +1,121 @@
+.dialog {
+  box-sizing: border-box;
+  width: min(92vw, 1440px);
+  height: min(88dvh, 960px);
+  max-height: 96dvh;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+}
+.dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.dialog::backdrop {
+  background: rgb(12 24 19 / 55%);
+}
+.dialog header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.dialog h2,
+.dialog h3 {
+  margin: 0;
+  font-size: var(--type-section);
+}
+.panes {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.reader,
+.instructions {
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 16px;
+  overflow: auto;
+}
+.reader {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.body {
+  overflow: auto;
+  min-height: 0;
+}
+.instructions {
+  width: 35%;
+  border-inline-start: 1px solid var(--border);
+}
+.dialog select,
+.dialog textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+}
+@media (max-width: 700px) {
+  .dialog {
+    width: 96vw;
+    height: 94dvh;
+    max-width: 96vw;
+  }
+  .panes {
+    flex-direction: column;
+  }
+  .instructions {
+    width: 100%;
+    max-height: 42%;
+    border-inline-start: 0;
+    border-top: 1px solid var(--border);
+  }
+  .reader,
+  .instructions {
+    padding: 10px;
+  }
+}
+.comparison {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: inherit;
+}
+.comparison th,
+.comparison td {
+  width: 50%;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  text-align: start;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.comparison th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+}
+.comparison :is(th, td) + :is(th, td) {
+  border-inline-start: 1px solid var(--border);
+}
+.comparison [data-change='old'] {
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+}
+.comparison [data-change='new'] {
+  background: color-mix(in srgb, var(--focus) 12%, var(--surface));
+}
+.comparison b {
+  display: block;
+  font-size: 0.85em;
+}
+.comparison :is(ins, del) {
+  font-weight: 700;
+}

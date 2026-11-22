@@ -38,6 +38,9 @@ export function writeReport(dir, checks) {
         const detail = evidence?.id
           ? [
               evidence.dashboard,
+              ...(evidence.facts
+                ? [`[비교 화면](${code}-comparison.png)`]
+                : []),
               ...(evidence.results ?? []),
               '[기록](' + code + '.json)',
               '[로그](' +
@@ -48,15 +51,17 @@ export function writeReport(dir, checks) {
             ]
               .filter(Boolean)
               .join(' · ')
-          : code === 'Q29' && evidence
-            ? '[질문](Q29-question.png) · [답변 후 와이어](Q29-wire.png) · [호출 및 저장 기록](Q29.json)'
-            : (code === 'Q27' || code === 'Q28') && evidence
+          : (code === 'Q29' || code === 'Q30') && evidence
+            ? `[질문](${code}-question.png) · [답변 후 와이어](${code}-wire.png) · [호출 및 저장 기록](${code}.json)`
+            : (code === 'Q27' || code === 'Q28' || code === 'Q36') && evidence
               ? '[설계 와이어](' +
                 code +
-                '-wire.png) · [취소·적용 및 업무 호출 기록](' +
+                '-wire.png) · [설계 및 업무 호출 기록](' +
                 code +
                 '.json)'
-              : '[브라우저 결과](' + file + ')';
+              : code === 'Q39' && evidence
+                ? '[추천 화면](Q39-match.png) · [선택 후 입력](Q39-material.png) · [실행 증거](Q39.json)'
+                : '[브라우저 결과](' + file + ')';
         lines.push('| ' + spec.title + ' | ' + label + ' | ' + detail + ' |');
       }
     }
@@ -64,6 +69,8 @@ export function writeReport(dir, checks) {
   }
   if (browser) addSuite(browser, 'browser.json');
   else lines.push('| 브라우저 전체 | 결과 미수집 | 실행 콘솔 확인 |');
+  const firstUse = read('first-use.json');
+  if (firstUse) addSuite(firstUse, 'first-use.json');
   const recovery = read('recovery.json');
   if (recovery) addSuite(recovery, 'recovery.json');
   else lines.push('| 서버 강제 종료 복구 | 결과 미수집 | 실행 콘솔 확인 |');

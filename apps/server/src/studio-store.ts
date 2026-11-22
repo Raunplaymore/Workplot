@@ -1,12 +1,18 @@
+import type { Reference } from './request-files.js';
+import { expandWorkflow } from './linked-workflow.js';
 import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import {
+  masterPlanSchema,
+  type RunMaterial,
   runInputSchema,
   runListSchema,
   runSummarySchema,
   storedRunSchema,
   type RunInput,
+  type ReviewReceipt,
   type RetryCheckpoint,
+  type PausedReview,
   workflowListSchema,
   workflowVersionSchema,
   type WorkflowDefinition,
@@ -48,6 +54,33 @@ export function openStudioStore(db: Database.Database) {
     `);
   }).immediate();
 
+  db.exec(
+    'CREATE TABLE IF NOT EXISTS workflow_favorites (workflow_id TEXT PRIMARY KEY) STRICT',
+  );
+  db.exec(
+    'CREATE TABLE IF NOT EXISTS workflow_locations(id TEXT PRIMARY KEY, location TEXT NOT NULL, restore_to TEXT NOT NULL) STRICT',
+  );
+  const locationRow = db.prepare(
+    'SELECT location,restore_to FROM workflow_locations WHERE id=?',
+  );
+  function placement(id: string) {
+    return (
+      (locationRow.get(id) as
+        { location: string; restore_to: string } | undefined) ?? {
+        location: 'active',
+        restore_to: 'active',
+      }
+    );
+  }
+  function allowUse(id: string) {
+    if (placement(id).location === 'trash') throw new StoreConflict();
+  }
+  const library = db.prepare(`
+    SELECT w.id, w.version, w.saved_at AS savedAt, json_extract(w.definition,'$.name') AS name,
+           coalesce(json_extract(w.definition,'$.goal'),'') AS goal, coalesce(l.location,'active') AS location, f.workflow_id IS NOT NULL AS favorite
+    FROM workflow_versions w JOIN (SELECT id,max(version) AS version FROM workflow_versions GROUP BY id) latest USING (id,version)
+    LEFT JOIN workflow_locations l ON l.id=w.id LEFT JOIN workflow_favorites f ON f.workflow_id=w.id ORDER BY w.saved_at DESC
+  `);
   const latest = db.prepare(`
     SELECT id, version, saved_at AS savedAt, definition
     FROM workflow_versions WHERE id = ? ORDER BY version DESC LIMIT 1
@@ -83,6 +116,7 @@ export function openStudioStore(db: Database.Database) {
       definition,
       savedAt: new Date().toISOString(),
     });
+    expandWorkflow(id, record.definition, workflow);
     insertVersion.run(
       id,
       version,
@@ -93,6 +127,7 @@ export function openStudioStore(db: Database.Database) {
   }
   const updateWorkflow = db.transaction(
     (id: string, baseVersion: number, definition: WorkflowDefinition) => {
+      allowUse(id);
       const current = workflow(id);
       if (current.version !== baseVersion) throw new StoreConflict();
       return insertWorkflow(id, baseVersion + 1, definition);
@@ -104,13 +139,17 @@ export function openStudioStore(db: Database.Database) {
     FROM workflow_versions w JOIN (
       SELECT id, max(version) AS version FROM workflow_versions GROUP BY id
     ) latest USING (id, version)
-    ORDER BY w.saved_at DESC, w.id
+    WHERE NOT EXISTS(SELECT 1 FROM workflow_locations l WHERE l.id=w.id AND l.location!='active') ORDER BY w.saved_at DESC, w.id
   `);
   const listRuns = db.prepare(`
-    SELECT r.id, r.workflow_version AS workflowVersion,
-      json_extract(w.definition, '$.name') AS name,
+    SELECT r.id, r.workflow_id AS workflowId, r.workflow_version AS workflowVersion,
+      coalesce(nullif(json_extract(r.record,'$.material.name'),''),json_extract(w.definition, '$.name')) AS name,
       json_extract(r.record, '$.summary.recordedAt') AS recordedAt,
-      json_extract(r.record, '$.summary.status') AS status
+      json_extract(r.record, '$.summary.status') AS status,
+      json_extract(r.record,'$.retry.quotaRetryAt') AS quotaRetryAt,
+      json_extract(r.record,'$.summary.master.runId') AS masterRunId,
+      json_extract(r.record,'$.summary.previousSessionId') AS previousSessionId,
+      (json_array_length(r.record,'$.results') > 1 OR json_type(r.record,'$.summary.origin') IS NOT NULL) AS comparable
     FROM runs r JOIN workflow_versions w ON w.id = r.workflow_id AND w.version = r.workflow_version
     ORDER BY recordedAt DESC, r.rowid DESC
   `);
@@ -129,50 +168,393 @@ export function openStudioStore(db: Database.Database) {
     };
   }
 
+  function recordRun(input: RunInput, id: string = randomUUID()) {
+    const { sessionId, process, results, material, ...summaryFields } =
+      runInputSchema.parse(input);
+    if (!summaryFields.previousSessionId) allowUse(summaryFields.workflowId);
+    workflow(summaryFields.workflowId, summaryFields.workflowVersion);
+    const summary = runSummarySchema.parse({
+      ...summaryFields,
+      id,
+      provider: 'codex',
+      recordedAt: new Date().toISOString(),
+    });
+    insertRun.run(
+      summary.id,
+      summary.workflowId,
+      summary.workflowVersion,
+      JSON.stringify({ summary, sessionId, process, results, material }),
+    );
+    return summary;
+  }
+
+  db.exec(`CREATE TABLE IF NOT EXISTS master_runs (
+    id TEXT PRIMARY KEY, plan_id TEXT NOT NULL, children TEXT NOT NULL CHECK(json_valid(children))
+  ) STRICT`);
+  db.exec(`CREATE TABLE IF NOT EXISTS master_ui_sources (
+    id TEXT PRIMARY KEY REFERENCES master_runs(id), baseline TEXT NOT NULL, report TEXT
+  ) STRICT`);
+  db.exec(`CREATE TABLE IF NOT EXISTS master_ui_steps (
+    run_id TEXT NOT NULL REFERENCES runs(id), step TEXT NOT NULL, digest TEXT NOT NULL, PRIMARY KEY(run_id,step)
+  ) STRICT`);
+  db.exec(
+    'CREATE TABLE IF NOT EXISTS master_stops (id TEXT PRIMARY KEY REFERENCES master_runs(id)) STRICT',
+  );
+  function masterRun(id: string) {
+    const row = db
+      .prepare('SELECT plan_id,children FROM master_runs WHERE id=?')
+      .get(id) as { plan_id: string; children: string } | undefined;
+    return (
+      row && {
+        id,
+        planId: row.plan_id,
+        children: JSON.parse(row.children) as {
+          taskId: string;
+          runId: string;
+        }[],
+      }
+    );
+  }
+  function masterPlan(id: string) {
+    const row = db
+      .prepare('SELECT definition FROM master_plans WHERE id=?')
+      .get(id) as { definition: string } | undefined;
+    if (!row) throw new StoreNotFound();
+    return masterPlanSchema.parse(JSON.parse(row.definition));
+  }
+  db.exec(
+    'CREATE TABLE IF NOT EXISTS request_snapshots(id TEXT PRIMARY KEY, data TEXT NOT NULL)',
+  );
   return {
+    recordWithSnapshot: db.transaction(
+      (
+        input: RunInput,
+        id: string,
+        data: { workspace?: string; refs: Reference[] },
+      ) => {
+        const summary = recordRun(input, id);
+        db.prepare('INSERT INTO request_snapshots VALUES(?,?)').run(
+          id,
+          JSON.stringify(data),
+        );
+        return summary;
+      },
+    ).immediate,
+    requestSnapshot(id: string) {
+      const raw = db
+        .prepare('SELECT data FROM request_snapshots WHERE id=?')
+        .pluck()
+        .get(id);
+      if (typeof raw !== 'string') throw new StoreNotFound();
+      return JSON.parse(raw) as { workspace?: string; refs: Reference[] };
+    },
     workflow,
+    masterRun,
+    masterPlan,
+    masterStopped: (id: string) =>
+      Boolean(db.prepare('SELECT 1 FROM master_stops WHERE id=?').get(id)),
+    closeMaster: (id: string) =>
+      db
+        .prepare(
+          'INSERT INTO master_stops(id) VALUES(?) ON CONFLICT DO NOTHING',
+        )
+        .run(id),
+    recordUiDigest(runId: string, step: string, digest: string) {
+      db.prepare(
+        'INSERT INTO master_ui_steps VALUES(?,?,?) ON CONFLICT(run_id,step) DO NOTHING',
+      ).run(runId, step, digest);
+      if (this.uiDigest(runId, step) !== digest) throw new StoreConflict();
+    },
+    uiDigest(runId: string, step: string) {
+      return db
+        .prepare('SELECT digest FROM master_ui_steps WHERE run_id=? AND step=?')
+        .pluck()
+        .get(runId, step);
+    },
+    unreportedUiMasters: () =>
+      db
+        .prepare(
+          `SELECT s.id FROM master_ui_sources s JOIN master_runs m ON s.id=m.id
+      WHERE s.report IS NULL AND NOT EXISTS (SELECT 1 FROM master_stops WHERE id=m.id) AND NOT EXISTS (
+        SELECT 1 FROM json_each(m.children) c LEFT JOIN runs r ON r.id=json_extract(c.value,'$.runId')
+        WHERE json_extract(r.record,'$.summary.status') IS NOT 'completed'
+      )`,
+        )
+        .pluck()
+        .all() as string[],
+    hasMasterSources: (id: string) =>
+      Boolean(db.prepare('SELECT 1 FROM master_ui_sources WHERE id=?').get(id)),
+    masterSources(id: string) {
+      const row = db
+        .prepare('SELECT baseline FROM master_ui_sources WHERE id=?')
+        .pluck()
+        .get(id) as string | undefined;
+      return row ? (JSON.parse(row) as Record<string, string>) : undefined;
+    },
+    integrationReport(id: string) {
+      const row = db
+        .prepare('SELECT report FROM master_ui_sources WHERE id=?')
+        .pluck()
+        .get(id) as string | null | undefined;
+      return row
+        ? (JSON.parse(row) as {
+            status: string;
+            branch?: string;
+            verifiedStage?: string;
+            directory?: string;
+            reason?: string;
+            files?: string[];
+          })
+        : null;
+    },
+    saveIntegration(
+      id: string,
+      report: {
+        status: string;
+        directory?: string;
+        reason?: string;
+        files?: string[];
+      },
+    ) {
+      db.prepare('UPDATE master_ui_sources SET report=? WHERE id=?').run(
+        JSON.stringify(report),
+        id,
+      );
+    },
+    recordMasterRun: db.transaction(
+      (
+        id: string,
+        planId: string,
+        cliVersion: string,
+        branches: {
+          taskId: string;
+          workflowId: string;
+          version: number;
+          material?: RunMaterial;
+        }[],
+        baseline?: Record<string, string>,
+      ) => {
+        const children = branches.map((b) => {
+          const summary = recordRun({
+            master: { runId: id, planId, taskId: b.taskId },
+            workflowId: b.workflowId,
+            workflowVersion: b.version,
+            cliVersion,
+            status: 'queued',
+            material: b.material,
+            sessionId: null,
+            process: null,
+            results: [],
+          });
+          return { taskId: b.taskId, runId: summary.id };
+        });
+        db.prepare('INSERT INTO master_runs VALUES(?,?,?)').run(
+          id,
+          planId,
+          JSON.stringify(children),
+        );
+        if (baseline)
+          db.prepare(
+            'INSERT INTO master_ui_sources(id,baseline) VALUES(?,?)',
+          ).run(id, JSON.stringify(baseline));
+        return { id, planId, children };
+      },
+    ).immediate,
+    executionDefinition: (id: string, version: number) =>
+      expandWorkflow(id, workflow(id, version).definition, workflow),
+    allowUse,
+    move: db.transaction(
+      (
+        id: string,
+        from: string,
+        action: 'archive' | 'trash' | 'restore',
+        pause: () => void,
+      ) => {
+        workflow(id);
+        const old = placement(id);
+        if (
+          from !== old.location ||
+          (action === 'archive' && from !== 'active') ||
+          (action === 'trash' && from === 'trash') ||
+          (action === 'restore' && from === 'active')
+        )
+          throw new StoreConflict();
+        const next =
+          action === 'archive'
+            ? 'archived'
+            : action === 'trash'
+              ? 'trash'
+              : from === 'trash'
+                ? old.restore_to
+                : 'active';
+        if (next === 'trash') pause();
+        db.prepare(
+          'INSERT OR REPLACE INTO workflow_locations VALUES (?,?,?)',
+        ).run(id, next, next === 'trash' ? from : 'active');
+        return next;
+      },
+    ).immediate,
+    listLibrary: () =>
+      library.all().map((row) => ({
+        ...(row as Record<string, unknown>),
+        favorite: Boolean((row as { favorite: number }).favorite),
+      })),
+    favorite(id: string, on: boolean) {
+      workflow(id);
+      db.prepare(
+        on
+          ? 'INSERT OR IGNORE INTO workflow_favorites VALUES (?)'
+          : 'DELETE FROM workflow_favorites WHERE workflow_id=?',
+      ).run(id);
+    },
     listRuns: () => runListSchema.parse(listRuns.all()),
     listWorkflows: () => workflowListSchema.parse(list.all()),
     createWorkflow: (definition: WorkflowDefinition) =>
       insertWorkflow(randomUUID(), 1, definition),
+    saveLinkedInstructions: db.transaction(
+      (
+        id: string,
+        baseVersion: number,
+        definition: WorkflowDefinition,
+        stepId: string,
+        childDefinition: WorkflowDefinition,
+      ) => {
+        const step = definition.steps.find((s) => s.id === stepId);
+        if (
+          step?.kind !== 'task' ||
+          !step.workflowRef ||
+          step.workflowRef.id === id
+        )
+          throw new StoreConflict();
+        const child = updateWorkflow(
+          step.workflowRef.id,
+          step.workflowRef.version,
+          childDefinition,
+        );
+        return updateWorkflow(id, baseVersion, {
+          ...definition,
+          steps: definition.steps.map((s) =>
+            s.id === stepId
+              ? {
+                  ...step,
+                  workflowRef: { id: child.id, version: child.version },
+                }
+              : s,
+          ),
+        });
+      },
+    ).immediate,
     updateWorkflow: (
       id: string,
       baseVersion: number,
       definition: WorkflowDefinition,
     ) => updateWorkflow.immediate(id, baseVersion, definition),
-    // Only the future server runner can supply ownership and session metadata.
-    recordRun(input: RunInput, id: string = randomUUID()) {
-      const { sessionId, process, results, ...summaryFields } =
-        runInputSchema.parse(input);
-      workflow(summaryFields.workflowId, summaryFields.workflowVersion);
-      const summary = runSummarySchema.parse({
-        ...summaryFields,
-        id,
-        provider: 'codex',
-        recordedAt: new Date().toISOString(),
-      });
-      insertRun.run(
-        summary.id,
-        summary.workflowId,
-        summary.workflowVersion,
-        JSON.stringify({ summary, sessionId, process, results }),
+    recordRun,
+    sessionMission(id: string) {
+      let first = run(id);
+      const seen = new Set<string>([id]);
+      while (first.summary.previousSessionId) {
+        const parentId = first.summary.previousSessionId;
+        if (seen.has(parentId)) throw new StoreConflict();
+        seen.add(parentId);
+        const parent = run(parentId);
+        if (
+          parent.summary.nextSessionId !== first.summary.id ||
+          parent.summary.workflowId !== first.summary.workflowId ||
+          parent.summary.workflowVersion !== first.summary.workflowVersion
+        )
+          throw new StoreConflict();
+        first = parent;
+      }
+      if (first.summary.taskRequest) return first.summary.taskRequest;
+      if (first.material?.source.trim()) return first.material.source;
+      const { definition } = workflow(
+        first.summary.workflowId,
+        first.summary.workflowVersion,
       );
-      return summary;
+      return definition.input?.trim() || definition.goal || '';
     },
+    recordNextSession: db.transaction(
+      (parentId: string, source: string, finish: () => void) => {
+        const parent = run(parentId);
+        if (parent.summary.status !== 'waiting' || parent.summary.nextSessionId)
+          throw new StoreConflict();
+        const { workflowId, workflowVersion, cliVersion } = parent.summary;
+        const child = recordRun({
+          workflowId,
+          workflowVersion,
+          cliVersion,
+          previousSessionId: parentId,
+          taskRequest: parent.summary.taskRequest,
+          snapshotId: parent.summary.snapshotId,
+          requestFiles: parent.summary.requestFiles,
+          status: 'queued',
+          material: { name: '', source },
+          sessionId: null,
+          process: null,
+          results: [],
+        });
+        db.prepare(
+          "UPDATE runs SET record=json_set(record,'$.summary.nextSessionId',?) WHERE id=?",
+        ).run(child.id, parentId);
+        finish();
+        return child;
+      },
+    ).immediate,
+    recordRerun: db.transaction(
+      (
+        input: RunInput,
+        baseVersion: number,
+        definition: WorkflowDefinition,
+      ) => {
+        updateWorkflow(input.workflowId, baseVersion, definition);
+        return recordRun(input);
+      },
+    ).immediate,
     run,
+    pausedReviews: () =>
+      db
+        .prepare(
+          "SELECT id FROM runs WHERE json_extract(record,'$.summary.status')='waiting' AND json_type(record,'$.pausedReview')='object'",
+        )
+        .pluck()
+        .all() as string[],
+    saveReview(id: string, checkpoint: PausedReview) {
+      const result = db
+        .prepare(
+          "UPDATE runs SET record=json_set(record,'$.pausedReview',json(?),'$.process',NULL) WHERE id=? AND json_extract(record,'$.summary.status')='waiting'",
+        )
+        .run(JSON.stringify(checkpoint), id);
+      if (!result.changes) throw new StoreConflict();
+    },
+    recordReviewDecision(
+      id: string,
+      receipt: ReviewReceipt,
+      restored: boolean,
+    ) {
+      const result = db
+        .prepare(
+          "UPDATE runs SET record=json_set(json_remove(record,'$.pausedReview'),'$.summary.lastReview',json(?)) WHERE id=? AND json_extract(record,'$.summary.status')='waiting' AND (?=0 OR json_extract(record,'$.pausedReview.gateId')=?)",
+        )
+        .run(JSON.stringify(receipt), id, Number(restored), receipt.gateId);
+      if (!result.changes) throw new StoreConflict();
+    },
     updateRun(
       id: string,
       patch: Pick<RunInput, 'status' | 'sessionId' | 'process' | 'results'> & {
         retry?: RetryCheckpoint;
+        completedHashes?: string[];
       },
     ) {
-      const { summary } = run(id);
+      const { summary, material } = run(id);
       const record = storedRunSchema.parse({
         summary: { ...summary, status: patch.status },
+        material,
         sessionId: patch.sessionId,
         process: patch.process,
         results: patch.results,
         retry: patch.retry,
+        completedHashes: patch.completedHashes,
       });
       updateRun.run(JSON.stringify(record), id);
       return record.summary;

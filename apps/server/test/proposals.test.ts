@@ -36,9 +36,14 @@ test('proposals preserve gates, task settings and implicit inputs outside the re
     'revision',
   ]);
   expect(steps.at(-1)?.inputs).toEqual(['draft', 'critique']);
-  expect(result.definition.steps.find((s) => s.id === 'review')).toEqual(
-    base.steps.find((s) => s.id === 'review'),
-  );
+  const gate = base.steps.find((s) => s.id === 'review')!;
+  expect(result.definition.steps.find((s) => s.id === 'review')).toEqual({
+    ...gate,
+    position: { x: 480, y: 90 },
+  });
+  expect(result.definition.steps.map((s) => s.position.x)).toEqual([
+    0, 240, 480, 720,
+  ]);
   const insertion = buildProposal(base, { ...edits, inputs: [] });
   if (insertion.kind !== 'proposal') throw Error('expected proposal');
   expect(workflowPlan(insertion.definition).steps.at(-1)?.inputs).toEqual([
@@ -162,4 +167,72 @@ test('clarified proposals validate the exchange and carry the resolved goal into
       true,
     ),
   ).toEqual({ kind: 'question', text: '누가 읽을 문서인가요?' });
+});
+
+test('edits instructions and goals without changing gates, input or existing versions', () => {
+  const edit = {
+    ...edits,
+    additions: [],
+    inputs: [],
+    instructions: [{ stepId: 'draft', text: '원본과 대조하세요.' }],
+    goal: '세부 목표',
+    doneWhen: '원본과 일치',
+  };
+  const result = buildProposal(base, edit);
+  if (result.kind !== 'proposal') throw Error('expected proposal');
+  expect(result.definition.steps[0]).toEqual({
+    ...base.steps[0],
+    instructions: '원본과 대조하세요.',
+  });
+  expect(result.definition.steps.slice(1)).toEqual(base.steps.slice(1));
+  expect(result.definition).toMatchObject({
+    goal: edit.goal,
+    doneWhen: edit.doneWhen,
+    input: base.input,
+    links: base.links,
+  });
+  expect(() =>
+    buildProposal(base, {
+      ...edit,
+      instructions: [{ stepId: 'review', text: '지침' }],
+    }),
+  ).toThrow();
+  expect(() =>
+    buildProposal(base, { ...edit, clarification: '질문?' }),
+  ).toThrow();
+});
+
+test('binds only the selected skill to a task and never binds while asking or targeting a gate', () => {
+  const skill = { id: 'a'.repeat(64), digest: 'b'.repeat(64), title: 'sample' };
+  const patch = {
+    clarification: '',
+    additions: [],
+    inputs: [],
+    instructions: [],
+    goal: null,
+    doneWhen: null,
+    skillStepId: 'revision',
+  };
+  const result = buildProposal(base, patch, skill);
+  if (result.kind !== 'proposal') throw Error('expected proposal');
+  expect(result.definition.steps).toEqual(
+    base.steps.map((s) =>
+      s.id === 'revision' ? { ...s, codexSkill: skill } : s,
+    ),
+  );
+  expect(() => buildProposal(base, patch)).toThrow();
+  for (const skillStepId of ['review', 'absent'])
+    expect(() =>
+      buildProposal(base, { ...patch, skillStepId }, skill),
+    ).toThrow();
+  expect(() =>
+    buildProposal(base, { ...patch, clarification: '어느 단계인가요?' }, skill),
+  ).toThrow();
+  expect(
+    buildProposal(
+      base,
+      { ...patch, skillStepId: null, clarification: '어느 단계인가요?' },
+      skill,
+    ).kind,
+  ).toBe('question');
 });

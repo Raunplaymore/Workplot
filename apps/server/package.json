@@ -5,9 +5,12 @@
   "type": "module",
   "dependencies": {
     "@fastify/static": "10.1.11",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@studio/contracts": "0.1.0",
     "better-sqlite3": "13.2.0",
-    "fastify": "5.12.8"
+    "diff": "8.0.4",
+    "fastify": "5.12.8",
+    "playwright": "1.65.1"
   },
   "scripts": {
     "probe:t01": "node --import tsx src/t01-probe.ts",

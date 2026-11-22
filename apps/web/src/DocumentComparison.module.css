@@ -1,0 +1,129 @@
+.page {
+  overflow: auto;
+  min-height: 0;
+  flex: 1;
+  padding: clamp(16px, 3vw, 40px);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 20px;
+}
+.page h2 {
+  font-size: var(--type-section);
+}
+.page small,
+.columns a {
+  color: var(--muted);
+  font-size: var(--type-caption);
+}
+.columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.columns article,
+.source,
+.audit,
+.selection {
+  min-width: 0;
+  border: 1px solid var(--border);
+  background: white;
+  padding: clamp(14px, 2vw, 24px);
+  border-radius: 8px;
+}
+.columns header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.page pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+  margin: 12px 0;
+}
+.source {
+  background: #f1f4ee;
+}
+.audit,
+.selection {
+  display: grid;
+  gap: 14px;
+}
+.audit table {
+  border-collapse: collapse;
+  width: 100%;
+  table-layout: fixed;
+}
+.audit :is(td, th) {
+  padding: 10px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+.audit th:first-child {
+  width: 16%;
+}
+.audit q,
+.selection :is(del, ins) {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.audit strong {
+  font-size: var(--type-ui);
+}
+.page button {
+  justify-self: start;
+  background: #28533d;
+  color: white;
+  padding: 10px 16px;
+  border-radius: 6px;
+  border: 0;
+}
+.page .selection label {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.page .selection input[type='checkbox'] {
+  width: auto;
+}
+.selection del {
+  color: #883d33;
+}
+.selection ins {
+  color: #28533d;
+  text-decoration: none;
+}
+.saved {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+@media (max-width: 700px) {
+  .columns {
+    grid-template-columns: 1fr;
+  }
+  .audit :is(td, th) {
+    padding: 5px;
+    font-size: var(--type-ui);
+  }
+}
+
+.audit [data-verdict='match'] {
+  color: #28533d;
+}
+.audit :is([data-verdict='uncertain'], [data-verdict='missing']) {
+  color: #78521e;
+}
+.audit :is([data-verdict='mismatch'], [data-verdict='conflict']) {
+  color: #943c2c;
+}

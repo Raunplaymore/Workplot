@@ -45,14 +45,18 @@ test('the built workspace connects to the local server without pretending to run
   await expect(
     page.getByRole('heading', { name: '워크플로 대시보드' }),
   ).toBeVisible();
-  await expect(page.getByRole('status')).toHaveText('로컬 서버 연결됨');
+  await expect(
+    page.getByRole('status').filter({ hasText: '로컬 서버' }),
+  ).toHaveText('로컬 서버 연결됨');
   await page.getByRole('link', { name: '흐름 설계' }).click();
   await expect(page.locator('.react-flow__node')).toHaveCount(3);
   await expect(
     page.getByRole('button', { name: '작업 실행 · 연결 준비 중' }),
   ).toBeDisabled();
   await page.reload();
-  await expect(page.getByRole('status')).toHaveText('로컬 서버 연결됨');
+  await expect(
+    page.getByRole('status').filter({ hasText: '로컬 서버' }),
+  ).toHaveText('로컬 서버 연결됨');
   expect(errors).toEqual([]);
 });
 
@@ -76,4 +80,101 @@ test('a failed server connection is visible on a narrow screen', async ({
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
+});
+
+test('390px 실행 목록에서 완료 상태와 결과 열기가 한 줄로 표시된다', async ({
+  page,
+}) => {
+  const id = '00000000-0000-4000-8000-000000000001';
+  await page.route('**/api/runs', (route) =>
+    route.fulfill({
+      json: [
+        {
+          id,
+          workflowId: '00000000-0000-4000-8000-000000000002',
+          workflowVersion: 1,
+          recordedAt: '2026-01-01T00:00:00.000Z',
+          status: 'completed',
+          name: '문서 전환 검증',
+        },
+      ],
+    }),
+  );
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.goto('/#/runs');
+  const result = page.getByRole('button', { name: '결과 열기', exact: true });
+  const row = page.getByRole('row').filter({ has: result });
+  for (const label of [row.getByText('완료', { exact: true }), result]) {
+    await expect(label).toBeVisible();
+    const lines = await label.evaluate((el) => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      return new Set(
+        Array.from(range.getClientRects(), (r) => Math.round(r.top)),
+      ).size;
+    });
+    expect(lines).toBe(1);
+  }
+  const fits = await row.evaluate((el) => {
+    const table = el.closest('table')!;
+    const box = table.getBoundingClientRect();
+    return (
+      box.left >= 0 &&
+      box.right <= innerWidth + 1 &&
+      table.parentElement!.scrollWidth === table.parentElement!.clientWidth
+    );
+  });
+  expect(fits).toBe(true);
+});
+
+test('실행 목록에서 세션 묶음을 유지한 채 페이지와 표시 개수를 변경한다', async ({
+  page,
+}) => {
+  const uuid = (i: number) =>
+    '00000000-0000-4000-8000-' + String(i).padStart(12, '0');
+  const rows = Array.from({ length: 105 }, (_, i) => ({
+    id: uuid(i),
+    workflowId: uuid(200),
+    workflowVersion: 1,
+    recordedAt: '2026-01-01T00:00:00.000Z',
+    status: i === 25 ? 'waiting' : 'completed',
+    name: '기록 ' + i,
+    ...(i === 0 && { previousSessionId: uuid(104) }),
+  }));
+  await page.route('**/api/runs', (route) => route.fulfill({ json: rows }));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/#/runs');
+  const table = page.locator('tbody tr'),
+    size = page.getByLabel('페이지당 실행 개수'),
+    next = page.getByLabel('다음 페이지'),
+    prev = page.getByLabel('이전 페이지');
+  await expect(table).toHaveCount(30);
+  await expect(prev).toBeDisabled();
+  await table.first().getByText('이전 세션 보기').click();
+  await expect(table.first().getByRole('link')).toHaveAttribute(
+    'href',
+    '#/runs/' + uuid(104),
+  );
+  await next.click();
+  await expect(table.first()).toContainText('기록 30');
+  await size.selectOption('50');
+  await expect(table).toHaveCount(50);
+  await next.click();
+  await next.click();
+  await expect(table).toHaveCount(4);
+  await expect(next).toBeDisabled();
+  await prev.click();
+  await expect(table.first()).toContainText('기록 50');
+  await page.getByRole('button', { name: /사용자 확인 대기/ }).click();
+  await expect(table).toHaveCount(1);
+  await expect(table.first()).toContainText('기록 25');
+  await page.getByRole('button', { name: /전체 실행/ }).click();
+  await size.selectOption('100');
+  await expect(table).toHaveCount(100);
+  await page.reload();
+  await expect(size).toHaveValue('100');
+  await expect(table).toHaveCount(100);
+  await next.click();
+  await expect(table).toHaveCount(4);
+  await expect(next).toBeDisabled();
 });

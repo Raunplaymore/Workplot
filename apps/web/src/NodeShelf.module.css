@@ -1,0 +1,98 @@
+.dialog {
+  width: min(29rem, calc(100% - 2rem));
+  max-height: 80dvh;
+  box-sizing: border-box;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  overflow: auto;
+}
+.dialog::backdrop {
+  background: #10142080;
+}
+.dialog header,
+.dialog footer,
+.toolbar,
+.dialog li,
+.check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.dialog header {
+  justify-content: space-between;
+}
+.dialog h2 {
+  font-size: 1.05rem;
+  margin: 0;
+}
+.dialog label:not(.check) {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0.75rem 0;
+}
+.dialog input:not([type='checkbox']),
+.dialog textarea,
+.dialog select {
+  font: inherit;
+  background: var(--wash);
+  color: inherit;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.5rem;
+  min-width: 0;
+}
+.dialog button {
+  font: inherit;
+  color: inherit;
+  background: var(--wash);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.45rem 0.55rem;
+  cursor: pointer;
+}
+.dialog button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.dialog ul {
+  list-style: none;
+  padding: 0;
+}
+.dialog li {
+  margin: 0.3rem 0;
+}
+.slot {
+  flex: 1;
+  text-align: left;
+}
+.slot small {
+  display: block;
+  opacity: 0.8;
+}
+.toolbar,
+.dialog footer,
+.wire {
+  margin-top: 0.8rem;
+}
+.toolbar input {
+  flex: 1;
+}
+.dialog footer {
+  justify-content: flex-end;
+}
+.dialog footer button:last-child {
+  background: var(--focus);
+  color: var(--on-accent, white);
+}
+.wire {
+  padding: 0.7rem;
+  background: var(--wash);
+  border-radius: 6px;
+}
+.dialog [role='alert'] {
+  color: var(--danger);
+}

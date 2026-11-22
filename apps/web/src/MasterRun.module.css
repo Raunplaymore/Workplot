@@ -1,0 +1,170 @@
+.page {
+  overflow: auto;
+  min-height: 0;
+  padding: clamp(16px, 3vw, 44px);
+  color: var(--text);
+}
+.page > a,
+.links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--focus);
+}
+.page h2 {
+  margin: 1.2rem 0;
+  font-size: var(--type-title);
+}
+.wire {
+  display: grid;
+  grid-template-columns: minmax(5rem, auto) minmax(10rem, 1fr) minmax(
+      6rem,
+      auto
+    );
+  align-items: center;
+  max-width: 920px;
+}
+.branches,
+.links {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.branches {
+  display: grid;
+  gap: 14px;
+}
+.branches li {
+  position: relative;
+  padding: 0 22px;
+}
+.branches li:before,
+.branches li:after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 22px;
+  height: calc(50% + 7px);
+  border-top: 2px solid var(--border);
+}
+.branches li:before {
+  left: 0;
+  border-left: 2px solid var(--border);
+}
+.branches li:after {
+  right: 0;
+  border-right: 2px solid var(--border);
+}
+.branches li:last-child:before,
+.branches li:last-child:after {
+  top: auto;
+  bottom: 50%;
+  border-top: 0;
+  border-bottom: 2px solid var(--border);
+}
+.node,
+.endpoint {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  color: var(--text);
+}
+.endpoint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 650;
+}
+.endpoint svg {
+  width: 16px;
+  flex: none;
+}
+.node {
+  position: relative;
+  display: grid;
+  gap: 3px;
+  text-decoration: none;
+  padding-right: 28px;
+  overflow-wrap: anywhere;
+}
+.node:hover {
+  border-color: var(--focus);
+}
+.node svg {
+  position: absolute;
+  right: 8px;
+  top: 12px;
+}
+.node span,
+.node small,
+.links small {
+  color: var(--muted);
+}
+.report {
+  margin-top: 24px;
+  max-width: 920px;
+  border-top: 1px solid var(--border);
+  padding: 16px 0;
+  overflow-wrap: anywhere;
+}
+.report h3 {
+  margin-bottom: 0.7rem;
+}
+.report h4 {
+  margin-bottom: 0.3rem;
+}
+.report details {
+  margin-top: 1rem;
+}
+.report summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+.report label {
+  margin: 12px 0;
+}
+.report img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+}
+.links li {
+  margin-bottom: 0.5rem;
+}
+@media (max-width: 650px) {
+  .wire {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+  .endpoint {
+    justify-self: center;
+  }
+  .branches {
+    margin: 0 0 0 12px;
+    padding: 14px 0;
+    border-left: 2px solid var(--border);
+  }
+  .branches li {
+    padding: 0 0 0 16px;
+  }
+  .branches li:before,
+  .branches li:last-child:before {
+    top: 50%;
+    bottom: auto;
+    height: 0;
+    width: 16px;
+    border: 0;
+    border-top: 2px solid var(--border);
+  }
+  .branches li:after {
+    display: none;
+  }
+  .endpoint {
+    justify-self: start;
+  }
+  .page {
+    flex: 1;
+  }
+}

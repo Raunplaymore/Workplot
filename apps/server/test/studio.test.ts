@@ -331,3 +331,62 @@ test('an actual SQLite write failure preserves the previous version and returns 
     (await app.inject({ url: url + '/versions/2', headers })).statusCode,
   ).toBe(404);
 });
+
+test('master plans pin child versions, reject invalid dependencies and survive restart without creating any runs', async () => {
+  app = await buildApp(path);
+  let headers = await session(app);
+  const child = (
+    await app.inject({
+      method: 'POST',
+      url: '/api/workflows',
+      headers,
+      payload: definition,
+    })
+  ).json();
+  const url = '/api/master-plans/' + randomUUID();
+  const task = {
+    id: 'a',
+    workflow: { id: child.id, version: 1 },
+    dependsOn: [] as string[],
+    documents: { needs: [], output: '결과' },
+    doneWhen: '결과 확인',
+  };
+  const save = (tasks: (typeof task)[]) =>
+    app!.inject({
+      method: 'PUT',
+      url,
+      headers,
+      payload: { goal: '인계 실험', tasks },
+    });
+  expect((await save([task, task])).statusCode).toBe(400);
+  expect((await save([{ ...task, dependsOn: ['missing'] }])).statusCode).toBe(
+    400,
+  );
+  expect(
+    (
+      await save([
+        { ...task, dependsOn: ['b'] },
+        { ...task, id: 'b', dependsOn: ['a'] },
+      ])
+    ).statusCode,
+  ).toBe(400);
+  expect(
+    (await save([{ ...task, workflow: { ...task.workflow, version: 2 } }]))
+      .statusCode,
+  ).toBe(404);
+  const tasks = [
+    task,
+    { ...task, id: 'b' },
+    { ...task, id: 'join', dependsOn: ['a', 'b'] },
+  ];
+  expect((await save(tasks)).statusCode).toBe(201);
+  expect((await save(tasks)).statusCode).toBe(200);
+  expect((await save([task])).statusCode).toBe(409);
+  await app.close();
+  app = await buildApp(path);
+  headers = await session(app);
+  expect((await app.inject({ url, headers })).json().definition.tasks).toEqual(
+    tasks,
+  );
+  expect((await app.inject({ url: '/api/runs', headers })).json()).toEqual([]);
+});

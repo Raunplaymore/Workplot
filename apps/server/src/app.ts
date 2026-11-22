@@ -1,3 +1,7 @@
+import { createDelegation } from './delegation.js';
+import { createSessionHistory } from './session-history.js';
+import { createScheduler } from './scheduler.js';
+import { createComparisons } from './comparisons.js';
 import { dirname } from 'node:path';
 import { codexRunner, runCodexJson } from './codex-runner.js';
 import { createRunService } from './run-service.js';
@@ -15,6 +19,8 @@ export async function buildApp(
   inspectTools = detectTools,
   runner = codexRunner,
   generateProposal = runCodexJson,
+  evaluateDocuments = runCodexJson,
+  skillDestination?: { root: string; port: 4310 | 5173 },
 ) {
   const app = Fastify();
   const db = new Database(databasePath);
@@ -25,11 +31,52 @@ export async function buildApp(
   try {
     db.pragma('journal_mode = WAL');
     const store = openStudioStore(db);
-    const runs = createRunService(store, runner, dirname(databasePath));
-    app.addHook('preClose', async () => runs.close());
+    const history = createSessionHistory(db, store, dirname(databasePath));
+    const runs = createRunService(
+      store,
+      runner,
+      dirname(databasePath),
+      history.expired,
+    );
+    let cleanupTimer: ReturnType<typeof setInterval> | undefined;
+    app.addHook('onListen', async () => {
+      const clean = () => {
+        try {
+          history.sweep();
+        } catch (err) {
+          app.log.error({ err }, '세션 기록 정리 실패');
+        }
+      };
+      clean();
+      cleanupTimer = setInterval(clean, 60_000);
+      cleanupTimer.unref();
+    });
+    app.addHook('onClose', async () => clearInterval(cleanupTimer));
+    await runs.restoreReview();
+    app.addHook('onListen', async () => runs.recoverIntegrations());
+    const delegation = createDelegation(db, store, runs, generateProposal);
+    app.addHook('onListen', async () => delegation.start());
+    const scheduler = createScheduler(db, store, runs, dirname(databasePath));
+    app.addHook('onListen', async () => scheduler.start());
+    app.addHook('preClose', async () => {
+      await delegation.close();
+      await scheduler.close();
+      await runs.close();
+    });
     await app.register(
       async (routes) =>
-        registerStudioRoutes(routes, store, runs, generateProposal),
+        registerStudioRoutes(
+          routes,
+          store,
+          runs,
+          generateProposal,
+          createComparisons(db, store, runs.artifact, evaluateDocuments),
+          scheduler,
+          db,
+          history,
+          delegation,
+          skillDestination,
+        ),
       {
         prefix: '/api',
       },

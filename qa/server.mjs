@@ -13,7 +13,7 @@ if (!dir) throw new Error('npm run qa 로 실행하세요.');
 const file = join(dir, 'studio.sqlite');
 const db = new Database(file);
 const store = openStudioStore(db);
-if (!store.listWorkflows().length)
+if (!process.env.STUDIO_FIRST_USE && !store.listWorkflows().length)
   store.createWorkflow(
     JSON.parse(
       readFileSync(new URL('./workflow.json', import.meta.url), 'utf8'),
@@ -31,11 +31,18 @@ const app = await buildApp(
       );
       return codexRunner.ready();
     },
-    write(prompt, signal, observe) {
+    write(prompt, signal, observe, tool, documentOnly) {
       // The server permits one active run. Record its actual CLI calls separately from UI events.
       const run = store.listRuns().find((row) => row.status === 'running');
       if (!run) throw new Error('실행 ID 확인 실패');
-      const { currentStepId: step, priorDocument } = JSON.parse(prompt);
+      const {
+        taskSkill,
+        currentStepId: step,
+        priorDocument,
+        inputDocuments,
+        instructions,
+        source,
+      } = JSON.parse(prompt);
       const log = (event) =>
         appendFileSync(
           join(dir, 'cli.jsonl'),
@@ -43,26 +50,72 @@ const app = await buildApp(
         );
       log({
         event: 'write',
+        ...(taskSkill && {
+          taskSkill: taskSkill.name,
+          skillDigest: createHash('sha256')
+            .update(taskSkill.instructions)
+            .digest('hex'),
+        }),
+        ...(inputDocuments && {
+          instructions,
+          sourceSha256: createHash('sha256').update(source).digest('hex'),
+          inputs: inputDocuments.map(({ filename, text }) => ({
+            filename,
+            sha256: createHash('sha256').update(text).digest('hex'),
+          })),
+        }),
         ...(typeof priorDocument === 'string' && {
           priorDocumentSha256: createHash('sha256')
             .update(priorDocument)
             .digest('hex'),
         }),
       });
-      return codexRunner.write(prompt, signal, (info) => {
-        if (info.pid) log({ event: 'spawn', pid: info.pid });
-        observe(info);
-      });
+      return codexRunner.write(
+        prompt,
+        signal,
+        (info) => {
+          if (info.pid) log({ event: 'spawn', pid: info.pid });
+          observe(info);
+        },
+        tool,
+        documentOnly,
+      );
     },
   },
   async (prompt, signal, observe, schema) => {
+    const payload = JSON.parse(prompt);
+    const matching = payload.task === 'workflow_match';
     const record = (event) =>
       appendFileSync(
-        join(dir, 'design-cli.jsonl'),
+        join(dir, matching ? 'match-cli.jsonl' : 'design-cli.jsonl'),
         JSON.stringify(event) + '\n',
       );
-    const { request, clarifications } = JSON.parse(prompt);
-    record({ event: 'request', request, clarifications });
+    const { request, clarifications, skill } = payload;
+    if (matching)
+      record({
+        event: 'request',
+        goal: payload.goal,
+        catalog: payload.catalog,
+      });
+    else
+      record({
+        event: 'request',
+        request,
+        clarifications,
+        ...(typeof skill === 'string' && {
+          skillSha256: createHash('sha256').update(skill).digest('hex'),
+        }),
+        ...(payload.selectedDesignSkill && {
+          selectedDesignSkill: {
+            id: payload.selectedDesignSkill.id,
+            digest: payload.selectedDesignSkill.digest,
+            instructionsSha256: createHash('sha256')
+              .update(payload.selectedDesignSkill.instructions)
+              .digest('hex'),
+          },
+        }),
+      });
+    const itemTypes = [];
     const edits = await runCodexJson(
       prompt,
       signal,
@@ -71,10 +124,37 @@ const app = await buildApp(
         observe(info);
       },
       schema,
+      (type) => itemTypes.push(type),
     );
-    record({ event: 'response', edits });
+    record({ event: 'response', edits, itemTypes });
     return edits;
   },
+  async (prompt, signal, observe, schema) => {
+    const { criteria, source, original, revision } = JSON.parse(prompt);
+    const digest = (text) => createHash('sha256').update(text).digest('hex');
+    let pid;
+    const result = await runCodexJson(
+      prompt,
+      signal,
+      (info) => {
+        if (info.pid) pid = info.pid;
+        observe(info);
+      },
+      schema,
+    );
+    appendFileSync(
+      join(dir, 'comparison-cli.jsonl'),
+      JSON.stringify({
+        pid,
+        criteriaSha256: digest(criteria),
+        sourceSha256: digest(source),
+        originalSha256: digest(original),
+        revisionSha256: digest(revision),
+      }) + '\n',
+    );
+    return result;
+  },
+  { root: join(dir, 'skills'), port: 5173 },
 );
 await app.listen({ host: '127.0.0.1', port: 5173 });
 process.send?.('ready');

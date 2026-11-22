@@ -30,6 +30,13 @@ if (check('build', 'npm', ['run', 'build'])) {
     '--reporter=json',
     '--outputFile.json=' + join(dir, 'unit.json'),
   ]);
+  mkdirSync(join(dir, 'first-use'));
+  check('first-use', 'node', [
+    'node_modules/@playwright/test/cli.js',
+    'test',
+    '--config',
+    'qa/first-use.config.ts',
+  ]);
   check('crash-recovery', 'node', [
     'node_modules/@playwright/test/cli.js',
     'test',

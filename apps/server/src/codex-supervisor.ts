@@ -16,8 +16,12 @@ function killOwnedGroup() {
 }
 process.once('disconnect', killOwnedGroup);
 cli.once('error', () => process.exit(1));
-cli.once('exit', (code) => {
+cli.once('exit', (code, signal) => {
   killOwnedGroup();
+  if (signal && process.connected) {
+    process.send!(signal, () => process.exit(code ?? 1));
+    return;
+  }
   process.exit(code ?? 1);
 });
 if (cli.pid)
