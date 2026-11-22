@@ -29,6 +29,9 @@ export function writeReport(dir, checks) {
           '',
         ]
       : []),
+    ...(read('git-integration.json')
+      ? ['[G3 실제 Codex 통합 큐 기록](git-integration.json)', '']
+      : []),
     '| 브라우저 검사 | 판정 | 상태 및 증거 |',
     '| --- | --- | --- |',
   ];

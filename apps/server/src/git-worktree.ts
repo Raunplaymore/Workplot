@@ -14,7 +14,7 @@ const within = (parent: string, child: string) =>
 function problem(message: string): never {
   throw new AttachmentError(message);
 }
-async function git(cwd: string, ...args: string[]) {
+export async function git(cwd: string, ...args: string[]) {
   return (
     await exec(
       'git',

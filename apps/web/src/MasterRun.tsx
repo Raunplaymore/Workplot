@@ -3,6 +3,7 @@ import { ArrowLeft, ArrowUpRight, GitBranch, GitMerge } from 'lucide-react';
 import {
   workflowIdSchema,
   type MasterPlan,
+  type GitIntegrationEntry,
   type RunView,
   type RunList,
 } from '@studio/contracts';
@@ -55,6 +56,8 @@ type Master = {
   hasUiIntegration: boolean;
   children: { runId: string; taskId: string; view: RunView }[];
   integration: Report | null;
+  gitQueue?: GitIntegrationEntry[];
+  gitVerifiedHead?: string | null;
 };
 const states: Record<RunView['summary']['status'], string> = {
   queued: '시작 대기',
@@ -70,6 +73,14 @@ const reports: Record<string, string> = {
   failed: '검증 실패',
   conflict: '파일 충돌',
   unchanged: '변경 없음',
+};
+const queueStates: Record<GitIntegrationEntry['status'], string> = {
+  queued: '통합 대기',
+  checking: '병합·검사 중',
+  verified: '검증 통과',
+  conflict: '충돌 대기',
+  failed: '검증 실패',
+  stopped: '중단됨',
 };
 function RunAction({
   path,
@@ -235,9 +246,84 @@ export function MasterRun({ id }: { id: string }) {
               })}
             </ul>
             <div className={styles.endpoint}>
-              <GitMerge aria-hidden="true" /> {status}
+              <GitMerge aria-hidden="true" />{' '}
+              {data.gitQueue?.length && !data.stopped
+                ? data.gitQueue.every((j) => j.status === 'verified')
+                  ? '통합 후보 검증 통과'
+                  : data.gitQueue.some(
+                        (j) => j.status === 'checking' || j.status === 'queued',
+                      )
+                    ? '통합 검사 중'
+                    : '통합 결과 검토'
+                : status}
             </div>
           </div>
+          {complete &&
+            !data.stopped &&
+            !data.gitQueue?.length &&
+            data.children.every(
+              (c) => c.view.summary.isolatedGit && c.view.worktree,
+            ) && (
+              <RunAction
+                path={'/master-runs/' + id + '/git-integration'}
+                label="Git 통합 큐에 추가"
+                refresh={refresh}
+              />
+            )}
+          {!!data.gitQueue?.length && (
+            <section className={styles.report} aria-label="Git 통합 큐">
+              <h3>
+                Git 통합 큐 ·{' '}
+                {data.children[0]?.view.summary.requestFiles?.gitTarget?.branch}
+              </h3>
+              {data.gitVerifiedHead && (
+                <p>
+                  대상 브랜치의 최근 통과 후보{' '}
+                  <code>{data.gitVerifiedHead.slice(0, 12)}</code> · 원본 반영
+                  전
+                </p>
+              )}
+              <ol>
+                {data.gitQueue.map((job) => (
+                  <li key={job.run} value={job.sequence}>
+                    <details>
+                      <summary>
+                        {job.task} · {queueStates[job.status]}
+                      </summary>
+                      <p>
+                        작업 {job.source.slice(0, 12)} · 병합 기준{' '}
+                        {job.parent?.slice(0, 12) ?? '대기 중'}
+                      </p>
+                      {job.candidate && (
+                        <p>
+                          검사 후보 <code>{job.candidate}</code>
+                        </p>
+                      )}
+                      {!!job.files.length && (
+                        <ul>
+                          {job.files.map((file) => (
+                            <li key={file}>
+                              <code>{file}</code>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {job.detail && (
+                        <pre
+                          style={{
+                            whiteSpace: 'pre-wrap',
+                            overflowWrap: 'anywhere',
+                          }}
+                        >
+                          {job.detail}
+                        </pre>
+                      )}
+                    </details>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          )}
           {report && (
             <section className={styles.report}>
               <h3>통합 결과</h3>

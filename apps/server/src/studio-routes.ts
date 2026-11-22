@@ -266,10 +266,15 @@ export function registerStudioRoutes(
       (req) => {
         const master = store.masterRun(req.params.id);
         if (!master) throw new StoreNotFound();
+        const gitQueue = store.gitQueue.list(master.id);
         return {
           ...master,
           stopped: store.masterStopped(master.id),
           plan: store.masterPlan(master.planId),
+          gitQueue,
+          gitVerifiedHead: gitQueue[0]
+            ? (store.gitQueue.lastVerified(gitQueue[0].lane) ?? null)
+            : null,
           hasUiIntegration: store.hasMasterSources(master.id),
           integrating: runs.integrating(master.id),
           integration: store.integrationReport(master.id),
@@ -284,6 +289,10 @@ export function registerStudioRoutes(
     protectedRoutes.post<{ Params: { id: string } }>(
       '/master-runs/:id/stop',
       (req) => runs.stopMaster(req.params.id),
+    );
+    protectedRoutes.post<{ Params: { id: string } }>(
+      '/master-runs/:id/git-integration',
+      (req) => runs.requestGitIntegration(req.params.id),
     );
     protectedRoutes.post<{ Params: { id: string } }>(
       '/master-runs/:id/integration',

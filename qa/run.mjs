@@ -31,6 +31,7 @@ if (check('build', 'npm', ['run', 'build'])) {
     '--outputFile.json=' + join(dir, 'unit.json'),
   ]);
   check('git-worktrees', 'node', ['qa/git-worktrees.mjs']);
+  check('git-integration', 'node', ['qa/git-integration.mjs']);
   mkdirSync(join(dir, 'first-use'));
   check('first-use', 'node', [
     'node_modules/@playwright/test/cli.js',

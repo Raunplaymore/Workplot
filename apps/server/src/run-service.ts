@@ -7,6 +7,7 @@ import {
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { extname } from 'node:path';
+import { createGitIntegration } from './git-integration.js';
 import { manageWorktrees } from './git-worktree.js';
 import type { GitTarget, RequestFiles } from '@studio/contracts';
 import { createHash, randomUUID } from 'node:crypto';
@@ -171,6 +172,7 @@ export function createRunService(
     const status = execution.view.summary.status;
     return !terminal.has(status) || status === 'unknown';
   }
+  const gitIntegration = createGitIntegration(store);
   const worktrees = manageWorktrees(store, root);
   const blocked = (isolatedTask?: string) => {
     const active = [...executions.values()].filter(occupied);
@@ -942,6 +944,7 @@ export function createRunService(
         launch(child, definition);
       } else {
         finish();
+        if (parent) gitIntegration.submit(parent.runId);
         if (
           parent &&
           !store.masterStopped(parent.runId) &&
@@ -1264,8 +1267,11 @@ export function createRunService(
       }
     },
     integrate,
-    integrating: (id: string) => integrating.has(id),
+    requestGitIntegration: gitIntegration.request,
+    integrating: (id: string) =>
+      integrating.has(id) || gitIntegration.pending(id),
     recoverIntegrations() {
+      gitIntegration.recover();
       for (const id of store.unreportedUiMasters()) void integrate(id);
     },
     async startMaster(id: string, planId: string, target?: GitTarget) {
@@ -1562,6 +1568,7 @@ export function createRunService(
       store.closeMaster(id);
       integrationControllers.get(id)?.abort();
       await Promise.all([
+        gitIntegration.stop(id),
         ...master.children.map((child) => this.stop(child.runId)),
         integrating.get(id),
       ]);
@@ -1597,6 +1604,7 @@ export function createRunService(
         }),
       );
       await integrationTail;
+      await gitIntegration.close();
     },
   };
 }

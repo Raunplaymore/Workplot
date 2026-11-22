@@ -1,3 +1,4 @@
+import { openGitQueue } from './git-queue-store.js';
 import type { Reference } from './request-files.js';
 import { expandWorkflow } from './linked-workflow.js';
 import { randomUUID } from 'node:crypto';
@@ -231,6 +232,7 @@ export function openStudioStore(db: Database.Database) {
     CREATE TABLE IF NOT EXISTS git_bindings(service_id TEXT NOT NULL REFERENCES development_services(id),checkout_id TEXT NOT NULL,path TEXT NOT NULL,repo_id TEXT NOT NULL, PRIMARY KEY(service_id,checkout_id,path));
     CREATE TABLE IF NOT EXISTS development_worktrees(task TEXT PRIMARY KEY,directory TEXT NOT NULL,path TEXT NOT NULL,branch TEXT NOT NULL,base TEXT NOT NULL,head TEXT NOT NULL,dirty_hash TEXT,pending TEXT,ready INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE IF NOT EXISTS development_calls(id INTEGER PRIMARY KEY,run TEXT NOT NULL REFERENCES runs(id),step TEXT NOT NULL,pid INTEGER NOT NULL,session TEXT,observedAt TEXT NOT NULL);`);
+  const gitQueue = openGitQueue(db);
   function bindings() {
     return db
       .prepare(
@@ -243,6 +245,7 @@ export function openStudioStore(db: Database.Database) {
   }
   return {
     bindings,
+    gitQueue,
     worktree(task: string) {
       return db
         .prepare(
@@ -472,6 +475,7 @@ export function openStudioStore(db: Database.Database) {
           planId,
           JSON.stringify(children),
         );
+        if (gitTarget) gitQueue.register(id);
         if (baseline)
           db.prepare(
             'INSERT INTO master_ui_sources(id,baseline) VALUES(?,?)',

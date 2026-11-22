@@ -65,4 +65,18 @@ export const masterPlanSchema = z
     }
   });
 
+export type GitIntegrationEntry = {
+  sequence: number;
+  run: string;
+  task: string;
+  source: string;
+  base: string;
+  parent: string | null;
+  candidate: string | null;
+  status:
+    'queued' | 'checking' | 'verified' | 'conflict' | 'failed' | 'stopped';
+  files: string[];
+  detail: string;
+};
+
 export type MasterPlan = z.infer<typeof masterPlanSchema>;
