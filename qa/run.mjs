@@ -30,6 +30,7 @@ if (check('build', 'npm', ['run', 'build'])) {
     '--reporter=json',
     '--outputFile.json=' + join(dir, 'unit.json'),
   ]);
+  check('git-promotion', 'node', ['qa/git-promotion.mjs']);
   check('git-worktrees', 'node', ['qa/git-worktrees.mjs']);
   check('git-integration', 'node', ['qa/git-integration.mjs']);
   mkdirSync(join(dir, 'first-use'));

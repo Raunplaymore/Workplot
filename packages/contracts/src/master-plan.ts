@@ -79,4 +79,28 @@ export type GitIntegrationEntry = {
   detail: string;
 };
 
+const gitSha = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
+export const promotionDecisionSchema = z.strictObject({
+  ticket: z.uuid(),
+  expected: gitSha,
+  candidate: gitSha,
+});
+export type PromotionDecision = z.infer<typeof promotionDecisionSchema>;
+export type GitPromotion = PromotionDecision & {
+  run: string;
+  status:
+    | 'ready'
+    | 'applying'
+    | 'applied'
+    | 'stale'
+    | 'checking'
+    | 'failed'
+    | 'blocked'
+    | 'unchanged';
+  detail: string;
+  checks: string;
+  approvedAt: string | null;
+  appliedAt: string | null;
+};
+
 export type MasterPlan = z.infer<typeof masterPlanSchema>;

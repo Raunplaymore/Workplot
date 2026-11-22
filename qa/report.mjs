@@ -29,6 +29,9 @@ export function writeReport(dir, checks) {
           '',
         ]
       : []),
+    ...(read('git-promotion.json')
+      ? ['[G4 원본 반영·서버 복구 기록](git-promotion.json)', '']
+      : []),
     ...(read('git-integration.json')
       ? ['[G3 실제 Codex 통합 큐 기록](git-integration.json)', '']
       : []),

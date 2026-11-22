@@ -1,3 +1,4 @@
+import { createGitPromotions } from './git-promotion.js';
 import { createDelegation } from './delegation.js';
 import { createSessionHistory } from './session-history.js';
 import { createScheduler } from './scheduler.js';
@@ -31,6 +32,8 @@ export async function buildApp(
   try {
     db.pragma('journal_mode = WAL');
     const store = openStudioStore(db);
+    const promotions = createGitPromotions(db, store);
+    app.addHook('onListen', async () => promotions.recover());
     const history = createSessionHistory(db, store, dirname(databasePath));
     const runs = createRunService(
       store,
@@ -75,6 +78,7 @@ export async function buildApp(
           db,
           history,
           delegation,
+          promotions,
           skillDestination,
         ),
       {

@@ -1,4 +1,6 @@
 const errorText: Record<string, string> = {
+  promotion_changed:
+    '승인 대상이 바뀌었거나 같은 브랜치에서 다른 요청을 처리 중입니다. 최신 후보를 확인하세요.',
   invalid_completion_goal:
     'Codex가 완성 목표와 합격 기준을 작성하지 못했습니다. 목표 다시 제안으로 재시도하세요.',
   invalid_workflow_link:
@@ -70,9 +72,11 @@ export async function localRequest(
     const data = await response.json().catch(() => ({}));
     throw new LocalRequestError(
       response.status,
-      (data.error === 'request_files' && typeof data.message === 'string'
-        ? data.message
-        : undefined) ??
+      (typeof data.detail === 'string' && data.detail
+        ? data.detail
+        : data.error === 'request_files' && typeof data.message === 'string'
+          ? data.message
+          : undefined) ??
         errorText[data.error] ??
         (response.status === 409
           ? '다른 실행 또는 변경과 충돌했습니다. 현재 상태를 확인하세요.'

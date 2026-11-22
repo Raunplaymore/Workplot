@@ -1,3 +1,4 @@
+import type { createGitPromotions } from './git-promotion.js';
 import { inspectGit } from './git-target.js';
 import { choosePath, AttachmentError } from './request-files.js';
 import { z } from 'zod';
@@ -27,6 +28,7 @@ import {
   workflowPlan,
   versionSchema,
   masterPlanSchema,
+  promotionDecisionSchema,
   gitTargetSchema,
   runStartSchema,
   favoriteSchema,
@@ -72,6 +74,7 @@ export function registerStudioRoutes(
   db: Database.Database,
   history: ReturnType<typeof createSessionHistory>,
   delegation: ReturnType<typeof createDelegation>,
+  promotions: ReturnType<typeof createGitPromotions>,
   skillDestination?: { root: string; port: 4310 | 5173 },
 ) {
   function developmentView(id: string) {
@@ -272,6 +275,7 @@ export function registerStudioRoutes(
           stopped: store.masterStopped(master.id),
           plan: store.masterPlan(master.planId),
           gitQueue,
+          gitPromotion: promotions.view(master.id),
           gitVerifiedHead: gitQueue[0]
             ? (store.gitQueue.lastVerified(gitQueue[0].lane) ?? null)
             : null,
@@ -290,6 +294,31 @@ export function registerStudioRoutes(
       '/master-runs/:id/stop',
       (req) => runs.stopMaster(req.params.id),
     );
+    for (const action of ['approve', 'recheck'] as const) {
+      protectedRoutes.post<{ Params: { id: string } }>(
+        '/master-runs/:id/git-promotion/' + action,
+        async (req, reply) => {
+          const body = promotionDecisionSchema.safeParse(req.body);
+          if (
+            !workflowIdSchema.safeParse(req.params.id).success ||
+            !body.success
+          )
+            return reply.code(400).send({ error: 'invalid_request' });
+          try {
+            const row = await promotions[action](req.params.id, body.data);
+            return reply
+              .code(
+                ['stale', 'blocked', 'failed'].includes(row.status) ? 409 : 200,
+              )
+              .send(row);
+          } catch (e) {
+            if (e instanceof StoreConflict)
+              return reply.code(409).send({ error: 'promotion_changed' });
+            throw e;
+          }
+        },
+      );
+    }
     protectedRoutes.post<{ Params: { id: string } }>(
       '/master-runs/:id/git-integration',
       (req) => runs.requestGitIntegration(req.params.id),

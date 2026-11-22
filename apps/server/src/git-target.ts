@@ -93,11 +93,7 @@ export async function inspectGit(folder: string) {
     );
   }
 }
-export async function verifyGit(
-  target: GitTarget,
-  path: string,
-  starting: boolean,
-) {
+export async function verifyGitLocation(target: GitTarget, path: string) {
   const observed = await inspectGit(path);
   if (
     !observed ||
@@ -110,9 +106,22 @@ export async function verifyGit(
         'repositoryId',
         'subpath',
         'branch',
-        'sha',
       ] as const
-    ).some((k) => target[k] !== observed[k]) ||
+    ).some((k) => target[k] !== observed[k])
+  )
+    throw new AttachmentError(
+      '확인한 Git 대상이 달라졌습니다. 서비스·폴더·브랜치·커밋을 다시 확인하세요.',
+    );
+  return observed;
+}
+export async function verifyGit(
+  target: GitTarget,
+  path: string,
+  starting: boolean,
+) {
+  const observed = await verifyGitLocation(target, path);
+  if (
+    target.sha !== observed.sha ||
     (starting && observed.dirty !== target.dirty)
   )
     throw new AttachmentError(

@@ -4,6 +4,8 @@ import {
   workflowIdSchema,
   type MasterPlan,
   type GitIntegrationEntry,
+  type GitPromotion,
+  type PromotionDecision,
   type RunView,
   type RunList,
 } from '@studio/contracts';
@@ -58,6 +60,7 @@ type Master = {
   integration: Report | null;
   gitQueue?: GitIntegrationEntry[];
   gitVerifiedHead?: string | null;
+  gitPromotion?: GitPromotion | null;
 };
 const states: Record<RunView['summary']['status'], string> = {
   queued: '시작 대기',
@@ -82,6 +85,16 @@ const queueStates: Record<GitIntegrationEntry['status'], string> = {
   failed: '검증 실패',
   stopped: '중단됨',
 };
+const promotionLabel: Record<GitPromotion['status'], string> = {
+  ready: '승인 대기',
+  applying: '반영 확인 중',
+  applied: '원본 반영 완료',
+  stale: '원본 변경 · 재검사 필요',
+  checking: '현재 원본으로 재검사 중',
+  failed: '재검사 미통과',
+  blocked: '반영 보류',
+  unchanged: '원본과 변경 내용 일치',
+};
 function RunAction({
   path,
   body,
@@ -89,7 +102,7 @@ function RunAction({
   refresh,
 }: {
   path: string;
-  body?: { failureId: string };
+  body?: { failureId: string } | PromotionDecision;
   label: string;
   refresh: () => void;
 }) {
@@ -148,6 +161,8 @@ export function MasterRun({ id }: { id: string }) {
     };
   }, [id, refreshKey]);
   const report = data?.integration;
+  const promotion = data?.gitPromotion;
+  const target = data?.children[0]?.view.summary.requestFiles?.gitTarget;
   const complete = data?.children.every(
     (c) => c.view.summary.status === 'completed',
   );
@@ -278,9 +293,8 @@ export function MasterRun({ id }: { id: string }) {
               </h3>
               {data.gitVerifiedHead && (
                 <p>
-                  대상 브랜치의 최근 통과 후보{' '}
-                  <code>{data.gitVerifiedHead.slice(0, 12)}</code> · 원본 반영
-                  전
+                  통합 큐의 최근 통과 후보{' '}
+                  <code>{data.gitVerifiedHead.slice(0, 12)}</code>
                 </p>
               )}
               <ol>
@@ -322,6 +336,66 @@ export function MasterRun({ id }: { id: string }) {
                   </li>
                 ))}
               </ol>
+              {promotion && target && (
+                <section aria-label="원본 반영">
+                  <h4>원본 반영 · {promotionLabel[promotion.status]}</h4>
+                  <p>
+                    {target.service} · <code>{target.branch}</code> ·{' '}
+                    <code title={promotion.expected}>
+                      {promotion.expected.slice(0, 12)}
+                    </code>{' '}
+                    →{' '}
+                    <code title={promotion.candidate}>
+                      {promotion.candidate.slice(0, 12)}
+                    </code>
+                  </p>
+                  {data.gitQueue.some((j) => j.status !== 'verified') && (
+                    <p>통과한 작업까지만 포함합니다.</p>
+                  )}
+                  {promotion.detail && <p role="status">{promotion.detail}</p>}
+                  {promotion.appliedAt && (
+                    <p>
+                      {new Date(promotion.appliedAt).toLocaleString('ko-KR')}{' '}
+                      확인
+                    </p>
+                  )}
+                  {promotion.checks && (
+                    <details>
+                      <summary>재검사 결과</summary>
+                      <pre style={{ whiteSpace: 'pre-wrap' }}>
+                        {promotion.checks}
+                      </pre>
+                    </details>
+                  )}
+                  {!data.stopped &&
+                    ['ready', 'blocked', 'stale', 'failed'].includes(
+                      promotion.status,
+                    ) && (
+                      <RunAction
+                        key={promotion.ticket + promotion.status}
+                        path={
+                          '/master-runs/' +
+                          id +
+                          '/git-promotion/' +
+                          (['stale', 'failed'].includes(promotion.status)
+                            ? 'recheck'
+                            : 'approve')
+                        }
+                        body={{
+                          ticket: promotion.ticket,
+                          expected: promotion.expected,
+                          candidate: promotion.candidate,
+                        }}
+                        label={
+                          ['stale', 'failed'].includes(promotion.status)
+                            ? '현재 원본으로 재검사'
+                            : '승인하고 원본에 반영'
+                        }
+                        refresh={refresh}
+                      />
+                    )}
+                </section>
+              )}
             </section>
           )}
           {report && (
