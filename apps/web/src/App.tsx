@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { healthSchema, toolsSchema, type ToolStatus } from '@studio/contracts';
 import styles from './App.module.css';
 import { WorkflowStudio } from './WorkflowStudio';
@@ -7,6 +7,13 @@ export function App() {
   const [connection, setConnection] = useState('로컬 서버 확인 중');
   const [tools, setTools] = useState<ToolStatus[] | null>(null);
   const [toolsError, setToolsError] = useState(false);
+  const toolsPanel = useRef<HTMLDetailsElement>(null);
+  const toolsSummary = useRef<HTMLElement>(null);
+
+  function showTools() {
+    if (toolsPanel.current) toolsPanel.current.open = true;
+    toolsSummary.current?.focus({ preventScroll: true });
+  }
 
   useEffect(() => {
     const controller = new AbortController();
@@ -50,6 +57,7 @@ export function App() {
     <div className={styles.app}>
       <WorkflowStudio
         connected={connection === '로컬 서버 연결됨'}
+        onShowTools={showTools}
         codexAvailable={
           tools?.some(
             (tool) => tool.id === 'codex' && tool.status === 'detected',
@@ -58,8 +66,8 @@ export function App() {
       />
       <footer className={styles.footer}>
         <span role="status">{connection}</span>
-        <details className={styles.tools}>
-          <summary>내 에이전트 도구</summary>
+        <details className={styles.tools} ref={toolsPanel}>
+          <summary ref={toolsSummary}>내 에이전트 도구</summary>
           <section aria-labelledby="tools-title">
             <h2 id="tools-title">내 에이전트 도구</h2>
             <p>

@@ -221,9 +221,11 @@ function screen() {
 export function WorkflowStudio({
   codexAvailable,
   connected,
+  onShowTools,
 }: {
   codexAvailable: boolean;
   connected: boolean;
+  onShowTools: () => void;
 }) {
   const [initial] = useState(() => readEditorRecovery(designTarget()));
   const [restored, setRestored] = useState(Boolean(initial));
@@ -1744,10 +1746,15 @@ export function WorkflowStudio({
                 </p>
               )}
               {connected && !codexAvailable && (
-                <p>
-                  시작하려면 ‘내 에이전트 도구’에서 Codex 설치 상태를
-                  확인하세요.
-                </p>
+                <div className={`${styles.buttons} ${styles.codexNotice}`}>
+                  <p>
+                    시작하려면 ‘내 에이전트 도구’에서 Codex 설치 상태를
+                    확인하세요.
+                  </p>
+                  <button type="button" onClick={onShowTools}>
+                    Codex 설치 상태 보기
+                  </button>
+                </div>
               )}
               <div className={styles.metrics}>
                 {(
