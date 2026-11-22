@@ -48,6 +48,7 @@ export const workflowDefinitionSchema = z
             templateDocuments: nodeDocumentsSchema.optional(),
             instructions: z.string().trim().min(1).max(8_000),
             inputFrom: z.array(stepId).max(4).optional(),
+            workspaceAccess: z.enum(['read-only', 'write']).optional(),
             agent: z.enum(['codex', 'unassigned']).optional(),
             codexSkill: taskSkillSchema.optional(),
             tool: z.enum(['market-calendar', 'workplot-ui']).optional(),
@@ -280,6 +281,7 @@ export const requestFilesSchema = z.strictObject({
 export type RequestFiles = z.infer<typeof requestFilesSchema>;
 const taskRequestSchema = z.string().trim().min(1).max(2000).optional();
 export const runSummarySchema = z.strictObject({
+  isolatedGit: z.literal(true).optional(),
   developmentTaskId: z.uuid().optional(),
   requestFiles: requestFilesSchema.optional(),
   snapshotId: z.uuid().optional(),
@@ -324,6 +326,7 @@ export const runListSchema = z.array(
       name: z.string(),
       quotaRetryAt: z.number().int().positive().nullish(),
       gateKind: z.enum(['review', 'question']).optional(),
+      isolatedTask: z.uuid().nullish(),
       masterRunId: z.uuid().nullish(),
       previousSessionId: z.uuid().nullable().optional(),
       sessionSummary: z.string().optional(),
@@ -447,6 +450,15 @@ export const runDecisionSchema = z.discriminatedUnion('decision', [
 export type RunDecision = z.infer<typeof runDecisionSchema>;
 export type RunSummary = z.infer<typeof runSummarySchema>;
 export const runViewSchema = z.strictObject({
+  worktree: z
+    .object({
+      directory: z.string(),
+      path: z.string(),
+      branch: z.string(),
+      head: z.string(),
+      base: z.string(),
+    })
+    .optional(),
   aiCalls: z
     .array(
       z.object({

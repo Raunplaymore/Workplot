@@ -23,6 +23,12 @@ export function writeReport(dir, checks) {
         '건 통과. [Vitest 결과](unit.json)'
       : '서버 검사 결과 미수집.',
     '',
+    ...(read('git-worktrees.json')
+      ? [
+          '[G2 실제 Git worktree · Codex 병렬 실행 기록](git-worktrees.json)',
+          '',
+        ]
+      : []),
     '| 브라우저 검사 | 판정 | 상태 및 증거 |',
     '| --- | --- | --- |',
   ];

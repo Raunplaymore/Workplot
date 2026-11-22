@@ -167,7 +167,9 @@ export function MasterRun({ id }: { id: string }) {
           : complete
             ? data?.hasUiIntegration
               ? '통합 대기'
-              : '문서 작업 완료'
+              : data?.children.some((child) => child.view.summary.isolatedGit)
+                ? '개별 작업 완료'
+                : '문서 작업 완료'
             : '가지 완료 대기';
   return (
     <section className={styles.page} aria-label="마스터 실행 상세">
@@ -203,6 +205,11 @@ export function MasterRun({ id }: { id: string }) {
                         {child.taskId} · {states[child.view.summary.status]}
                       </span>
                       <small>{task?.doneWhen}</small>
+                      {child.view.worktree && (
+                        <small>
+                          작업 커밋 {child.view.worktree.head.slice(0, 12)}
+                        </small>
+                      )}
                       <ArrowUpRight size={15} aria-hidden="true" />
                     </a>
                     {!data.stopped && active(child.view.summary.status) && (

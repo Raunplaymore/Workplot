@@ -27,6 +27,7 @@ import {
   workflowPlan,
   versionSchema,
   masterPlanSchema,
+  gitTargetSchema,
   runStartSchema,
   favoriteSchema,
   libraryMoveSchema,
@@ -73,6 +74,15 @@ export function registerStudioRoutes(
   delegation: ReturnType<typeof createDelegation>,
   skillDestination?: { root: string; port: 4310 | 5173 },
 ) {
+  function developmentView(id: string) {
+    const view = runs.view(id);
+    const tree =
+      view.summary.developmentTaskId &&
+      store.worktree(view.summary.developmentTaskId);
+    if (!tree || !tree.ready) return view;
+    const { directory, path, branch, head, base } = tree;
+    return { ...view, worktree: { directory, path, branch, head, base } };
+  }
   const session = randomBytes(32).toString('hex');
 
   app.addHook('onRequest', async (request, reply) => {
@@ -232,7 +242,16 @@ export function registerStudioRoutes(
         )
           return reply.code(400).send({ error: 'invalid_request' });
         try {
-          return await runs.startMaster(req.params.run, req.params.id);
+          const body = z
+            .strictObject({ gitTarget: gitTargetSchema.optional() })
+            .safeParse(req.body ?? {});
+          if (!body.success)
+            return reply.code(400).send({ error: 'invalid_request' });
+          return await runs.startMaster(
+            req.params.run,
+            req.params.id,
+            body.data.gitTarget,
+          );
         } catch (error) {
           if (error instanceof RangeError)
             return reply.code(422).send({ error: error.message });
@@ -256,7 +275,7 @@ export function registerStudioRoutes(
           integration: store.integrationReport(master.id),
           children: master.children.map((child) => ({
             ...child,
-            view: runs.view(child.runId),
+            view: developmentView(child.runId),
           })),
         };
       },
@@ -902,7 +921,7 @@ export function registerStudioRoutes(
         const id = workflowIdSchema.safeParse(request.params.id);
         if (!id.success)
           return reply.code(400).send({ error: 'invalid_run_id' });
-        const view = runs.view(id.data),
+        const view = developmentView(id.data),
           wait = view.gate && delegation.assessmentWait(id.data);
         return {
           ...view,

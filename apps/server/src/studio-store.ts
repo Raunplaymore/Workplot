@@ -148,6 +148,7 @@ export function openStudioStore(db: Database.Database) {
       json_extract(r.record, '$.summary.recordedAt') AS recordedAt,
       json_extract(r.record, '$.summary.status') AS status,
       json_extract(r.record,'$.retry.quotaRetryAt') AS quotaRetryAt,
+      CASE WHEN json_extract(r.record,'$.summary.isolatedGit') THEN json_extract(r.record,'$.summary.developmentTaskId') END AS isolatedTask,
       json_extract(r.record,'$.summary.master.runId') AS masterRunId,
       json_extract(r.record,'$.summary.previousSessionId') AS previousSessionId,
       (json_array_length(r.record,'$.results') > 1 OR json_type(r.record,'$.summary.origin') IS NOT NULL) AS comparable
@@ -228,6 +229,7 @@ export function openStudioStore(db: Database.Database) {
   );
   db.exec(`CREATE TABLE IF NOT EXISTS development_services(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE);
     CREATE TABLE IF NOT EXISTS git_bindings(service_id TEXT NOT NULL REFERENCES development_services(id),checkout_id TEXT NOT NULL,path TEXT NOT NULL,repo_id TEXT NOT NULL, PRIMARY KEY(service_id,checkout_id,path));
+    CREATE TABLE IF NOT EXISTS development_worktrees(task TEXT PRIMARY KEY,directory TEXT NOT NULL,path TEXT NOT NULL,branch TEXT NOT NULL,base TEXT NOT NULL,head TEXT NOT NULL,dirty_hash TEXT,pending TEXT,ready INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE IF NOT EXISTS development_calls(id INTEGER PRIMARY KEY,run TEXT NOT NULL REFERENCES runs(id),step TEXT NOT NULL,pid INTEGER NOT NULL,session TEXT,observedAt TEXT NOT NULL);`);
   function bindings() {
     return db
@@ -241,6 +243,52 @@ export function openStudioStore(db: Database.Database) {
   }
   return {
     bindings,
+    worktree(task: string) {
+      return db
+        .prepare(
+          'SELECT directory,path,branch,base,head,dirty_hash AS dirtyHash,pending,ready FROM development_worktrees WHERE task=?',
+        )
+        .get(task) as
+        | {
+            directory: string;
+            path: string;
+            branch: string;
+            base: string;
+            head: string;
+            dirtyHash: string | null;
+            pending: string | null;
+            ready: number;
+          }
+        | undefined;
+    },
+    planWorktree(
+      task: string,
+      v: { directory: string; path: string; branch: string; base: string },
+    ) {
+      db.prepare(
+        'INSERT OR IGNORE INTO development_worktrees(task,directory,path,branch,base,head) VALUES(?,?,?,?,?,?)',
+      ).run(task, v.directory, v.path, v.branch, v.base, v.base);
+    },
+    saveWorktreeChanges(task: string, digest: string | null) {
+      db.prepare(
+        'UPDATE development_worktrees SET dirty_hash=? WHERE task=?',
+      ).run(digest, task);
+    },
+    prepareCheckpoint(task: string, head: string, next: string) {
+      if (
+        !db
+          .prepare(
+            'UPDATE development_worktrees SET pending=? WHERE task=? AND head=? AND pending IS NULL',
+          )
+          .run(next, task, head).changes
+      )
+        throw new StoreConflict();
+    },
+    finishWorktree(task: string, head: string) {
+      db.prepare(
+        'UPDATE development_worktrees SET head=?,dirty_hash=NULL,pending=NULL,ready=1 WHERE task=?',
+      ).run(head, task);
+    },
     bind: db.transaction(
       (service: string, location: Omit<GitTarget, 'service' | 'serviceId'>) => {
         db.prepare(
@@ -390,19 +438,33 @@ export function openStudioStore(db: Database.Database) {
           material?: RunMaterial;
         }[],
         baseline?: Record<string, string>,
+        gitTarget?: GitTarget,
       ) => {
         const children = branches.map((b) => {
-          const summary = recordRun({
-            master: { runId: id, planId, taskId: b.taskId },
-            workflowId: b.workflowId,
-            workflowVersion: b.version,
-            cliVersion,
-            status: 'queued',
-            material: b.material,
-            sessionId: null,
-            process: null,
-            results: [],
-          });
+          const childId = randomUUID();
+          const summary = recordRun(
+            {
+              ...(gitTarget && {
+                developmentTaskId: childId,
+                isolatedGit: true,
+                requestFiles: {
+                  references: [],
+                  workspace: gitTarget.path,
+                  gitTarget,
+                },
+              }),
+              master: { runId: id, planId, taskId: b.taskId },
+              workflowId: b.workflowId,
+              workflowVersion: b.version,
+              cliVersion,
+              status: 'queued',
+              material: b.material,
+              sessionId: null,
+              process: null,
+              results: [],
+            },
+            childId,
+          );
           return { taskId: b.taskId, runId: summary.id };
         });
         db.prepare('INSERT INTO master_runs VALUES(?,?,?)').run(
@@ -547,6 +609,7 @@ export function openStudioStore(db: Database.Database) {
           workflowVersion,
           cliVersion,
           previousSessionId: parentId,
+          isolatedGit: parent.summary.isolatedGit,
           developmentTaskId: parent.summary.developmentTaskId
             ? newTask
               ? randomUUID()

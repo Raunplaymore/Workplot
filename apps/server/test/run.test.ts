@@ -1046,3 +1046,71 @@ test('checks the confirmed Git binding before starting and keeps node calls acro
     },
   );
 });
+test('admits at most two isolated Git tasks and preserves the ordinary execution slot', async () => {
+  await withStudio(
+    {
+      ready: async () => '0.166.0',
+      write: async () => ({ kind: 'document', text: '결과' }),
+    },
+    async ({ inject, path }) => {
+      const workspace = join(path, 'parallel');
+      await mkdir(workspace);
+      const git = (...args: string[]) =>
+        execFileSync('git', [
+          '-c',
+          'commit.gpgsign=false',
+          '-c',
+          'user.name=QA',
+          '-c',
+          'user.email=qa@localhost',
+          '-C',
+          workspace,
+          ...args,
+        ]);
+      git('init', '-qb', 'main');
+      git('commit', '-qm', 'base', '--allow-empty');
+      const wf = await setup(inject),
+        target = (
+          await inject('POST', '/git/targets', {
+            service: 'QA',
+            path: workspace,
+          })
+        ).json();
+      const create = () => ({
+        id: randomUUID(),
+        workflowId: wf.id,
+        workflowVersion: wf.version,
+        requestFiles: { workspace, gitTarget: target, references: [] },
+      });
+      const runs = [create(), create(), create()];
+      const res = await Promise.all(
+        runs.map((body) => inject('POST', '/runs', body)),
+      );
+      expect(res.map((r) => r.statusCode).sort()).toEqual([200, 200, 409]);
+      const admitted = runs.filter((_, i) => res[i]!.statusCode === 200);
+      const views = await Promise.all(
+        admitted.map((r) => until(inject, r.id, 'waiting')),
+      );
+      expect(views[0]?.worktree?.directory).toBeTruthy();
+      expect(views[0]?.worktree?.directory).not.toBe(
+        views[1]?.worktree?.directory,
+      );
+      expect((await inject('POST', '/runs', admitted[0])).statusCode).toBe(200);
+      expect(
+        (
+          await inject('POST', '/runs', {
+            id: randomUUID(),
+            workflowId: wf.id,
+            workflowVersion: wf.version,
+          })
+        ).statusCode,
+      ).toBe(409);
+      await inject('POST', '/runs/' + admitted[0]!.id + '/stop');
+      await until(inject, admitted[0]!.id, 'stopped');
+      expect((await inject('POST', '/runs', create())).statusCode).toBe(200);
+      expect((await until(inject, admitted[1]!.id, 'waiting')).gate?.id).toBe(
+        views[1]?.gate?.id,
+      );
+    },
+  );
+});

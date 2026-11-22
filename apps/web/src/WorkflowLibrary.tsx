@@ -114,11 +114,13 @@ export function WorkflowLibrary({
   prepare,
   startSaved,
   develop,
+  developmentBusy,
   edit,
   canEdit,
   busy,
 }: {
   rows: RunList | null;
+  developmentBusy: boolean;
   develop: (
     version: WorkflowVersion,
     request?: string,
@@ -617,7 +619,7 @@ export function WorkflowLibrary({
                   </button>
                   <button
                     disabled={
-                      busy ||
+                      developmentBusy ||
                       version.definition.steps.some(
                         (s) => s.kind === 'task' && s.agent === 'unassigned',
                       )

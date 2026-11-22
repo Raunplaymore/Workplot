@@ -208,7 +208,13 @@ export function GitRun({
               <strong>{label(preview)}</strong>
               <p>
                 {preview.branch} · <code>{preview.sha.slice(0, 12)}</code>
-                {preview.dirty ? ' · 미커밋 변경 포함' : ' · 깨끗한 작업 트리'}
+                {preview.dirty
+                  ? ' · 원본에 미커밋 변경 있음'
+                  : ' · 깨끗한 작업 트리'}
+              </p>
+              <p>
+                표시한 커밋에서 독립 작업 폴더를 만듭니다. 원본의 미커밋 변경은
+                원본에 남습니다.
               </p>
             </div>
           )}
@@ -251,7 +257,16 @@ export function GitRunInfo({ run }: { run: RunView }) {
         <p>
           흐름 v{run.summary.workflowVersion} · 실행 {run.summary.id}
         </p>
-        <p>작업 폴더 {target.path}</p>
+        <p>원본 폴더 {target.path}</p>
+        {run.worktree && (
+          <>
+            <p>독립 작업 폴더 {run.worktree.path}</p>
+            <p>
+              작업 브랜치 {run.worktree.branch} · 현재 커밋{' '}
+              <code>{run.worktree.head}</code>
+            </p>
+          </>
+        )}
         <p>
           시작 커밋 <code>{target.sha}</code> ·{' '}
           {target.dirty ? '시작 당시 미커밋 변경 있음' : '시작 당시 깨끗함'}

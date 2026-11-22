@@ -7,7 +7,8 @@ import {
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { extname } from 'node:path';
-import type { RequestFiles } from '@studio/contracts';
+import { manageWorktrees } from './git-worktree.js';
+import type { GitTarget, RequestFiles } from '@studio/contracts';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants, writeSync } from 'node:fs';
 import { lstat, mkdir, open, realpath, writeFile } from 'node:fs/promises';
@@ -170,7 +171,37 @@ export function createRunService(
     const status = execution.view.summary.status;
     return !terminal.has(status) || status === 'unknown';
   }
-  const blocked = () => closing || [...executions.values()].some(occupied);
+  const worktrees = manageWorktrees(store, root);
+  const blocked = (isolatedTask?: string) => {
+    const active = [...executions.values()].filter(occupied);
+    if (closing || !isolatedTask) return closing || active.length > 0;
+    return (
+      active.length >= 2 ||
+      active.some(
+        ({ view: { summary: s } }) =>
+          !s.isolatedGit ||
+          s.master ||
+          s.status === 'unknown' ||
+          s.developmentTaskId === isolatedTask,
+      )
+    );
+  };
+  async function verifyBinding(target: GitTarget, folder: string) {
+    if (
+      !store
+        .bindings()
+        .some(
+          (b) =>
+            b.serviceId === target.serviceId &&
+            b.service === target.service &&
+            b.path === target.path &&
+            b.checkoutId === target.checkoutId &&
+            b.repositoryId === target.repositoryId,
+        )
+    )
+      throw new AttachmentError('등록한 서비스와 체크아웃을 다시 선택하세요.');
+    await verifyGit(target, folder, true);
+  }
   function track(execution: Execution) {
     for (const [id, entry] of executions)
       if (!occupied(entry)) executions.delete(id);
@@ -366,6 +397,7 @@ export function createRunService(
     let imageFolder: string | undefined;
     let log;
     let retryableTask = false;
+    let partialTree: Awaited<ReturnType<typeof worktrees.open>> | undefined;
     let answer = '',
       question = 0;
     const produced = resume?.documents ?? new Map<string, Document>();
@@ -391,7 +423,10 @@ export function createRunService(
       const snapshot = state.summary.snapshotId
         ? store.requestSnapshot(state.summary.snapshotId)
         : undefined;
-      const workspace = snapshot?.workspace;
+      const target = state.summary.requestFiles?.gitTarget;
+      const isolated =
+        state.summary.isolatedGit && state.summary.developmentTaskId && target;
+      const workspace = snapshot?.workspace ?? target?.path;
       const references = snapshot?.refs.map(({ name, text }) =>
         text === undefined ? { name, kind: 'image' } : { name, text },
       );
@@ -647,11 +682,18 @@ export function createRunService(
                   },
                 }
               : {};
-          if (state.summary.requestFiles?.gitTarget && workspace)
-            await verifyGit(
-              state.summary.requestFiles.gitTarget,
-              workspace,
-              false,
+          const tree = isolated
+            ? await worktrees.open(state.summary.developmentTaskId!, isolated)
+            : undefined;
+          const roleWrites = step.workspaceAccess
+            ? step.workspaceAccess === 'write'
+            : step.tool === 'workplot-ui' ||
+              steps.filter((s) => s.kind === 'task').length === 1;
+          const gitWrite =
+            tree && roleWrites && step.tool !== 'market-calendar';
+          if (target && !tree)
+            throw new AttachmentError(
+              '이 실행은 원본 폴더를 직접 사용한 이전 버전입니다. 기존 결과와 원본 변경을 확인한 뒤 독립 개발 작업을 새로 시작하세요.',
             );
           let callId: number | undefined;
           const observe: Parameters<DocumentRunner['write']>[2] = ({
@@ -756,13 +798,14 @@ export function createRunService(
               ? { priorDocument: documents[0]?.text ?? '' }
               : { inputDocuments: documents }),
             answer,
-            ...(workspace && { workFolder: workspace }),
+            ...(workspace && { workFolder: tree?.path ?? workspace }),
             response: evidence
               ? '이번 실행의 실제 구현·검증 기록을 사용해 현재 단계의 문서를 완성한다. 미확인 항목은 미검증으로 표시하고 사용자에게 검증 결과를 요구하지 않는다. 브라우저 실측 행이 있으면 이전 문서의 미실행·0/6 표기를 폐기한다. 통과한 시나리오를 다음 과제로 다시 제안하지 않는다. 미달이면 재현된 너비·파일·관찰값에 맞는 수정 한 가지를 제안한다. 현재 검사가 모두 통과해도 전체 미션에 남은 범위가 있으면 다음 탐색 대상을 제안한다. 전체 합격 기준이 근거로 확인될 때 종료를 권한다.'
               : step.tool === 'market-calendar'
                 ? '이번 단계는 read_market_calendar MCP 도구를 실제로 호출해 대상 월의 운영일을 확인하세요. 달력 응답만 운영일의 근거로 사용하고, 대상 날짜·출처·조회 시각과 개별 점포 예외를 Markdown으로 작성하세요. 실패하면 운영일 미확인으로 표시하세요.'
                 : '업무 목표와 완료 기준을 참고해 현재 단계만 수행하세요. 전달받은 문서는 입력 자료입니다. 파일·명령·웹 도구를 사용하지 마세요. Markdown 본문은 kind document, 꼭 필요한 확인 질문만 kind question으로 반환하세요.',
           });
+          partialTree = gitWrite ? tree : undefined;
           const response =
             step.tool === 'workplot-ui' && !workspace
               ? await runUiWork(
@@ -810,17 +853,25 @@ export function createRunService(
                   step.tool === 'market-calendar' ? step.tool : undefined,
                   !!evidence,
                   images,
-                  workspace &&
-                    step.tool !== 'market-calendar' &&
-                    (step.tool === 'workplot-ui' ||
-                      !steps.some(
-                        (s) => s.kind === 'task' && s.tool === 'workplot-ui',
-                      ))
-                    ? await checkWorkspace(workspace)
-                    : undefined,
+                  tree
+                    ? step.tool === 'market-calendar'
+                      ? undefined
+                      : tree.path
+                    : workspace &&
+                        step.tool !== 'market-calendar' &&
+                        (step.tool === 'workplot-ui' ||
+                          !steps.some(
+                            (s) =>
+                              s.kind === 'task' && s.tool === 'workplot-ui',
+                          ))
+                      ? await checkWorkspace(workspace)
+                      : undefined,
+                  !!tree && !gitWrite,
                 );
           signal.throwIfAborted();
           if (response.kind === 'question') {
+            if (partialTree) await worktrees.rememberChanges(partialTree);
+            partialTree = undefined;
             if (evidence || question >= 2) throw new RunnerError('output');
             retryableTask = false;
             const decision = await wait('question', response.text);
@@ -835,7 +886,12 @@ export function createRunService(
           }
           if (!response.text.trim() || response.text.length > 32_000)
             throw new RunnerError('output');
-          if (parent && step.tool === 'workplot-ui') {
+          partialTree = undefined;
+          if (gitWrite) {
+            await worktrees.checkpoint(tree, id, step.id);
+            signal.throwIfAborted();
+          }
+          if (parent && !tree && step.tool === 'workplot-ui') {
             const files = await readUiSources(
               join(directory, 'ui-' + step.id, 'src'),
             );
@@ -901,6 +957,8 @@ export function createRunService(
     } catch (error) {
       if (execution.suspended) return;
       state.gate = null;
+      if (partialTree)
+        await worktrees.rememberChanges(partialTree).catch(() => {});
       const reason = error instanceof RunnerError ? error.reason : 'output';
       const status =
         reason === 'termination' || execution.storageFailed
@@ -1127,7 +1185,8 @@ export function createRunService(
       const existingRun = existing();
       if (existingRun) return existingRun;
       store.allowUse(workflowId);
-      if (blocked()) throw new StoreConflict();
+      const isolatedId = requestFiles?.gitTarget ? id : undefined;
+      if (blocked(isolatedId)) throw new StoreConflict();
       const definition = store.executionDefinition(workflowId, version);
       if (
         !definition.steps.some((step) => step.kind === 'task') ||
@@ -1145,30 +1204,16 @@ export function createRunService(
       const cliVersion = await runner.ready();
       if (snapshot?.workspace) {
         if (target) {
-          if (
-            !store
-              .bindings()
-              .some(
-                (b) =>
-                  b.serviceId === target.serviceId &&
-                  b.path === target.path &&
-                  b.checkoutId === target.checkoutId &&
-                  b.repositoryId === target.repositoryId &&
-                  b.service === target.service,
-              )
-          )
-            throw new AttachmentError(
-              '등록한 서비스와 체크아웃을 다시 선택하세요.',
-            );
-          await verifyGit(target, snapshot.workspace, true);
+          await verifyBinding(target, snapshot.workspace);
         } else if (await inspectGit(snapshot.workspace))
           throw new AttachmentError('Git 작업은 먼저 실행 대상을 확인하세요.');
       }
       const duplicate = existing();
       if (duplicate) return duplicate;
-      if (blocked()) throw new StoreConflict();
+      if (blocked(isolatedId)) throw new StoreConflict();
       const record: RunInput = {
-        developmentTaskId: target ? id : undefined,
+        developmentTaskId: isolatedId,
+        isolatedGit: target ? true : undefined,
         requestFiles,
         snapshotId: snapshot ? id : undefined,
         workflowId,
@@ -1223,11 +1268,18 @@ export function createRunService(
     recoverIntegrations() {
       for (const id of store.unreportedUiMasters()) void integrate(id);
     },
-    async startMaster(id: string, planId: string) {
+    async startMaster(id: string, planId: string, target?: GitTarget) {
       const existing = () => {
         const row = store.masterRun(id);
         if (store.masterStopped(id)) throw new StoreConflict();
-        if (row && row.planId !== planId) throw new StoreConflict();
+        if (
+          row &&
+          (row.planId !== planId ||
+            JSON.stringify(
+              store.run(row.children[0]!.runId).summary.requestFiles?.gitTarget,
+            ) !== JSON.stringify(target))
+        )
+          throw new StoreConflict();
         return row;
       };
       const prior = existing();
@@ -1265,13 +1317,16 @@ export function createRunService(
         };
       });
       if (blocked()) throw new StoreConflict();
-      const baseline = branches.some((b) =>
-        b.definition.steps.some(
-          (s) => s.kind === 'task' && s.tool === 'workplot-ui',
-        ),
-      )
-        ? await readUiSources()
-        : undefined;
+      if (target) await verifyBinding(target, target.path);
+      const baseline =
+        !target &&
+        branches.some((b) =>
+          b.definition.steps.some(
+            (s) => s.kind === 'task' && s.tool === 'workplot-ui',
+          ),
+        )
+          ? await readUiSources()
+          : undefined;
       const version = await runner.ready();
       const duplicate = existing();
       if (duplicate) return duplicate;
@@ -1282,6 +1337,7 @@ export function createRunService(
         version,
         branches,
         baseline,
+        target,
       );
       for (const [index, child] of master.children.entries())
         launch(store.run(child.runId).summary, branches[index]!.definition);
@@ -1290,7 +1346,14 @@ export function createRunService(
     async rerun(id: string, stepId: string, instructions: string) {
       const source = store.run(id);
       const { workflowId, workflowVersion } = source.summary;
-      if (expired(id) || source.summary.status !== 'completed' || blocked())
+      const isolatedId = source.summary.isolatedGit
+        ? source.summary.developmentTaskId
+        : undefined;
+      if (
+        expired(id) ||
+        source.summary.status !== 'completed' ||
+        blocked(isolatedId)
+      )
         throw new StoreConflict();
       const { definition } = store.workflow(workflowId, workflowVersion);
       const original = definition.steps.find((step) => step.id === stepId);
@@ -1324,7 +1387,7 @@ export function createRunService(
         documents.set(step.id, { file, text });
       }
       const cliVersion = await runner.ready();
-      if (blocked()) throw new StoreConflict();
+      if (blocked(isolatedId)) throw new StoreConflict();
       const summary = store.recordRerun(
         {
           workflowId,
@@ -1337,6 +1400,7 @@ export function createRunService(
           origin: { runId: id, stepId },
           material: source.material,
           taskRequest: source.summary.taskRequest,
+          isolatedGit: source.summary.isolatedGit,
           developmentTaskId: source.summary.developmentTaskId,
           requestFiles: source.summary.requestFiles,
           snapshotId: source.summary.snapshotId,
@@ -1370,14 +1434,16 @@ export function createRunService(
       const { retry, results, summary } = record;
       const eligible = () =>
         !closing &&
-        ![...executions.values()].some(
-          (e) =>
-            occupied(e) &&
-            (!summary.master ||
-              e.view.summary.master?.runId !== summary.master.runId ||
-              e.view.summary.id === id ||
-              e.view.summary.status === 'unknown'),
-        ) &&
+        (summary.isolatedGit && !summary.master
+          ? !blocked(summary.developmentTaskId)
+          : ![...executions.values()].some(
+              (e) =>
+                occupied(e) &&
+                (!summary.master ||
+                  e.view.summary.master?.runId !== summary.master.runId ||
+                  e.view.summary.id === id ||
+                  e.view.summary.status === 'unknown'),
+            )) &&
         (!summary.master || !store.masterStopped(summary.master.runId)) &&
         authorized() &&
         store.run(id).retry?.failureId === failureId;

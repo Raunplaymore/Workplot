@@ -1166,10 +1166,17 @@ export function WorkflowStudio({
   const occupyingRun =
     rows?.find((row) => activeStatuses.has(row.status)) ??
     (active ? run?.summary : undefined);
-  function startDisabledReason() {
+  const activeRows = rows?.filter((r) => activeStatuses.has(r.status)) ?? [];
+  const gitSlotAvailable =
+    rows !== null &&
+    activeRows.length < 2 &&
+    activeRows.every(
+      (r) => r.isolatedTask && !r.masterRunId && r.status !== 'unknown',
+    );
+  function startDisabledReason(development = false) {
     if (starting) return '실행 요청을 접수하고 있습니다.';
     if (!connected) return '로컬 서버 연결을 확인하세요.';
-    if (occupyingRun) {
+    if (occupyingRun && !(development && gitSlotAvailable)) {
       const label =
         (occupyingRun.workflowId === saved?.id
           ? '이 워크플롯'
@@ -1418,7 +1425,8 @@ export function WorkflowStudio({
                 {saved && (
                   <button
                     type="button"
-                    disabled={!!startHint}
+                    disabled={!!startDisabledReason(true)}
+                    title={startDisabledReason(true) || undefined}
                     onClick={() => prepareGit(saved)}
                   >
                     개발 작업 실행
@@ -1658,6 +1666,9 @@ export function WorkflowStudio({
             rows={rows}
             starting={starting}
             develop={prepareGit}
+            developmentBusy={
+              busy || !connected || !codexAvailable || !gitSlotAvailable
+            }
             startSaved={(v, request, files) =>
               start(v, undefined, request, files)
             }
@@ -2668,6 +2679,31 @@ export function WorkflowStudio({
                                     <option value="none">없음</option>
                                     <option value="source-check">
                                       자료 사실 확인
+                                    </option>
+                                  </select>
+                                </label>
+                                <label>
+                                  Git 작업 폴더 권한
+                                  <select
+                                    value={step.workspaceAccess ?? ''}
+                                    onChange={(e) =>
+                                      replaceStep({
+                                        ...step,
+                                        workspaceAccess:
+                                          e.target.value === 'read-only'
+                                            ? 'read-only'
+                                            : e.target.value === 'write'
+                                              ? 'write'
+                                              : undefined,
+                                      })
+                                    }
+                                  >
+                                    <option value="">
+                                      자동 · 화면 구현 또는 단일 작업만 수정
+                                    </option>
+                                    <option value="read-only">읽기 전용</option>
+                                    <option value="write">
+                                      수정 및 체크포인트 저장
                                     </option>
                                   </select>
                                 </label>
