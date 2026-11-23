@@ -53,6 +53,7 @@ import {
   workflowUpdateSchema,
 } from '@studio/contracts';
 import {
+  HandoffConflict,
   StoreConflict,
   StoreNotFound,
   type StudioStore,
@@ -190,6 +191,10 @@ export function registerStudioRoutes(
         return reply.code(400).send({ error: 'invalid_workflow_link' });
       if (error instanceof StoreNotFound)
         return reply.code(404).send({ error: 'not_found' });
+      if (error instanceof HandoffConflict)
+        return reply
+          .code(409)
+          .send({ error: 'handoff_pending', detail: error.message });
       if (error instanceof StoreConflict)
         return reply.code(409).send({ error: 'stale_version' });
       const status = (error as { statusCode?: number }).statusCode;

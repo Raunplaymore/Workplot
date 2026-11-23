@@ -893,7 +893,11 @@ export function createRunService(
                 }
               : undefined;
           const tree = isolated
-            ? await worktrees.open(state.summary.developmentTaskId!, isolated)
+            ? await worktrees.open(
+                state.summary.developmentTaskId!,
+                isolated,
+                state.summary.sessionGit?.base,
+              )
             : undefined;
           const hostQa =
             tree && resume?.retryCheckpoint && resume.stepId === step.id
@@ -1179,9 +1183,16 @@ export function createRunService(
           let commitNote = '';
           if (step.tool === 'verified-commit') {
             if (!tree) commitNote = 'Git 작업 폴더 미지정 · 커밋 생략';
-            else if (response.text.trim().split(/\r?\n/, 1)[0] !== '검증 통과')
+            else if (
+              response.text.trim().split(/\r?\n/, 1)[0] !== '검증 통과'
+            ) {
+              await worktrees.rememberChanges(tree);
+              if (store.worktree(tree.task)?.dirtyHash)
+                throw new AttachmentError(
+                  '검증을 통과하지 못해 변경이 작업 폴더에 남아 있습니다. 검증 결과를 확인하고 이 커밋 단계를 다시 실행하세요.',
+                );
               commitNote = '세션 검증 미충족 · 커밋 생략';
-            else {
+            } else {
               const sha = await worktrees.checkpoint(
                 tree,
                 id,
@@ -1834,6 +1845,7 @@ export function createRunService(
           modelSettings: source.summary.modelSettings,
           isolatedGit: source.summary.isolatedGit,
           developmentTaskId: source.summary.developmentTaskId,
+          sessionGit: source.summary.sessionGit,
           requestFiles: source.summary.requestFiles,
           snapshotId: source.summary.snapshotId,
         },
@@ -1949,6 +1961,8 @@ export function createRunService(
         (gate.kind === 'question') !== (decision.decision === 'answer')
       )
         throw new StoreConflict();
+      if (gate.startNextSession && decision.decision === 'accept')
+        store.handoffTree(active.view.summary);
       if (gate.kind === 'review' && decision.decision !== 'answer') {
         const receipt = {
           gateId: gate.id,

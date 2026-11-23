@@ -322,6 +322,13 @@ export const runSummarySchema = z.strictObject({
     .strictObject({ runId: z.uuid(), planId: z.uuid(), taskId: stepId })
     .optional(),
   previousSessionId: z.uuid().optional(),
+  sessionGit: z
+    .strictObject({
+      sourceRun: z.uuid(),
+      head: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/),
+      base: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/),
+    })
+    .optional(),
   nextSessionId: z.uuid().optional(),
   origin: z.strictObject({ runId: z.uuid(), stepId }).optional(),
   status: z.enum([

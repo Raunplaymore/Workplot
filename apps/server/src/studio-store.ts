@@ -21,6 +21,7 @@ import {
 } from '@studio/contracts';
 
 export class StoreConflict extends Error {}
+export class HandoffConflict extends StoreConflict {}
 export class RetrySlotBusy extends StoreConflict {}
 export class StoreNotFound extends Error {}
 
@@ -254,6 +255,34 @@ export function openStudioStore(db: Database.Database) {
     run TEXT NOT NULL REFERENCES runs(id), gate TEXT PRIMARY KEY, file TEXT NOT NULL,
     expected TEXT NOT NULL, text TEXT NOT NULL, at TEXT NOT NULL
   ); CREATE INDEX IF NOT EXISTS review_edits_file ON review_edits(run,file);`);
+  function worktree(task: string) {
+    return db
+      .prepare(
+        'SELECT directory,path,branch,base,head,dirty_hash AS dirtyHash,pending,ready FROM development_worktrees WHERE task=?',
+      )
+      .get(task) as
+      | {
+          directory: string;
+          path: string;
+          branch: string;
+          base: string;
+          head: string;
+          dirtyHash: string | null;
+          pending: string | null;
+          ready: number;
+        }
+      | undefined;
+  }
+  function handoffTree(summary: ReturnType<typeof run>['summary']) {
+    if (!summary.isolatedGit) return;
+    const tree =
+      summary.developmentTaskId && worktree(summary.developmentTaskId);
+    if (!tree || !tree.ready || tree.pending || tree.dirtyHash)
+      throw new HandoffConflict(
+        '미커밋 변경 또는 미완료 체크포인트가 있어 다음 회차를 시작할 수 없습니다.',
+      );
+    return tree;
+  }
   return {
     bindings,
     portResult(run: string, evidence: string) {
@@ -308,24 +337,8 @@ export function openStudioStore(db: Database.Database) {
       ).run(String(limit));
     },
     gitQueue,
-    worktree(task: string) {
-      return db
-        .prepare(
-          'SELECT directory,path,branch,base,head,dirty_hash AS dirtyHash,pending,ready FROM development_worktrees WHERE task=?',
-        )
-        .get(task) as
-        | {
-            directory: string;
-            path: string;
-            branch: string;
-            base: string;
-            head: string;
-            dirtyHash: string | null;
-            pending: string | null;
-            ready: number;
-          }
-        | undefined;
-    },
+    worktree,
+    handoffTree,
     planWorktree(
       task: string,
       v: { directory: string; path: string; branch: string; base: string },
@@ -686,7 +699,15 @@ export function openStudioStore(db: Database.Database) {
         )
           throw new StoreConflict();
         const { workflowId, workflowVersion, cliVersion } = parent.summary;
+        const tree = handoffTree(parent.summary);
         const child = recordRun({
+          sessionGit: tree
+            ? {
+                sourceRun: parentId,
+                head: tree.head,
+                base: newTask ? tree.head : tree.base,
+              }
+            : undefined,
           workflowId,
           workflowVersion,
           cliVersion,

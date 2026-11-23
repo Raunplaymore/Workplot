@@ -98,6 +98,42 @@ function fixture() {
   });
   return { id, v, runs, d, config, generate, db, store };
 }
+test('a redirected round inherits the completed branch and refuses outstanding changes', () => {
+  const { store, v } = fixture();
+  const task = randomUUID(),
+    base = 'a'.repeat(40),
+    head = 'b'.repeat(40);
+  const parent = store.recordRun({
+    workflowId: v.summary.workflowId,
+    workflowVersion: 1,
+    cliVersion: '1.0.0',
+    isolatedGit: true,
+    developmentTaskId: task,
+    status: 'waiting',
+    process: null,
+    sessionId: null,
+    results: [],
+  });
+  store.planWorktree(task, {
+    base,
+    path: '/qa',
+    directory: '/qa',
+    branch: 'workplot/' + task,
+  });
+  store.finishWorktree(task, head);
+  store.saveWorktreeChanges(task, 'pending-edit');
+  const finish = vi.fn();
+  for (const redirect of [true, false])
+    expect(() =>
+      store.recordNextSession(parent.id, '인계', finish, redirect),
+    ).toThrow('미커밋');
+  expect(finish).not.toHaveBeenCalled();
+  store.finishWorktree(task, head);
+  const child = store.recordNextSession(parent.id, '인계', finish, true);
+  expect(child.sessionGit).toEqual({ sourceRun: parent.id, base: head, head });
+  expect(child.developmentTaskId).not.toBe(task);
+  expect(finish).toHaveBeenCalledTimes(1);
+});
 test('a third session proposes against the original user material while keeping its own approved brief', async () => {
   const { store, v, d, generate } = fixture();
   const root = store.recordRun({

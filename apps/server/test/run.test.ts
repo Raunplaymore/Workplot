@@ -1543,3 +1543,85 @@ test('QA port retry checks the host once per failure and preserves documents and
     probe.mockRestore();
   }
 });
+
+test('a skipped commit with pending edits stays retryable at the commit step', async () => {
+  let edit = true;
+  await withStudio(
+    {
+      ready: async () => '0.166.0',
+      async write(
+        prompt,
+        _signal,
+        _observe,
+        _tool,
+        _evidence,
+        _images,
+        directory,
+      ) {
+        if (JSON.parse(prompt).currentStepId === 'draft' && edit) {
+          await writeFile(join(directory!, 'candidate.txt'), '미검증 작업');
+        }
+        return { kind: 'document', text: '검증 미충족' };
+      },
+    },
+    async ({ inject, path }) => {
+      const workspace = join(path, 'source');
+      await mkdir(workspace);
+      execFileSync('git', ['-C', workspace, 'init', '-qb', 'main']);
+      execFileSync('git', [
+        '-C',
+        workspace,
+        '-c',
+        'user.name=QA',
+        '-c',
+        'user.email=qa@localhost',
+        '-c',
+        'commit.gpgsign=false',
+        'commit',
+        '--allow-empty',
+        '-qm',
+        'base',
+      ]);
+      const gitTarget = (
+        await inject('POST', '/git/targets', { service: 'QA', path: workspace })
+      ).json();
+      const workflow = (
+        await inject('POST', '/workflows', {
+          name: '커밋 인계 검사',
+          steps: [
+            { ...definition.steps[0], workspaceAccess: 'write' },
+            { ...definition.steps[2], id: 'check', tool: 'verified-commit' },
+            { ...definition.steps[1], startNextSession: true },
+          ],
+          links: [
+            { from: 'draft', to: 'check' },
+            { from: 'check', to: 'review' },
+          ],
+        })
+      ).json() as { id: string; version: number };
+      async function start() {
+        const id = randomUUID();
+        expect(
+          (
+            await inject('POST', '/runs', {
+              id,
+              workflowId: workflow.id,
+              workflowVersion: workflow.version,
+              requestFiles: { workspace, gitTarget, references: [] },
+            })
+          ).statusCode,
+        ).toBe(200);
+        return id;
+      }
+      const dirty = await until(inject, await start(), 'failed');
+      expect(dirty.failureId).toBeTruthy();
+      expect(dirty.note).toContain('이 커밋 단계');
+      expect(dirty.results).toEqual(['draft.md']);
+      expect(dirty.summary.nextSessionId).toBeUndefined();
+      edit = false;
+      const clean = await until(inject, await start(), 'waiting');
+      expect(clean.results).toEqual(['draft.md', 'check.md']);
+      expect(clean.gate?.startNextSession).toBe(true);
+    },
+  );
+});

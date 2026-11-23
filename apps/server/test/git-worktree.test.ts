@@ -69,6 +69,15 @@ it('keeps sibling branches independent, preserves partial work and rejects edits
     await restarted.checkpoint(a, randomUUID(), 'edit');
     expect(git(a.directory, 'rev-parse', 'HEAD^')).toBe(target.sha);
     expect((await restarted.open(a.task, target)).head).not.toBe(target.sha);
+    const inherited = git(a.directory, 'rev-parse', 'HEAD');
+    const successor = await restarted.open(randomUUID(), target, inherited);
+    expect(successor.head).toBe(inherited);
+    expect(await readFile(join(successor.path, 'index.txt'), 'utf8')).toBe(
+      'partial',
+    );
+    expect((await manager.open(successor.task, target, inherited)).head).toBe(
+      inherited,
+    );
     expect((await restarted.open(b.task, target)).head).toBe(target.sha);
     expect(await readFile(join(b.path, 'index.txt'), 'utf8')).toBe('base');
     expect(await readFile(join(repo, 'web', 'index.txt'), 'utf8')).toBe('base');

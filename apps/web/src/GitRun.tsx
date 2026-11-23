@@ -251,6 +251,13 @@ export function GitRunInfo({ run }: { run: RunView }) {
       <p>
         {target.branch} · {target.sha.slice(0, 12)}
       </p>
+      {run.summary.sessionGit && (
+        <p>
+          <a href={'#/runs/' + run.summary.sessionGit.sourceRun}>직전 회차</a>
+          에서 이어받은 커밋 ·{' '}
+          <code>{run.summary.sessionGit.head.slice(0, 12)}</code>
+        </p>
+      )}
       {run.summary.requestFiles?.handoff && run.worktree && (
         <p>
           작업 브랜치 <code>{run.worktree.branch}</code> · 현재 HEAD{' '}
@@ -281,7 +288,7 @@ export function GitRunInfo({ run }: { run: RunView }) {
           </>
         )}
         <p>
-          시작 커밋 <code>{target.sha}</code> ·{' '}
+          원본 기준 커밋 <code>{target.sha}</code> ·{' '}
           {target.dirty ? '시작 당시 미커밋 변경 있음' : '시작 당시 깨끗함'}
         </p>
         {run.aiCalls?.length ? (

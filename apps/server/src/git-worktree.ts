@@ -95,7 +95,7 @@ async function dirtyDigest(directory: string) {
 }
 export function manageWorktrees(store: StudioStore, root: string) {
   let creating: Promise<void> = Promise.resolve();
-  async function open(task: string, target: GitTarget) {
+  async function open(task: string, target: GitTarget, base = target.sha) {
     const data = await realpath(root);
     let storage = join(data, 'git-development');
     if (within(target.root, storage))
@@ -115,14 +115,14 @@ export function manageWorktrees(store: StudioStore, root: string) {
       branch = 'workplot/' + task,
       path = join(directory, target.subpath);
     const row = store.worktree(task);
-    if (row && (row.directory !== directory || row.base !== target.sha))
+    if (row && (row.directory !== directory || row.base !== base))
       problem('등록된 작업 공간과 실행 대상이 다릅니다.');
     // Create only a new task. An already-opened tree must never be reset or reconstructed.
     if (!row?.ready) {
       await mkdir(dirname(directory), { recursive: true, mode: 0o700 });
       if ((await realpath(dirname(directory))) !== dirname(directory))
         problem('작업 공간 경로가 변경됐습니다.');
-      store.planWorktree(task, { directory, path, branch, base: target.sha });
+      store.planWorktree(task, { directory, path, branch, base });
       await mkdir(common, { recursive: true, mode: 0o700 });
       if ((await realpath(common)) !== common)
         problem('Git 보관 폴더가 변경됐습니다.');
@@ -135,25 +135,18 @@ export function manageWorktrees(store: StudioStore, root: string) {
           '.',
         );
       if (!(await exists(directory))) {
-        await git(
-          common,
-          '-c',
-          'protocol.file.allow=always',
-          'fetch',
-          '--no-tags',
-          '--no-write-fetch-head',
-          target.root,
-          target.sha,
-        );
-        await git(
-          common,
-          'worktree',
-          'add',
-          '-b',
-          branch,
-          directory,
-          target.sha,
-        );
+        if (base === target.sha)
+          await git(
+            common,
+            '-c',
+            'protocol.file.allow=always',
+            'fetch',
+            '--no-tags',
+            '--no-write-fetch-head',
+            target.root,
+            target.sha,
+          );
+        await git(common, 'worktree', 'add', '-b', branch, directory, base);
       }
     }
     if (!(await exists(path)))
@@ -209,8 +202,8 @@ export function manageWorktrees(store: StudioStore, root: string) {
     return { directory, path, branch, head, task, common };
   }
   return {
-    open(task: string, target: GitTarget) {
-      const work = creating.then(() => open(task, target));
+    open(task: string, target: GitTarget, base = target.sha) {
+      const work = creating.then(() => open(task, target, base));
       creating = work.then(
         () => {},
         () => {},
