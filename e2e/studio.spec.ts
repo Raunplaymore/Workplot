@@ -178,3 +178,167 @@ test('실행 목록에서 세션 묶음을 유지한 채 페이지와 표시 개
   await expect(table).toHaveCount(4);
   await expect(next).toBeDisabled();
 });
+
+for (const width of [390, 1280]) {
+  test(`${width}px 활성 세션과 실행 목록에서 대기 유형을 확인하고 해당 상세를 연다`, async ({
+    page,
+  }) => {
+    const rows = [
+      {
+        name: '기록 1',
+        gateKind: 'question',
+        expectedStatus: '답변 대기',
+        action: '질문 열기',
+      },
+      {
+        name: '기록 2',
+        gateKind: 'review',
+        expectedStatus: '승인 대기',
+        action: '검토 열기',
+      },
+      {
+        name: '기록 3',
+        expectedStatus: '사용자 확인 대기',
+        action: '대기 단계 열기',
+      },
+    ].map(({ expectedStatus, action, ...row }, index) => ({
+      expectedStatus,
+      action,
+      row: {
+        ...row,
+        id: '00000000-0000-4000-8000-00000000000' + (index + 1),
+        workflowId: '00000000-0000-4000-8000-000000000010',
+        workflowVersion: 1,
+        recordedAt: '2026-01-01T00:00:00.000Z',
+        status: 'waiting',
+      },
+    }));
+    const responses = rows.map(({ row }) => row);
+    await page.route('**/api/runs', (route) =>
+      route.fulfill({ json: responses }),
+    );
+    for (const { name, gateKind, ...summary } of responses) {
+      await page.route(`**/api/runs/${summary.id}/view`, (route) =>
+        route.fulfill({
+          json: {
+            summary: { ...summary, provider: 'codex', cliVersion: '1.0.0' },
+            stepId: 'stage',
+            note: null,
+            results: [],
+            gate: gateKind
+              ? { id: summary.id, kind: gateKind, text: name + '의 대기 내용' }
+              : null,
+          },
+        }),
+      );
+    }
+
+    const { workflowId, recordedAt } = responses[0]!;
+    await page.route(
+      `**/api/workflows/${workflowId}/versions/1?expanded=1`,
+      (route) =>
+        route.fulfill({
+          json: {
+            id: workflowId,
+            version: 1,
+            savedAt: recordedAt,
+            definition: {
+              name: '검사용 워크플롯',
+              steps: [
+                {
+                  id: 'stage',
+                  kind: 'task',
+                  title: '자료 확인',
+                  instructions: '검사용 자료를 확인한다.',
+                  position: { x: 0, y: 0 },
+                },
+              ],
+              links: [],
+            },
+          },
+        }),
+    );
+    await page.route('**/api/runs/*/delivery', (route) =>
+      route.fulfill({ json: { receipts: [] } }),
+    );
+    await page.route('**/api/runs/*/delegation', (route) =>
+      route.fulfill({
+        json: {
+          enabled: false,
+          used: 0,
+          note: '',
+          score: null,
+          checks: [],
+          config: null,
+        },
+      }),
+    );
+
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    await page.goto('/#/runs');
+    const cards = page
+      .getByRole('region', { name: '진행 중인 워크플롯' })
+      .getByRole('article');
+    await expect(cards).toHaveCount(3);
+    const cardFor = (name: string) =>
+      cards.filter({ has: page.getByRole('heading', { name, exact: true }) });
+    for (const {
+      row: { name },
+      expectedStatus,
+      action,
+    } of rows) {
+      const card = cardFor(name);
+      await expect(
+        card.getByText(expectedStatus + ' · 자료 확인', { exact: true }),
+      ).toBeVisible();
+      await expect(
+        card.getByRole('link', { name: action + ' →', exact: true }),
+      ).toBeVisible();
+    }
+    for (const {
+      row: { id, name, gateKind },
+      action,
+    } of rows) {
+      await cardFor(name)
+        .getByRole('link', { name: action + ' →', exact: true })
+        .click();
+      await expect(page).toHaveURL(new RegExp('#/runs/' + id + '$'));
+      if (gateKind) {
+        await expect(
+          page.getByText(name + '의 대기 내용', { exact: true }),
+        ).toBeVisible();
+        await expect(
+          page.getByText(
+            gateKind === 'question'
+              ? 'Codex가 확인을 요청했습니다'
+              : '검토 후 계속할까요?',
+            { exact: true },
+          ),
+        ).toBeVisible();
+      }
+      await page.goto('/#/runs');
+    }
+
+    for (const {
+      row: { id, name, gateKind },
+      expectedStatus,
+      action,
+    } of rows) {
+      await page.goto('/#/runs');
+      await page.getByRole('button', { name: /사용자 확인 대기/ }).click();
+      const list = page.locator('tbody');
+      await expect(list.getByRole('row')).toHaveCount(3);
+      const row = list.getByRole('row').filter({ hasText: name });
+      await expect(
+        row.getByText(expectedStatus, { exact: true }),
+      ).toBeVisible();
+      await row.getByRole('button', { name: action, exact: true }).click();
+      await expect(page).toHaveURL(new RegExp('#/runs/' + id + '$'));
+      if (gateKind) {
+        await expect(
+          page.getByText(name + '의 대기 내용', { exact: true }),
+        ).toBeVisible();
+      }
+    }
+  });
+}

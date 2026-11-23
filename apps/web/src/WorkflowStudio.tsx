@@ -144,6 +144,11 @@ const runLabels: Record<RunView['summary']['status'], string> = {
   stopped: '중단됨',
   unknown: '종료 상태 미확인',
 };
+const waitingRunLabels = {
+  question: { status: '답변 대기', action: '질문 열기' },
+  review: { status: '승인 대기', action: '검토 열기' },
+  unspecified: { status: runLabels.waiting, action: '대기 단계 열기' },
+};
 function chain(steps: Step[]) {
   return steps.flatMap((step, index) => {
     const previous = steps[index - 1];
@@ -2019,16 +2024,32 @@ export function WorkflowStudio({
                 <section aria-label="진행 중인 워크플롯">
                   <h3>진행 중인 워크플롯</h3>
                   <div className={styles.activeGrid}>
-                    {activeRows.map((row) => (
-                      <ActiveSessionCard
-                        key={row.id}
-                        row={row}
-                        history={earlierSessions(row)}
-                        status={
-                          row.quotaRetryAt ? '한도 대기' : runLabels[row.status]
-                        }
-                      />
-                    ))}
+                    {activeRows.map((row) => {
+                      const waiting =
+                        waitingRunLabels[
+                          (row.quotaRetryAt ? undefined : row.gateKind) ??
+                            'unspecified'
+                        ];
+                      return (
+                        <ActiveSessionCard
+                          key={row.id}
+                          row={row}
+                          history={earlierSessions(row)}
+                          status={
+                            row.quotaRetryAt
+                              ? '한도 대기'
+                              : row.status === 'waiting'
+                                ? waiting.status
+                                : runLabels[row.status]
+                          }
+                          action={
+                            row.status === 'waiting'
+                              ? waiting.action
+                              : '실행 상세 열기'
+                          }
+                        />
+                      );
+                    })}
                   </div>
                 </section>
               )}
@@ -2128,7 +2149,11 @@ export function WorkflowStudio({
                             >
                               {row.quotaRetryAt
                                 ? '한도 대기'
-                                : runLabels[row.status]}
+                                : row.status === 'waiting'
+                                  ? waitingRunLabels[
+                                      row.gateKind ?? 'unspecified'
+                                    ].status
+                                  : runLabels[row.status]}
                             </span>
                           </td>
                           <td>
@@ -2143,7 +2168,9 @@ export function WorkflowStudio({
                               onClick={() => openRun(row.id)}
                             >
                               {row.status === 'waiting'
-                                ? '검토 열기'
+                                ? waitingRunLabels[
+                                    row.gateKind ?? 'unspecified'
+                                  ].action
                                 : row.status === 'failed'
                                   ? '실패 상세 열기'
                                   : '결과 열기'}

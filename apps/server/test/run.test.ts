@@ -1412,6 +1412,10 @@ test('QA port retry checks the host once per failure and preserves documents and
         ).json() as { status: string; token: string };
         expect(failed.status).toBe('failed');
         expect(failed.token).not.toBe(token);
+        const release = vi.fn();
+        if (process.env.WORKPLOT_HOST_ISOLATION_QA !== '1')
+          probe.mockResolvedValueOnce({ port: 23456, release });
+
         const results = await Promise.all(
           [1, 2].map(() =>
             inject('POST', route + '/qa-port/retry', { token: failed.token }),
@@ -1419,6 +1423,8 @@ test('QA port retry checks the host once per failure and preserves documents and
         );
         expect(results.map((r) => r.statusCode).sort()).toEqual([200, 409]);
         expect(probe).toHaveBeenCalledTimes(2);
+        if (process.env.WORKPLOT_HOST_ISOLATION_QA !== '1')
+          expect(release).toHaveBeenCalledOnce();
         await restart();
         expect((await until(inject, id, 'completed')).portCheck?.status).toBe(
           'passed',
