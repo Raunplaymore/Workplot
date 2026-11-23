@@ -429,6 +429,34 @@ test('delegated timeouts retry the same step once, keeping the session count', a
   expect(d.status(id)).toMatchObject({ enabled: true, used: 0, config });
 });
 
+test('delegated commit failure retries once without advancing or consuming another session', async () => {
+  const { store, d, id, config, runs, v } = fixture();
+  const original = store.executionDefinition(
+    v.summary.workflowId,
+    v.summary.workflowVersion,
+  );
+  d.enable(id, config);
+  vi.spyOn(store, 'executionDefinition').mockReturnValue({
+    ...original,
+    steps: original.steps.map((s) =>
+      s.kind === 'task' ? { ...s, tool: 'verified-commit' } : s,
+    ),
+  });
+  v.summary.status = 'failed';
+  v.stepId = 'work';
+  v.gate = null;
+  v.failureId = randomUUID();
+  await Promise.all([d.tick(), d.tick()]);
+  expect(runs.retry).toHaveBeenCalledTimes(1);
+  v.failureId = randomUUID();
+  await d.tick();
+  expect(runs.retry).toHaveBeenCalledTimes(1);
+  expect(d.status(id)).toMatchObject({
+    used: 0,
+    enabled: false,
+    note: expect.stringContaining('커밋 복구 대기'),
+  });
+});
 test('an explicitly queued exploration is attached only to the next approved child', async () => {
   const { id, d, config, runs, generate } = fixture();
   d.enable(id, config);

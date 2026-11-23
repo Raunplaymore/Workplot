@@ -286,13 +286,15 @@ for (const width of [390, 1280]) {
         status: 'waiting',
       },
     }));
+    let detailReads = 0;
     const responses = rows.map(({ row }) => row);
     await page.route('**/api/runs', (route) =>
       route.fulfill({ json: responses }),
     );
     for (const { name, gateKind, ...summary } of responses) {
-      await page.route(`**/api/runs/${summary.id}/view`, (route) =>
-        route.fulfill({
+      await page.route(`**/api/runs/${summary.id}/view`, (route) => {
+        detailReads++;
+        return route.fulfill({
           json: {
             summary: { ...summary, provider: 'codex', cliVersion: '1.0.0' },
             stepId: 'stage',
@@ -302,47 +304,72 @@ for (const width of [390, 1280]) {
               ? { id: summary.id, kind: gateKind, text: name + '의 대기 내용' }
               : null,
           },
-        }),
-      );
+        });
+      });
     }
 
     const { workflowId, recordedAt } = responses[0]!;
-    await page.route(
-      `**/api/workflows/${workflowId}/versions/1?expanded=1`,
-      (route) =>
-        route.fulfill({
-          json: {
-            id: workflowId,
-            version: 1,
-            savedAt: recordedAt,
-            definition: {
-              name: '검사용 워크플롯',
-              steps: [
-                {
-                  id: 'stage',
-                  kind: 'task',
-                  title: '자료 확인',
-                  instructions: '검사용 자료를 확인한다.',
-                  position: { x: 0, y: 0 },
-                },
-              ],
-              links: [],
-            },
+    await page.route(`**/api/workflows/${workflowId}/versions/1*`, (route) =>
+      route.fulfill({
+        json: {
+          id: workflowId,
+          version: 1,
+          savedAt: recordedAt,
+          definition: {
+            name: '검사용 워크플롯',
+            steps: [
+              {
+                id: 'stage',
+                kind: 'task',
+                title: '자료 확인',
+                instructions: '검사용 자료를 확인한다.',
+                position: { x: 0, y: 0 },
+              },
+              {
+                id: 'again',
+                kind: 'review',
+                title: '다음 회차',
+                startNextSession: true,
+                position: { x: 200, y: 0 },
+              },
+            ],
+            links: [{ from: 'stage', to: 'again' }],
           },
-        }),
+        },
+      }),
     );
+    const outgoing: string[] = [];
+    await page.route('**/api/runs/*/session-requests', (route) => {
+      const request = route.request();
+      if (request.method() === 'POST')
+        outgoing.push(request.postDataJSON().text);
+      return route.fulfill({
+        json: {
+          runId: request.url().split('/').at(-2),
+          round: 2,
+          incoming: [],
+          outgoing,
+        },
+      });
+    });
     await page.route('**/api/runs/*/delivery', (route) =>
       route.fulfill({ json: { receipts: [] } }),
     );
     await page.route('**/api/runs/*/delegation', (route) =>
       route.fulfill({
         json: {
-          enabled: false,
-          used: 0,
+          enabled: true,
+          used: 6,
           note: '',
           score: null,
           checks: [],
-          config: null,
+          config: {
+            goal: '실행 현황 개선',
+            criteria: ['상태 확인'],
+            target: 100,
+            maxSessions: null,
+            until: '2026-11-24T07:00:00.000Z',
+          },
         },
       }),
     );
@@ -376,6 +403,37 @@ for (const width of [390, 1280]) {
         .getByRole('link', { name: action + ' →', exact: true })
         .click();
       await expect(page).toHaveURL(new RegExp('#/runs/' + id + '$'));
+      if (id === responses[0]!.id) {
+        const initialReads = detailReads;
+        await expect
+          .poll(() => detailReads - initialReads)
+          .toBeGreaterThanOrEqual(3);
+        const approval = page.getByRole('region', {
+          name: '다음 세션 자동승인',
+        });
+        await expect(approval).toHaveCount(1);
+        await expect(
+          page.getByRole('button', { name: '자동승인 해제' }),
+        ).toHaveCount(1);
+        const panel = page.getByRole('region', { name: '다음 회차 요청' });
+        await panel
+          .getByLabel('3회차 계획에 참고할 내용')
+          .fill('승인 대기 화면을 살펴봐 주세요.');
+        await panel.getByRole('button', { name: '요청 남기기' }).click();
+        await expect(panel.getByRole('status')).toHaveText(
+          '3회차 계획에 참고하도록 저장했습니다.',
+        );
+        await expect(panel.getByRole('listitem')).toHaveText(
+          '승인 대기 화면을 살펴봐 주세요.',
+        );
+        await expect(panel.getByRole('button')).toBeDisabled();
+        expect(
+          await panel.evaluate((el) => el.scrollWidth <= el.clientWidth),
+        ).toBe(true);
+        await panel.screenshot({
+          path: test.info().outputPath('session-request.png'),
+        });
+      }
       if (gateKind) {
         await expect(
           page.getByText(name + '의 대기 내용', { exact: true }),

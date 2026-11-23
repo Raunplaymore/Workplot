@@ -1,0 +1,76 @@
+.card {
+  display: grid;
+  gap: 12px;
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #f8faf6;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.header,
+.actions,
+.actions button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.card .header h3,
+.card p,
+.card ul {
+  margin: 0;
+}
+.card ul {
+  padding-inline-start: 1.25em;
+}
+.card li {
+  white-space: pre-wrap;
+}
+.card form,
+.notes {
+  display: grid;
+  gap: 6px;
+}
+.card label,
+.notes strong,
+.history summary {
+  font-size: var(--type-caption);
+  font-weight: 650;
+}
+.card textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font: inherit;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: white;
+  color: var(--text);
+}
+.actions {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.actions small {
+  color: var(--muted);
+}
+.card .actions button {
+  border-radius: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  color: white;
+  background: #285541;
+}
+.card .actions button:disabled {
+  color: var(--muted);
+  background: #e9eee8;
+}
+.notes {
+  border-inline-start: 3px solid #88a995;
+  padding-inline-start: 10px;
+}
+.history summary {
+  cursor: pointer;
+}

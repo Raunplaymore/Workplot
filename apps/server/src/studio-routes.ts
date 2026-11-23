@@ -1,4 +1,5 @@
 import type { createGitPromotions } from './git-promotion.js';
+import { git } from './git-worktree.js';
 import { inspectGit } from './git-target.js';
 import { choosePath, AttachmentError } from './request-files.js';
 import { z } from 'zod';
@@ -31,6 +32,7 @@ import {
   promotionDecisionSchema,
   gitTargetSchema,
   runStartSchema,
+  sessionRequestInput,
   favoriteSchema,
   libraryMoveSchema,
   delegationConfigSchema,
@@ -969,6 +971,48 @@ export function registerStudioRoutes(
             wait.gate === view.gate?.id && { quotaRetryAt: wait.retry_at }),
           retention: history.info(id.data),
         };
+      },
+    );
+    protectedRoutes.get<{ Params: { id: string } }>(
+      '/runs/:id/session-requests',
+      async (req) => store.requestView(req.params.id),
+    );
+    protectedRoutes.post<{ Params: { id: string } }>(
+      '/runs/:id/session-requests',
+      async (req, reply) => {
+        const note = sessionRequestInput.safeParse(req.body);
+        if (!note.success)
+          return reply.code(400).send({ error: 'invalid_request' });
+        return store.addSessionRequest(req.params.id, note.data);
+      },
+    );
+    protectedRoutes.get<{ Params: { id: string } }>(
+      '/runs/:id/staged-changes',
+      async (req, reply) => {
+        const v = developmentView(req.params.id);
+        if (
+          v.summary.status !== 'failed' ||
+          !v.failureId ||
+          !('worktree' in v) ||
+          !v.worktree
+        )
+          throw new StoreConflict();
+        const diff = await git(
+          v.worktree.path,
+          'diff',
+          '--cached',
+          '--no-ext-diff',
+          '--no-textconv',
+          '--',
+          '.',
+        );
+        return reply
+          .type('text/plain; charset=utf-8')
+          .send(
+            diff.length > 32000
+              ? diff.slice(0, 32000) + '\n… 변경 내용 일부만 표시'
+              : diff,
+          );
       },
     );
     protectedRoutes.post('/runs', async (request, reply) => {

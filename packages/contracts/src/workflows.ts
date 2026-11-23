@@ -578,3 +578,14 @@ export const runEventsSchema = z.array(
     gate: z.enum(['question', 'review']).nullable(),
   }),
 );
+
+export const sessionRequestInput = z.strictObject({
+  id: z.uuid(),
+  text: z.string().trim().min(1).max(2000),
+});
+export const sessionRequestView = z.strictObject({
+  runId: z.uuid(),
+  round: z.number().int().positive(),
+  incoming: z.array(z.string()),
+  outgoing: z.array(z.string()),
+});

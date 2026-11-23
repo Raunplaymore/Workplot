@@ -159,6 +159,35 @@ export function openStudioStore(db: Database.Database) {
     FROM runs r JOIN workflow_versions w ON w.id = r.workflow_id AND w.version = r.workflow_version
     ORDER BY recordedAt DESC, r.rowid DESC
   `);
+  db.exec(`CREATE TABLE IF NOT EXISTS session_requests (
+    id TEXT PRIMARY KEY, run TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    text TEXT NOT NULL
+  ) STRICT;
+  CREATE INDEX IF NOT EXISTS session_requests_by_run ON session_requests(run);`);
+  function requestsFor(id: string) {
+    return db
+      .prepare('SELECT text FROM session_requests WHERE run=? ORDER BY rowid')
+      .pluck()
+      .all(id) as string[];
+  }
+  function requestView(id: string) {
+    const { previousSessionId } = run(id).summary;
+    const round = db
+      .prepare(
+        `WITH RECURSIVE chain(id) AS (
+      SELECT ? UNION SELECT json_extract(record,'$.summary.previousSessionId')
+      FROM runs JOIN chain ON runs.id=chain.id WHERE json_extract(record,'$.summary.previousSessionId') IS NOT NULL
+    ) SELECT count(*) FROM chain`,
+      )
+      .pluck()
+      .get(id) as number;
+    return {
+      runId: id,
+      round,
+      incoming: previousSessionId ? requestsFor(previousSessionId) : [],
+      outgoing: requestsFor(id),
+    };
+  }
   const insertRun = db.prepare('INSERT INTO runs VALUES (?, ?, ?, ?)');
   const readRun = db.prepare('SELECT record FROM runs WHERE id = ?').pluck();
   const updateRun = db.prepare('UPDATE runs SET record = ? WHERE id = ?');
@@ -660,6 +689,38 @@ export function openStudioStore(db: Database.Database) {
       definition: WorkflowDefinition,
     ) => updateWorkflow.immediate(id, baseVersion, definition),
     recordRun,
+    requestsFor,
+    requestView,
+    addSessionRequest: db.transaction(
+      (id: string, note: { id: string; text: string }) => {
+        let current = run(id).summary;
+        const existing = db
+          .prepare('SELECT run,text FROM session_requests WHERE id=?')
+          .get(note.id) as { run: string; text: string } | undefined;
+        while (true) {
+          if (existing?.run === current.id && existing.text === note.text)
+            return requestView(current.id);
+          if (!current.nextSessionId) break;
+          current = run(current.nextSessionId).summary;
+        }
+        if (
+          existing ||
+          !['queued', 'waiting', 'running'].includes(current.status) ||
+          current.master ||
+          !workflow(
+            current.workflowId,
+            current.workflowVersion,
+          ).definition.steps.some(
+            (s) => s.kind === 'review' && s.startNextSession,
+          )
+        )
+          throw new StoreConflict();
+        db.prepare(
+          'INSERT INTO session_requests(id,run,text) VALUES (?,?,?)',
+        ).run(note.id, current.id, note.text);
+        return requestView(current.id);
+      },
+    ).immediate,
     sessionMission(id: string) {
       let first = run(id);
       const seen = new Set<string>([id]);

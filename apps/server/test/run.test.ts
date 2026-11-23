@@ -773,12 +773,14 @@ test('a changed skill after saving fails before the task calls Codex', async () 
 });
 
 test('a session hands its approved brief to exactly one successor and decline ends the chain', async () => {
+  const notes: unknown[] = [];
   const sources: string[] = [],
     missions: string[] = [];
   await withStudio(
     {
       ready: async () => '0.166.0',
       write: async (prompt) => {
+        notes.push(JSON.parse(prompt).roundRequests);
         sources.push(JSON.parse(prompt).source);
         missions.push(JSON.parse(prompt).originalMission);
         return { kind: 'document', text: '다음 세션의 합격 기준' };
@@ -804,6 +806,15 @@ test('a session hands its approved brief to exactly one successor and decline en
       const first = await until(inject, id, 'waiting');
       expect(first.gate?.startNextSession).toBe(true);
       expect(sources).toHaveLength(1);
+      const path = '/runs/' + id + '/session-requests';
+      const note = {
+        id: randomUUID(),
+        text: '모바일 승인 대기를 살펴봐 주세요',
+      };
+      await inject('POST', path, note);
+      expect((await inject('POST', path, note)).json()).toMatchObject({
+        outgoing: [note.text],
+      });
       const accept = { gateId: first.gate!.id, decision: 'accept' };
       await Promise.all([
         inject('POST', '/runs/' + id + '/decision', accept),
@@ -812,6 +823,17 @@ test('a session hands its approved brief to exactly one successor and decline en
       const finished = await until(inject, id, 'completed');
       const childId = finished.summary.nextSessionId!;
       const child = await until(inject, childId, 'waiting');
+      expect(notes).toEqual([undefined, [note.text]]);
+      const late = { id: randomUUID(), text: '목록 검색도 확인' };
+      expect((await inject('POST', path, late)).json()).toMatchObject({
+        runId: childId,
+        round: 2,
+        incoming: [note.text],
+        outgoing: [late.text],
+      });
+      expect((await inject('GET', path)).json()).toMatchObject({
+        outgoing: [note.text],
+      });
       expect(child.summary.previousSessionId).toBe(id);
       expect(child.gate?.id).not.toBe(first.gate?.id);
       expect(sources).toEqual([definition.input, '다음 세션의 합격 기준']);

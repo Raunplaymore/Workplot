@@ -8,6 +8,14 @@ import type { GitTarget } from '@studio/contracts';
 import type { StudioStore } from './studio-store.js';
 import { AttachmentError } from './request-files.js';
 
+export class CommitCheckError extends Error {
+  constructor(
+    message: string,
+    readonly summary: string,
+  ) {
+    super(message);
+  }
+}
 const exec = promisify(execFile);
 const within = (parent: string, child: string) =>
   child === parent || child.startsWith(parent + sep);
@@ -305,7 +313,23 @@ export function manageWorktrees(store: StudioStore, root: string) {
             checkout,
             scratch,
             verify,
-          );
+          ).catch(async (error: unknown) => {
+            if (verify.aborted) throw error;
+            const message = error instanceof Error ? error.message : '';
+            await recordCheck?.(message.slice(-16000));
+            const cause =
+              error instanceof Error && error.cause instanceof Error
+                ? error.cause.message
+                : message;
+            const first = cause.split('\n')[0] ?? '';
+            const summary =
+              /^(?:npm (?:run [a-zA-Z0-9:_-]+(?: -- --config workplot-candidate.playwright.config.ts)?|ci --offline --ignore-scripts)|팀 필수 검사) · (?:실패 \(.*?\)|시간 초과|중단)$/.test(
+                first,
+              )
+                ? first
+                : '격리된 커밋 검사를 완료하지 못했습니다.';
+            throw new CommitCheckError(message, summary);
+          });
           await recordCheck?.(log);
           verify.throwIfAborted();
           if (

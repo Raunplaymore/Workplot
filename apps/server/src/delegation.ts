@@ -141,7 +141,9 @@ export function createDelegation(
       const v = runs.view(id);
       if (
         v.failureId &&
-        (v.timedOut || (v.quotaRetryAt && Date.now() >= v.quotaRetryAt)) &&
+        (v.timedOut ||
+          commitStep(v) ||
+          (v.quotaRetryAt && Date.now() >= v.quotaRetryAt)) &&
         !runs.hasRetrySlot(v.summary)
       )
         state.note =
@@ -288,6 +290,19 @@ export function createDelegation(
     );
     return status(id);
   }
+  function commitStep(v: ReturnType<typeof runs.view>) {
+    return (
+      !!v.stepId &&
+      store
+        .executionDefinition(v.summary.workflowId, v.summary.workflowVersion)
+        .steps.some(
+          (s) =>
+            s.id === v.stepId &&
+            s.kind === 'task' &&
+            s.tool === 'verified-commit',
+        )
+    );
+  }
   async function step(row: Row) {
     const id = row.current,
       v = runs.view(id),
@@ -325,12 +340,12 @@ export function createDelegation(
     }
     if (
       v.summary.status === 'failed' &&
-      v.timedOut &&
+      (v.timedOut || commitStep(v)) &&
       v.failureId &&
       v.stepId
     ) {
       if (!allowed()) {
-        end(row, '위임 시간이 끝나 시간 초과 단계를 보존했습니다.');
+        end(row, '위임 시간이 끝나 실패한 단계와 결과를 보존했습니다.');
         return;
       }
       if (!runs.hasRetrySlot(v.summary)) return;
@@ -348,7 +363,12 @@ export function createDelegation(
           ).run(row.revision, id, v.stepId);
         }
       } else
-        end(row, '단계 응답 시간이 두 번 초과되어 기존 결과를 보존했습니다.');
+        end(
+          row,
+          commitStep(v)
+            ? '커밋 복구 대기 · 한 차례 재시도 후에도 실패했습니다.'
+            : '단계 응답 시간이 두 번 초과되어 기존 결과를 보존했습니다.',
+        );
       return;
     }
     if (
@@ -758,6 +778,7 @@ export function createDelegation(
         v.failureId &&
         (row.note === '실행이 끝나 위임을 마쳤습니다.' ||
           row.note.startsWith('단계 응답 시간') ||
+          row.note.startsWith('커밋 복구 대기') ||
           row.note.startsWith('평가 또는 인계'));
       if (failedStep && v.failureId) {
         const permitted = () => {
@@ -773,6 +794,10 @@ export function createDelegation(
         };
         store.allowUse(v.summary.workflowId);
         await runs.retry(id, v.failureId, permitted);
+        if (commitStep(v))
+          db.prepare(
+            'INSERT OR IGNORE INTO delegation_timeouts VALUES(?,?,?)',
+          ).run(row.revision, id, v.stepId);
       } else if (row.note === '사용자의 직접 검토 또는 답변이 필요합니다.') {
         scope(id);
       } else if (

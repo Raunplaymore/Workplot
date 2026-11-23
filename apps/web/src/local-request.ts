@@ -77,6 +77,11 @@ export async function localRequest(
         : data.error === 'request_files' && typeof data.message === 'string'
           ? data.message
           : undefined) ??
+        (response.status === 404 &&
+        data.error === 'Not Found' &&
+        path.endsWith('/session-requests')
+          ? '현재 서버 버전에서는 다음 회차 요청을 저장할 수 없습니다. 실행 중인 작업이 끝나면 Workplot 서버를 재시작해 주세요.'
+          : undefined) ??
         errorText[data.error] ??
         (response.status === 409
           ? '다른 실행 또는 변경과 충돌했습니다. 현재 상태를 확인하세요.'

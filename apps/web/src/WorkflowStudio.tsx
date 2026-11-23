@@ -12,6 +12,7 @@ import { EvidenceCaptures } from './EvidenceCaptures';
 import { MarkdownDocument } from './MarkdownDocument';
 import { RunDivider } from './RunDivider';
 import { storeMaterialDraft, emptyMaterialDraft } from './material-draft';
+import { SessionRequests } from './SessionRequests';
 import { AutoSession } from './AutoSession';
 import { ActionMenu, anchorMenu, type MenuPosition } from './ActionMenu';
 import { recoveryKey, readEditorRecovery } from './editor-recovery';
@@ -667,6 +668,14 @@ export function WorkflowStudio({
       });
     return () => c.abort();
   }, [autoOpenReview, reviewFile, gateId, runId]);
+  const failedCommit =
+    run?.summary.status === 'failed' &&
+    executionSteps.some(
+      (s) =>
+        s.id === run.stepId &&
+        s.kind === 'task' &&
+        s.tool === 'verified-commit',
+    );
   const observedStatus = rows?.find((row) => row.id === runId)?.status;
   useEffect(() => {
     if (!runId || !connected || busy) return;
@@ -1721,7 +1730,9 @@ export function WorkflowStudio({
                 {run?.summary.status === 'failed' &&
                   run.failureId &&
                   button(
-                    '실패한 단계 다시 실행',
+                    failedCommit
+                      ? '커밋 단계만 다시 실행'
+                      : '실패한 단계 다시 실행',
                     () =>
                       perform(async () => {
                         const response = await localRequest(
@@ -3508,6 +3519,12 @@ export function WorkflowStudio({
                 )}
                 {run?.note ? ` · ${run.note}` : ''}
               </p>
+              {failedCommit && run && (
+                <CommitRecovery
+                  key={run.summary.id + run.failureId}
+                  run={run}
+                />
+              )}
               {run?.portCheck && (
                 <section aria-label="QA 포트 검사">
                   <strong>QA 포트 검사</strong>
@@ -3754,6 +3771,40 @@ export function WorkflowStudio({
   );
 }
 
+function CommitRecovery({ run }: { run: RunView }) {
+  const [diff, setDiff] = useState('');
+  const [error, setError] = useState('');
+  return (
+    <section aria-label="커밋 단계 복구">
+      <strong>커밋 단계에서 멈췄습니다</strong>
+      <p>
+        완료한 결과 문서 {run.results.length}개를 보존했습니다. 다시 실행하면 이
+        회차의 변경을 검증하고 작업 브랜치에 커밋합니다.
+      </p>
+      {run.worktree && (
+        <details
+          onToggle={async (e) => {
+            if (!e.currentTarget.open || diff) return;
+            try {
+              const result = await localRequest(
+                '/runs/' + run.summary.id + '/staged-changes',
+              );
+              setDiff((await result.text()) || '스테이징된 변경이 없습니다.');
+              setError('');
+            } catch (e) {
+              setError(message(e));
+            }
+          }}
+        >
+          <summary>변경 내용 보기</summary>
+          <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+            {error || diff || '변경을 읽는 중…'}
+          </pre>
+        </details>
+      )}
+    </section>
+  );
+}
 function useRunDefinition(run: RunView | null) {
   const id = run?.summary.workflowId;
   const version = run?.summary.workflowVersion;
@@ -4056,13 +4107,16 @@ function RunHistory({
           }
           openEvidence={openEvidence}
           canRetry={!!run?.failureId}
-          key={id}
           id={run.summary.id}
           canConfigure={['queued', 'running', 'waiting'].includes(
             run.summary.status,
           )}
         />
       )}
+      {!run.summary.master &&
+        executionSteps.some(
+          (s) => s.kind === 'review' && s.startNextSession,
+        ) && <SessionRequests summary={run.summary} />}
       <h3>실행 순서 · v{run.summary.workflowVersion}</h3>
       <ol className={styles.sequence}>
         {executionSteps.map((item, index) => {

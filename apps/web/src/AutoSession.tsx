@@ -188,7 +188,13 @@ export function AutoSession({
     <section aria-label="다음 세션 자동승인" style={{ marginBlock: '12px' }}>
       {state?.config && (
         <>
-          <strong>{state.enabled ? '자동승인 켜짐' : '자동승인 종료'}</strong>
+          <strong>
+            {state.enabled
+              ? '자동승인 켜짐'
+              : state.note.startsWith('커밋 복구 대기')
+                ? '자동승인 복구 대기'
+                : '자동승인 종료'}
+          </strong>
           <p>
             {state.config.goal} ·{' '}
             {!state.config.handoffOnly &&
@@ -244,6 +250,7 @@ export function AutoSession({
           (canRetry &&
             (state.note === '실행이 끝나 위임을 마쳤습니다.' ||
               state.note.startsWith('단계 응답 시간') ||
+              state.note.startsWith('커밋 복구 대기') ||
               state.note.startsWith('평가 또는 인계')))) &&
         Date.parse(state.config.until) > Date.now() && (
           <button

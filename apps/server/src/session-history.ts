@@ -161,6 +161,7 @@ export function createSessionHistory(
     const row = select.get(id) as Row;
     if (row.expired || (deadline(row) ?? Infinity) > now()) return;
     summary(row);
+    db.prepare('DELETE FROM session_requests WHERE run=?').run(id);
     const run = store.run(id),
       kept = JSON.parse(row.kept) as string[];
     const snapshot = run.summary.snapshotId;

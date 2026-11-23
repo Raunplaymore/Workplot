@@ -16,7 +16,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { availableParallelism, tmpdir } from 'node:os';
 import { extname } from 'node:path';
 import { createGitIntegration } from './git-integration.js';
-import { manageWorktrees } from './git-worktree.js';
+import { CommitCheckError, manageWorktrees } from './git-worktree.js';
 import type {
   WorkflowDefinition,
   GitTarget,
@@ -595,6 +595,9 @@ export function createRunService(
         images.push(filename);
       }
       const taskRequest = state.summary.taskRequest;
+      const roundRequests = state.summary.previousSessionId
+        ? store.requestsFor(state.summary.previousSessionId)
+        : [];
       const requestContext = taskRequest
         ? {
             taskRequest,
@@ -1003,6 +1006,12 @@ export function createRunService(
             ...retryContext,
             approval,
             ...requestContext,
+            ...(index === 0 &&
+              roundRequests.length && {
+                roundRequests,
+                roundRequestPolicy:
+                  '이번 회차를 위해 사용자가 남긴 참고 요청이다. 원래 목표와 인계문을 함께 검토하고 첫 결과 문서에 채택한 내용 또는 보류 이유를 간략히 적는다. 승인과 권한은 기존 규칙을 따른다.',
+              }),
             ...(references?.length && { readOnlyReferences: references }),
             task: step.title,
             workflow: plan,
@@ -1076,6 +1085,12 @@ export function createRunService(
                     ...retryContext,
                     approval,
                     ...requestContext,
+                    ...(index === 0 &&
+                      roundRequests.length && {
+                        roundRequests,
+                        roundRequestPolicy:
+                          '이번 회차 참고 요청을 검토해 결과에 채택 내용이나 보류 이유를 기록한다.',
+                      }),
                     ...(references?.length && {
                       readOnlyReferences: references,
                     }),
@@ -1301,9 +1316,11 @@ export function createRunService(
             ? error.exitSignal
               ? `Codex 프로세스가 ${error.exitSignal} 신호로 종료됐습니다.`
               : failureText[reason]
-            : error instanceof AttachmentError
-              ? error.message
-              : null;
+            : error instanceof CommitCheckError
+              ? error.summary
+              : error instanceof AttachmentError
+                ? error.message
+                : null;
       if (execution.storageFailed)
         state.note = '실행 정보를 저장하지 못했습니다. 종료 상태를 확인하세요.';
       try {
