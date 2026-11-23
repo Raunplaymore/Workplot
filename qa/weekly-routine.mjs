@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import console from 'node:console';
 import { URL } from 'node:url';
+import { writeWeeklyEvidence } from './weekly-evidence.mjs';
 import { chromium } from 'playwright';
 import { buildApp } from '../apps/server/dist/app.js';
 
@@ -202,39 +203,7 @@ try {
       approved: end.summary.lastReview.at,
     });
   }
-  const escape = (t) =>
-    t.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
-  const html =
-    '<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>두 주의 보고서</title><style>body{font:17px/1.55 system-ui;color:#163d31;background:#f5f7f1;max-width:1080px;margin:36px auto;padding:0 20px}main{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,350px),1fr));gap:20px}article{background:white;border:1px solid #bdcfc2;padding:22px;border-radius:12px}h1,h2,h3{line-height:1.2}pre{white-space:pre-wrap;font:inherit}small{overflow-wrap:anywhere}</style><h1>주간 보고서 · 두 번의 실행</h1><p>승인 화면에서 저장한 규칙 · ' +
-    escape(rule) +
-    '</p><main>' +
-    records
-      .map(
-        (r, i) =>
-          '<article><h2>' +
-          (i + 1) +
-          '주차 · 흐름 v' +
-          r.version +
-          '</h2><b>검토자 수정 ' +
-          r.edits +
-          '회</b><h3>이번 주 기록</h3><p>' +
-          escape(r.source) +
-          '</p><h3>승인된 보고서</h3><pre>' +
-          escape(r.accepted) +
-          '</pre><details><summary>Codex 초안과 최종 문서</summary><pre>' +
-          escape(r.original) +
-          '</pre><hr><pre>' +
-          escape(r.final) +
-          '</pre></details><small>실행 ' +
-          r.id +
-          '</small></article>',
-      )
-      .join('') +
-    '</main></html>';
-  await writeFile(join(dir, 'comparison.html'), html);
-  await writeFile(join(dir, 'evidence.json'), JSON.stringify(records, null, 2));
-  await page.setContent(html);
-  await page.screenshot({ path: join(dir, 'comparison.png'), fullPage: true });
+  await writeWeeklyEvidence(dir, records, rule, page);
   console.log(
     dir,
     records.map(({ id, version, edits }) => ({ id, version, edits })),
