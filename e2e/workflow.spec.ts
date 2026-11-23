@@ -309,7 +309,14 @@ test('edits a saved flow by keyboard and passes that version through review to t
       .selectOption({ label: '브라우저 검증 흐름 · v3' });
     await page.getByRole('button', { name: '흐름 열기', exact: true }).click();
     await expect(editor.locator('option').last()).toHaveText('4. 초안 검토');
+    await page.getByText('AI 실행 설정', { exact: true }).click();
+    await page.getByLabel('모델', { exact: true }).fill('gpt-6.2-sol');
+    await page.getByLabel('추론 강도').selectOption('medium');
     await page.getByRole('button', { name: '저장한 버전 실행' }).click();
+    await page.getByText('AI 실행 설정과 호출 기록', { exact: true }).click();
+    await expect(
+      page.getByText('요청 모델 gpt-6.2-sol · 추론 강도 medium'),
+    ).toBeVisible();
     await expect(page.getByText('검토 후 계속할까요?')).toBeVisible();
     expect(
       prompts.slice(3).map((prompt) => JSON.parse(prompt).currentStepId),

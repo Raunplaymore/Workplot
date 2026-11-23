@@ -1352,3 +1352,63 @@
 .startControl:focus .startHint {
   display: block;
 }
+
+.slotInfo {
+  display: grid;
+  gap: 2px;
+  font-size: var(--text-sm, 0.8125rem);
+  color: var(--muted);
+}
+.slotInfo a {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.activeGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.activeCard {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  background: white;
+  border: 1px solid #b3c3b7;
+  border-radius: 8px;
+  padding: 16px;
+  display: grid;
+  align-content: start;
+  gap: 9px;
+}
+.activeCard header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.activeCard h4,
+.activeCard p {
+  margin: 0;
+}
+.activeCard header span,
+.activeCard small {
+  color: #4d6055;
+}
+.activeCard a {
+  color: #28523d;
+}
+.activeCard strong {
+  color: #355b47;
+}
+.activeCard details {
+  border-top: 1px solid #d8e1da;
+  padding-top: 7px;
+}
+.activeCard summary {
+  cursor: pointer;
+}
+.activeCard li + li {
+  margin-top: 6px;
+}

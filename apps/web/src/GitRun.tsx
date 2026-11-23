@@ -251,6 +251,19 @@ export function GitRunInfo({ run }: { run: RunView }) {
       <p>
         {target.branch} · {target.sha.slice(0, 12)}
       </p>
+      {run.summary.requestFiles?.handoff && run.worktree && (
+        <p>
+          작업 브랜치 <code>{run.worktree.branch}</code> · 현재 HEAD{' '}
+          <code>{run.worktree.head}</code>
+          {run.summary.master ? (
+            <a href={'#/masters/' + run.summary.master.runId}>
+              통합 검증과 반영 결과
+            </a>
+          ) : (
+            ' · 통합 큐 등록 기록 없음'
+          )}
+        </p>
+      )}
       <details>
         <summary>작업 및 AI 호출 기록</summary>
         <p>작업 {run.summary.developmentTaskId}</p>

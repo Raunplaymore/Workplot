@@ -1,3 +1,5 @@
+import { ApprovalChanges } from './ApprovalChanges';
+import { ActiveSessionCard } from './ActiveSessionCard';
 import { GitRun, GitRunInfo } from './GitRun';
 import { NodeInstructions } from './NodeInstructions';
 import { LinkedInstructions } from './LinkedInstructions';
@@ -59,6 +61,9 @@ import {
   runViewSchema,
   runEventsSchema,
   runListSchema,
+  slotSettingsSchema,
+  portCheckSchema,
+  MAX_DEVELOPMENT_SLOTS,
   type RunList,
   type RunMaterial,
   type RequestFiles,
@@ -68,7 +73,10 @@ import {
   workflowListSchema,
   workflowPlan,
   workflowVersionSchema,
+  missingInputFields,
   type RunDecision,
+  effortLevels,
+  type ModelSettings,
   type RunView,
   type WorkflowDefinition,
   type WorkflowVersion,
@@ -304,6 +312,37 @@ export function WorkflowStudio({
   const busyRef = useRef(false);
   const requestedStart = useRef<{ id: string; key: string } | null>(null);
   const [error, setError] = useState('');
+  const [handoffFlow, setHandoffFlow] = useState('');
+  const [model, setModel] = useState('');
+  const [effort, setEffort] = useState<ModelSettings['effort']>();
+  const modelControl = (
+    <details>
+      <summary>AI 실행 설정</summary>
+      <label>
+        모델{' '}
+        <input
+          value={model}
+          placeholder="자동"
+          maxLength={96}
+          onChange={(e) => setModel(e.target.value)}
+        />
+      </label>{' '}
+      <label>
+        추론 강도{' '}
+        <select
+          value={effort ?? ''}
+          onChange={(e) =>
+            setEffort(effortLevels.find((v) => v === e.target.value))
+          }
+        >
+          <option value="">자동</option>
+          {effortLevels.map((v) => (
+            <option key={v}>{v}</option>
+          ))}
+        </select>
+      </label>
+    </details>
+  );
   const [starting, setStarting] = useState(false);
   const [answer, setAnswer] = useState('');
   const [preview, setPreview] = useState<{
@@ -324,6 +363,11 @@ export function WorkflowStudio({
       documentHeading.current?.scrollIntoView({ block: 'start' });
     }
   }, [preview]);
+  const [editing, setEditing] = useState<{
+    gate: string;
+    original: string;
+    text: string;
+  }>();
   const [previewedGate, setPreviewedGate] = useState('');
   const [nodeSizes, setNodeSizes] = useState<Record<string, Dimensions>>({});
   const [dragging, setDragging] = useState<{
@@ -388,6 +432,27 @@ export function WorkflowStudio({
   const ordered = orderedSteps(draft);
   const joined = ordered.length === draft.steps.length;
   const steps = joined ? ordered : draft.steps;
+  const [slotSettings, setSlotSettings] = useState<ReturnType<
+    typeof slotSettingsSchema.parse
+  > | null>(null);
+  const [slotInput, setSlotInput] = useState('');
+  const [slotIssue, setSlotIssue] = useState('');
+  const [savingSlots, setSavingSlots] = useState(false);
+  async function saveSlotLimit(limit: number) {
+    setSavingSlots(true);
+    try {
+      const response = await localRequest('/development-slots', 'PUT', {
+        limit,
+      });
+      setSlotSettings(slotSettingsSchema.parse(await response.json()));
+      setSlotInput('');
+      setSlotIssue('');
+    } catch (e) {
+      setSlotIssue(message(e));
+    } finally {
+      setSavingSlots(false);
+    }
+  }
   const [rows, setRows] = useState<RunList | null>(null);
   const [pageSize, setPageSize] = useState(() => {
     try {
@@ -465,11 +530,18 @@ export function WorkflowStudio({
     let timer: ReturnType<typeof setTimeout>;
     async function refresh() {
       try {
-        const result = runListSchema.parse(
-          await (await localRequest('/runs')).json(),
-        );
+        const [result, settings] = await Promise.all([
+          localRequest('/runs')
+            .then((r) => r.json())
+            .then((v) => runListSchema.parse(v)),
+          localRequest('/development-slots')
+            .then((r) => r.json())
+            .then((v) => slotSettingsSchema.parse(v))
+            .catch(() => null),
+        ]);
         if (!disposed) {
           setRows(result);
+          setSlotSettings(settings);
           setDashboardError('');
         }
       } catch (error) {
@@ -545,7 +617,10 @@ export function WorkflowStudio({
   };
   const active = Boolean(run && activeStatuses.has(run.summary.status));
   const checkingRun = runId !== null && run?.summary.id !== runId;
-  const reviewReady = !run?.results.length || previewedGate === run.gate?.id;
+  const reviewReady =
+    !run?.results.length ||
+    (previewedGate === run.gate?.id &&
+      (run.gate?.startNextSession || preview?.name === run.results.at(-1)));
 
   async function updateList() {
     setList(
@@ -788,6 +863,37 @@ export function WorkflowStudio({
     changeOrder(insertWorkflowStep(steps, index, created));
     inspect(entry.id);
   }
+  const sessionGate = steps.find(
+    (s) => s.kind === 'review' && s.startNextSession,
+  );
+  function addSessionLoop() {
+    const last = steps.at(-1);
+    if (!last || !joined || busy || sessionGate || steps.length > 30) return;
+    const handoff: Step = {
+      id: 'handoff-' + crypto.randomUUID(),
+      kind: 'task',
+      title: '다음 회차 준비',
+      position: last.position,
+      agent: 'codex',
+      workspaceAccess: 'read-only',
+      inputFrom: steps
+        .filter((s) => s.kind === 'task')
+        .slice(-4)
+        .map((s) => s.id),
+      instructions:
+        '이번 회차의 작업 요청과 전달받은 결과를 읽고 다음 회차의 첫 단계가 사용할 인계 문서를 작성한다. 완료한 일과 근거, 아직 확인할 점을 구분하고 다음에 진행할 과제 한 가지와 선택 이유를 제시한다. 완료한 과제를 반복하지 않는다. 남은 과제가 없으면 종료를 권한다. 2,000자 이내로 작성한다.',
+    };
+    const next = insertWorkflowStep(steps, steps.length - 1, handoff);
+    const gate: Step = {
+      id: 'continue-' + crypto.randomUUID(),
+      kind: 'review',
+      title: '다음 회차 시작 승인',
+      startNextSession: true,
+      position: last.position,
+    };
+    changeOrder(insertWorkflowStep(next, next.length - 1, gate));
+    reveal.current = gate.id;
+  }
   function undo() {
     const old = history.at(-1);
     if (!old) return;
@@ -878,7 +984,19 @@ export function WorkflowStudio({
           return;
         }
       }
+      const modelSettings =
+        model.trim() || effort
+          ? { model: model.trim() || undefined, effort }
+          : undefined;
+      if (
+        modelSettings?.model &&
+        !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$/.test(modelSettings.model)
+      )
+        throw Error(
+          '모델 ID에는 영문, 숫자, 점, 밑줄, 하이픈을 사용할 수 있습니다.',
+        );
       const key = JSON.stringify([
+        modelSettings,
         version.id,
         version.version,
         material,
@@ -896,6 +1014,7 @@ export function WorkflowStudio({
           id,
           workflowId: version.id,
           workflowVersion: version.version,
+          modelSettings,
           material,
           taskRequest,
           requestFiles,
@@ -916,8 +1035,27 @@ export function WorkflowStudio({
       }
     });
   }
-  function decide(decision: RunDecision) {
+  function decide(
+    decision: RunDecision,
+    edit?: { file: string; text: string; original: string },
+  ) {
     perform(async () => {
+      if (edit && decision.decision === 'accept') {
+        const bytes = await crypto.subtle.digest(
+          'SHA-256',
+          new TextEncoder().encode(edit.original),
+        );
+        decision = {
+          ...decision,
+          edit: {
+            file: edit.file,
+            text: edit.text,
+            expected: Array.from(new Uint8Array(bytes), (b) =>
+              b.toString(16).padStart(2, '0'),
+            ).join(''),
+          },
+        };
+      }
       const path = '/runs/' + runId;
       let updated: RunView;
       try {
@@ -932,10 +1070,19 @@ export function WorkflowStudio({
         updated = runViewSchema.parse(
           await (await localRequest(path + '/view')).json(),
         );
+        if (edit) {
+          if (routeRun() === runId) setRun(updated);
+          throw Error(
+            '승인 상태가 변경되어 수정본을 저장하지 못했습니다. 현재 결과를 확인하세요.',
+            { cause: error },
+          );
+        }
         if (updated.gate?.id === decision.gateId) throw error;
       }
       if (routeRun() !== runId) return;
       setRun(updated);
+      if (edit) setPreview({ name: edit.file, text: edit.text });
+      setEditing(undefined);
       setAnswer('');
     });
   }
@@ -1163,19 +1310,85 @@ export function WorkflowStudio({
   const invalidAgent = steps.some(
     (item) => item.kind === 'task' && item.agent === 'unassigned',
   );
-  const occupyingRun =
-    rows?.find((row) => activeStatuses.has(row.status)) ??
-    (active ? run?.summary : undefined);
-  const activeRows = rows?.filter((r) => activeStatuses.has(r.status)) ?? [];
-  const gitSlotAvailable =
-    rows !== null &&
-    activeRows.length < 2 &&
-    activeRows.every(
-      (r) => r.isolatedTask && !r.masterRunId && r.status !== 'unknown',
-    );
-  function startDisabledReason(development = false) {
+  const activeRows =
+    rows?.filter((row) => row.occupiesSlot ?? activeStatuses.has(row.status)) ??
+    [];
+  const occupyingRun = activeRows[0] ?? (active ? run?.summary : undefined);
+  const slotLimit = slotSettings?.limit ?? 0;
+  const slotDataReady =
+    !!slotSettings && connected && rows !== null && !dashboardError;
+  const freeSlots = activeRows.every(
+    (row) => row.isolatedTask && !row.masterRunId && row.status !== 'unknown',
+  )
+    ? Math.max(0, slotLimit - activeRows.length)
+    : 0;
+  const gitSlotAvailable = slotDataReady && freeSlots > 0;
+  const slotInfo = (
+    <div className={styles.slotInfo} aria-label="개발 작업 슬롯">
+      <span>
+        {slotDataReady
+          ? `슬롯 ${activeRows.length}/${slotLimit} 사용 · 추가 ${freeSlots}개 가능`
+          : '슬롯 확인 중'}
+      </span>
+      {slotSettings && (
+        <details>
+          <summary>슬롯 설정</summary>
+          <p>
+            사용 가능 CPU {slotSettings.cores}코어 · 여유 메모리{' '}
+            {slotSettings.availableGiB} GiB · 추천 {slotSettings.recommended}개
+          </p>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void saveSlotLimit(Number(slotInput || slotLimit));
+            }}
+          >
+            <label>
+              동시 실행 한도{' '}
+              <input
+                type="number"
+                min="1"
+                max={MAX_DEVELOPMENT_SLOTS}
+                required
+                value={slotInput || String(slotLimit)}
+                onChange={(e) => setSlotInput(e.target.value)}
+              />
+            </label>
+            <button disabled={savingSlots}>저장</button>
+            <button
+              type="button"
+              disabled={savingSlots}
+              onClick={() => void saveSlotLimit(slotSettings.recommended)}
+            >
+              추천값 적용
+            </button>
+          </form>
+          {slotIssue && <p role="alert">{slotIssue}</p>}
+        </details>
+      )}
+      {slotDataReady &&
+        freeSlots === 0 &&
+        activeRows.map((row) => (
+          <a key={row.id} href={'#/runs/' + row.id}>
+            {list.find((flow) => flow.id === row.workflowId)?.name ?? row.name}{' '}
+            v{row.workflowVersion} ·{' '}
+            {row.status === 'waiting'
+              ? row.gateKind === 'question'
+                ? '답변 대기'
+                : '승인 대기'
+              : row.status === 'queued'
+                ? '시작 대기'
+                : row.status === 'unknown'
+                  ? '상태 확인 필요'
+                  : '실행 중'}
+          </a>
+        ))}
+    </div>
+  );
+  function startDisabledReason(development = false): string {
     if (starting) return '실행 요청을 접수하고 있습니다.';
     if (!connected) return '로컬 서버 연결을 확인하세요.';
+    if (development && !slotDataReady) return '실행 슬롯을 확인하고 있습니다.';
     if (occupyingRun && !(development && gitSlotAvailable)) {
       const label =
         (occupyingRun.workflowId === saved?.id
@@ -1183,6 +1396,16 @@ export function WorkflowStudio({
           : '다른 워크플롯') +
         ' v' +
         occupyingRun.workflowVersion;
+      if (!development && !startDisabledReason(true)) {
+        const state =
+          occupyingRun.status === 'waiting' ? '승인 대기 중' : '실행 중';
+        return (
+          label +
+          '이 ' +
+          state +
+          '입니다. ‘개발 작업 실행’으로 별도 Git 작업 폴더에서 병렬 실행할 수 있습니다.'
+        );
+      }
       if (occupyingRun.status === 'waiting') {
         if (occupyingRun.id === run?.summary.id && run.gate?.startNextSession)
           return (
@@ -1227,9 +1450,9 @@ export function WorkflowStudio({
     );
   };
 
-  function openWorkflow(id: string, stepId?: string) {
+  function openWorkflow(id: string, stepId?: string, settings = false) {
     if (dirty || !connected) return;
-    if (!stepId) {
+    if (!stepId && !settings) {
       location.hash = designUrl(id);
       return;
     }
@@ -1247,6 +1470,7 @@ export function WorkflowStudio({
         return;
       }
       reset(record.definition, record);
+      if (settings) setFlowSettings(true);
       if (stepId) {
         inspect(stepId);
         reveal.current = stepId;
@@ -1432,6 +1656,8 @@ export function WorkflowStudio({
                     개발 작업 실행
                   </button>
                 )}
+                {saved && modelControl}
+                {saved && slotInfo}
                 {button('되돌리기', undo, busy || history.length === 0)}
                 {button(
                   '변경 취소',
@@ -1633,8 +1859,13 @@ export function WorkflowStudio({
                 gitTarget,
               };
               if (
-                !gitPrep.material &&
-                !gitPrep.version.definition.input?.trim()
+                (!gitPrep.material &&
+                  !gitPrep.version.definition.input?.trim()) ||
+                (files.handoff &&
+                  missingInputFields(
+                    requiredInputFields(gitPrep.version.definition),
+                    gitPrep.material?.source ?? '',
+                  ).length > 0)
               ) {
                 prepareMaterial(gitPrep.version, request || undefined, files);
                 setGitPrep(null);
@@ -1663,9 +1894,11 @@ export function WorkflowStudio({
         )}
         {surface === 'library' && (
           <WorkflowLibrary
+            modelControl={modelControl}
             rows={rows}
             starting={starting}
             develop={prepareGit}
+            slotInfo={slotInfo}
             developmentBusy={
               busy || !connected || !codexAvailable || !gitSlotAvailable
             }
@@ -1677,6 +1910,7 @@ export function WorkflowStudio({
               prepareMaterial(v, request, files);
             }}
             edit={openWorkflow}
+            editSettings={(id) => openWorkflow(id, undefined, true)}
             canEdit={!dirty && !busy && connected}
             busy={
               busy ||
@@ -1781,6 +2015,23 @@ export function WorkflowStudio({
                   </button>
                 ))}
               </div>
+              {connected && !dashboardError && activeRows.length > 0 && (
+                <section aria-label="진행 중인 워크플롯">
+                  <h3>진행 중인 워크플롯</h3>
+                  <div className={styles.activeGrid}>
+                    {activeRows.map((row) => (
+                      <ActiveSessionCard
+                        key={row.id}
+                        row={row}
+                        history={earlierSessions(row)}
+                        status={
+                          row.quotaRetryAt ? '한도 대기' : runLabels[row.status]
+                        }
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
               <MasterLinks rows={pageRows} />
               <div className={styles.runListHeader}>
                 <h3>실행 목록</h3>
@@ -2310,6 +2561,37 @@ export function WorkflowStudio({
                     </legend>
                     {flowSettings && (
                       <>
+                        <section aria-label="세션 반복">
+                          <strong>세션 반복</strong>
+                          <p>
+                            {sessionGate
+                              ? '마지막 인계 문서를 승인하면 같은 버전의 첫 단계부터 다음 회차가 시작됩니다.'
+                              : '현재는 마지막 단계에서 실행이 끝납니다.'}
+                          </p>
+                          {sessionGate ? (
+                            <button
+                              type="button"
+                              onClick={() => inspect(sessionGate.id)}
+                            >
+                              반복 단계 보기
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={!joined || steps.length > 30}
+                              onClick={addSessionLoop}
+                            >
+                              인계와 반복 승인 추가
+                            </button>
+                          )}
+                          {!sessionGate && (!joined || steps.length > 30) && (
+                            <p>
+                              {!joined
+                                ? '먼저 모든 단계를 하나의 흐름으로 연결하세요.'
+                                : '인계와 승인을 추가하려면 두 단계의 여유가 필요합니다.'}
+                            </p>
+                          )}
+                        </section>
                         <label>
                           흐름 이름
                           <input
@@ -2721,13 +3003,19 @@ export function WorkflowStudio({
                                             : event.target.value ===
                                                 'workplot-ui'
                                               ? 'workplot-ui'
-                                              : undefined,
+                                              : event.target.value ===
+                                                  'verified-commit'
+                                                ? 'verified-commit'
+                                                : undefined,
                                       })
                                     }
                                   >
                                     <option value="">없음</option>
                                     <option value="workplot-ui">
                                       Workplot 화면 구현·검증
+                                    </option>
+                                    <option value="verified-commit">
+                                      검증 후 Git 커밋
                                     </option>
                                     <option value="market-calendar">
                                       공식 웹 조회 · 츠키지 달력
@@ -2951,6 +3239,66 @@ export function WorkflowStudio({
               )}
               {preview && (
                 <div className={styles.result}>
+                  {run?.summary.status === 'completed' &&
+                    !run.retention?.expired &&
+                    /인계|handoff/i.test(
+                      preview.name + ' ' + preview.text.split('\n', 1)[0],
+                    ) && (
+                      <div>
+                        <label>
+                          개발 흐름{' '}
+                          <select
+                            value={handoffFlow}
+                            onChange={(e) => setHandoffFlow(e.target.value)}
+                          >
+                            <option value="">흐름 선택</option>
+                            {list.map((flow) => (
+                              <option key={flow.id} value={flow.id}>
+                                {flow.name} · v{flow.version}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <button
+                          disabled={busy || !handoffFlow}
+                          onClick={() =>
+                            perform(async () => {
+                              const version = workflowVersionSchema.parse(
+                                await (
+                                  await localRequest(
+                                    '/workflows/' + handoffFlow,
+                                  )
+                                ).json(),
+                              );
+                              prepareGit(
+                                version,
+                                '인계 문서의 과제와 합격 기준에 따라 개발하고 검증한다.',
+                                {
+                                  references: [],
+                                  workspace:
+                                    run.summary.requestFiles?.workspace,
+                                  handoff: {
+                                    runId: run.summary.id,
+                                    file: preview.name,
+                                  },
+                                },
+                                {
+                                  name: preview.name,
+                                  source: (
+                                    '개발 과제: ' +
+                                    preview.name +
+                                    ' 문서의 과제 및 합격 기준\n\n' +
+                                    preview.text
+                                  ).slice(0, 8000),
+                                },
+                              );
+                            })
+                          }
+                        >
+                          이 과제로 개발 시작
+                        </button>
+                      </div>
+                    )}
                   <strong>{preview.name}</strong>{' '}
                   {run?.retention && run.results.includes(preview.name) && (
                     <button
@@ -3014,6 +3362,13 @@ export function WorkflowStudio({
                         text={preview.text}
                       />
                     )}
+                  {run?.editedFiles?.includes(preview.name) && (
+                    <ApprovalChanges
+                      key={run.summary.id + preview.name}
+                      run={run.summary.id}
+                      file={preview.name}
+                    />
+                  )}
                   <MarkdownDocument key={preview.name} text={preview.text} />
                 </div>
               )}
@@ -3031,6 +3386,18 @@ export function WorkflowStudio({
             <RunDivider />
             <aside className={styles.inspector} aria-label="실행 상세 패널">
               <small>실행 상세</small>
+              {run?.summary.requestFiles?.handoff && (
+                <a href={'#/runs/' + run.summary.requestFiles.handoff.runId}>
+                  원본 인계 · {run.summary.requestFiles.handoff.file}
+                </a>
+              )}
+              {rows
+                ?.filter((r) => r.handoffRunId === runId && runId)
+                .map((r) => (
+                  <a key={r.id} href={'#/runs/' + r.id}>
+                    인계한 개발 실행 · {r.name}
+                  </a>
+                ))}
               <h2>
                 {rows?.find((row) => row.id === runId)?.name ?? '작업 흐름'}
               </h2>{' '}
@@ -3043,6 +3410,28 @@ export function WorkflowStudio({
                   ))}
                   {run.summary.requestFiles.workspace && (
                     <p>수정할 폴더 · {run.summary.requestFiles.workspace}</p>
+                  )}
+                </details>
+              )}
+              {run && (
+                <details>
+                  <summary>AI 실행 설정과 호출 기록</summary>
+                  <p>
+                    요청 모델 {run.summary.modelSettings?.model ?? '자동'} ·
+                    추론 강도 {run.summary.modelSettings?.effort ?? '자동'}
+                  </p>
+                  {run.modelCalls?.length ? (
+                    <ul>
+                      {run.modelCalls.map((c, i) => (
+                        <li key={i}>
+                          {executionSteps.find((s) => s.id === c.step)?.title ??
+                            c.step}{' '}
+                          · {c.model} · {c.effort}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>CLI에서 확인된 호출 기록이 없습니다.</p>
                   )}
                 </details>
               )}
@@ -3078,6 +3467,34 @@ export function WorkflowStudio({
                 )}
                 {run?.note ? ` · ${run.note}` : ''}
               </p>
+              {run?.portCheck && (
+                <section aria-label="QA 포트 검사">
+                  <strong>QA 포트 검사</strong>
+                  <p role="status">{run.portCheck.reason}</p>
+                  {run.portCheck.status !== 'passed' &&
+                    button(
+                      '포트 검사만 다시 실행',
+                      () =>
+                        perform(async () => {
+                          const id = run.summary.id;
+                          const response = await localRequest(
+                            '/runs/' + id + '/qa-port/retry',
+                            'POST',
+                            { token: run.portCheck!.token },
+                          );
+                          const checked = portCheckSchema.parse(
+                            await response.json(),
+                          );
+                          setRun((current) =>
+                            current?.summary.id === id
+                              ? { ...current, portCheck: checked }
+                              : current,
+                          );
+                        }),
+                      busy || !connected || run.portCheck.status === 'checking',
+                    )}
+                </section>
+              )}
               {run?.summary.lastReview && (
                 <p role="status" aria-label="최근 검토 결과">
                   {executionSteps.find(
@@ -3113,11 +3530,55 @@ export function WorkflowStudio({
                   </p>
                   {run.gate.kind === 'review' &&
                     !run.gate.startNextSession &&
-                    !reviewReady && (
+                    reviewFile && (
                       <p>
-                        검토 문서가 표시되면 ‘승인하고 계속’을 누를 수 있습니다.
+                        승인 대상 · <strong>{reviewFile}</strong>
                       </p>
                     )}
+                  {run.gate.kind === 'review' &&
+                    !run.gate.startNextSession &&
+                    reviewReady &&
+                    preview &&
+                    preview.name === reviewFile &&
+                    (editing?.gate === run.gate.id ? (
+                      <div>
+                        <label>
+                          승인할 수정본
+                          <textarea
+                            rows={8}
+                            value={editing.text}
+                            maxLength={128000}
+                            onChange={(e) =>
+                              setEditing({ ...editing, text: e.target.value })
+                            }
+                          />
+                        </label>
+                        {button(
+                          '수정 후 승인',
+                          () =>
+                            decide(
+                              { gateId: run.gate!.id, decision: 'accept' },
+                              { file: preview.name, ...editing },
+                            ),
+                          busy ||
+                            !connected ||
+                            !editing.text.trim() ||
+                            editing.text === editing.original,
+                        )}
+                        {button('수정 취소', () => setEditing(undefined), busy)}
+                      </div>
+                    ) : (
+                      button(
+                        '문서 수정',
+                        () =>
+                          setEditing({
+                            gate: run.gate!.id,
+                            original: preview.text,
+                            text: preview.text,
+                          }),
+                        busy,
+                      )
+                    ))}
                   {run.gate.kind === 'review' ? (
                     <div className={styles.buttons}>
                       {run.results.length > 0 &&
@@ -3149,7 +3610,10 @@ export function WorkflowStudio({
                           : '승인하고 계속',
                         () =>
                           decide({ gateId: run.gate!.id, decision: 'accept' }),
-                        busy || !connected || !reviewReady,
+                        busy ||
+                          !connected ||
+                          !reviewReady ||
+                          editing?.gate === run.gate.id,
                       )}
                       {button(
                         '거절',
@@ -3475,20 +3939,31 @@ function RunHistory({
               : '이번 세션에서 개선 루프를 마쳤습니다.'}
           </p>
         )}
-      {executionSteps.some((s) => s.kind === 'review' && s.startNextSession) &&
-        executionSteps.some(
-          (s) => s.kind === 'task' && s.tool === 'workplot-ui',
-        ) && (
-          <AutoSession
-            openEvidence={openEvidence}
-            canRetry={!!run?.failureId}
-            key={id}
-            id={run.summary.id}
-            canConfigure={['queued', 'running', 'waiting'].includes(
-              run.summary.status,
-            )}
-          />
-        )}
+      {executionSteps.some(
+        (s) => s.kind === 'review' && s.startNextSession,
+      ) && (
+        <AutoSession
+          handoffOnly={
+            !executionSteps.some(
+              (s) => s.kind === 'task' && s.tool === 'workplot-ui',
+            )
+          }
+          canRestart={
+            run.summary.status === 'completed' &&
+            !run.summary.nextSessionId &&
+            !run.summary.master &&
+            run.summary.lastReview?.decision === 'finish' &&
+            run.results.length > 0
+          }
+          openEvidence={openEvidence}
+          canRetry={!!run?.failureId}
+          key={id}
+          id={run.summary.id}
+          canConfigure={['queued', 'running', 'waiting'].includes(
+            run.summary.status,
+          )}
+        />
+      )}
       <h3>실행 순서 · v{run.summary.workflowVersion}</h3>
       <ol className={styles.sequence}>
         {executionSteps.map((item, index) => {

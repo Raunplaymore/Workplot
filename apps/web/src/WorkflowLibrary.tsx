@@ -68,6 +68,7 @@ function libraryChoice() {
 }
 function LibraryAutoSession({ run }: { run: RunList[number] }) {
   const [eligible, setEligible] = useState(false);
+  const [handoffOnly, setHandoffOnly] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
     const c = new AbortController();
@@ -84,11 +85,14 @@ function LibraryAutoSession({ run }: { run: RunList[number] }) {
       .then((r) => r.json())
       .then((data) => {
         const { steps } = workflowVersionSchema.parse(data).definition;
-        if (!c.signal.aborted)
+        if (!c.signal.aborted) {
           setEligible(
-            steps.some((s) => s.kind === 'review' && s.startNextSession) &&
-              steps.some((s) => s.kind === 'task' && s.tool === 'workplot-ui'),
+            steps.some((s) => s.kind === 'review' && s.startNextSession),
           );
+          setHandoffOnly(
+            !steps.some((s) => s.kind === 'task' && s.tool === 'workplot-ui'),
+          );
+        }
       })
       .catch((e: Error) => {
         if (!c.signal.aborted) setError(e.message);
@@ -102,25 +106,30 @@ function LibraryAutoSession({ run }: { run: RunList[number] }) {
         <h3>
           다음 세션 자동승인 <small>실행 v{run.workflowVersion}</small>
         </h3>
-        <AutoSession id={run.id} canConfigure />
+        <AutoSession id={run.id} canConfigure handoffOnly={handoffOnly} />
       </div>
     )
   );
 }
 
 export function WorkflowLibrary({
+  modelControl,
   starting,
   rows,
   prepare,
   startSaved,
   develop,
   developmentBusy,
+  slotInfo,
   edit,
+  editSettings,
   canEdit,
   busy,
 }: {
   rows: RunList | null;
   developmentBusy: boolean;
+  slotInfo: React.ReactNode;
+  modelControl: React.ReactNode;
   develop: (
     version: WorkflowVersion,
     request?: string,
@@ -137,6 +146,7 @@ export function WorkflowLibrary({
     files?: RequestFiles,
   ) => void;
   edit: (id: string) => void;
+  editSettings: (id: string) => void;
   canEdit: boolean;
   starting: boolean;
   busy: boolean;
@@ -564,6 +574,17 @@ export function WorkflowLibrary({
                 .map((s) => s.title)
                 .join(' → ')}
             </p>
+            <button
+              disabled={!canEdit || currentFolder === 'trash'}
+              onClick={() => editSettings(version.id)}
+            >
+              반복 설정 ·{' '}
+              {version.definition.steps.some(
+                (s) => s.kind === 'review' && s.startNextSession,
+              )
+                ? '승인 후 다음 회차'
+                : '한 번 실행'}
+            </button>
             <h3>필요한 자료</h3>
             <p>
               {requiredInputFields(version.definition).join(' · ') ||
@@ -571,6 +592,7 @@ export function WorkflowLibrary({
             </p>
             {currentFolder !== 'trash' && (
               <>
+                {modelControl}
                 <label className={styles.taskRequest}>
                   이번 작업 요청 <small>선택</small>
                   <textarea
@@ -630,6 +652,7 @@ export function WorkflowLibrary({
                   >
                     개발 작업 실행
                   </button>
+                  {slotInfo}
                 </div>
                 {activeRun && (
                   <LibraryAutoSession key={activeRun.id} run={activeRun} />

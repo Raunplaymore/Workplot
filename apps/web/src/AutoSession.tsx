@@ -19,11 +19,15 @@ export function AutoSession({
   id,
   canConfigure,
   canRetry = false,
+  canRestart = false,
+  handoffOnly = false,
   openEvidence,
 }: {
   id: string;
   canConfigure: boolean;
+  handoffOnly?: boolean;
   canRetry?: boolean;
+  canRestart?: boolean;
   openEvidence?: (file: string, quote: string) => void;
 }) {
   const path = '/runs/' + id + '/delegation';
@@ -32,7 +36,8 @@ export function AutoSession({
     [draft, setDraft] = useState<CompletionGoal | null>(null),
     [lines, setLines] = useState(''),
     [mission, setMission] = useState(''),
-    [max, setMax] = useState(3),
+    [unlimited, setUnlimited] = useState(false),
+    [max, setMax] = useState(handoffOnly ? 1 : 3),
     [until, setUntil] = useState(morning),
     [busy, setBusy] = useState(false),
     [error, say] = useState('');
@@ -105,17 +110,34 @@ export function AutoSession({
     setBusy(true);
     say('');
     try {
-      const payload = on
-        ? {
-            ...draft,
-            criteria: lines
-              .split('\n')
-              .map((s) => s.trim())
-              .filter(Boolean),
-            maxSessions: max,
-            until: new Date(until).toISOString(),
-          }
-        : null;
+      const payload =
+        on && handoffOnly
+          ? {
+              handoffOnly: true,
+              goal: '마지막 인계로 다음 회차 시작',
+              criteria: ['인계 문서 확인'],
+              target: 100,
+              maxSessions: unlimited ? null : max,
+              until: new Date(until).toISOString(),
+            }
+          : on
+            ? {
+                ...draft,
+                criteria: lines
+                  .split('\n')
+                  .map((s) => s.trim())
+                  .filter(Boolean),
+                maxSessions: unlimited ? null : max,
+                until: new Date(until).toISOString(),
+              }
+            : null;
+      if (on && canRestart) {
+        const child = await (
+          await localRequest(path + '/restart', 'POST', payload)
+        ).json();
+        location.hash = '/runs/' + child.id;
+        return;
+      }
       const v = delegationStatusSchema.parse(
         await (
           await localRequest(
@@ -134,17 +156,48 @@ export function AutoSession({
       setBusy(false);
     }
   }
-  if (!canConfigure && !state?.config) return null;
+  const sessionLimit = (
+    <>
+      <label>
+        <input
+          type="checkbox"
+          checked={unlimited}
+          onChange={(e) => setUnlimited(e.target.checked)}
+        />
+        횟수 제한 없음
+      </label>
+      {!unlimited && (
+        <label>
+          최대 추가 회차 (1~{MAX_ADDITIONAL_SESSIONS}개)
+          <input
+            type="number"
+            min={1}
+            max={MAX_ADDITIONAL_SESSIONS}
+            value={max}
+            onChange={(e) => setMax(Number(e.target.value))}
+          />
+        </label>
+      )}
+    </>
+  );
+  const invalidLimit =
+    !unlimited &&
+    (!Number.isInteger(max) || max < 1 || max > MAX_ADDITIONAL_SESSIONS);
+  if (!canConfigure && !canRestart && !state?.config) return null;
   return (
     <section aria-label="다음 세션 자동승인" style={{ marginBlock: '12px' }}>
       {state?.config && (
         <>
           <strong>{state.enabled ? '자동승인 켜짐' : '자동승인 종료'}</strong>
           <p>
-            {state.config.goal} · 달성률 {state.score ?? '미평가'}
-            {state.score !== null ? '%' : ''} / 목표 {state.config.target}% ·
-            추가 세션 {state.used}/{state.config.maxSessions} ·{' '}
-            {new Date(state.config.until).toLocaleString('ko-KR')}까지
+            {state.config.goal} ·{' '}
+            {!state.config.handoffOnly &&
+              `달성률 ${state.score ?? '미평가'} / 목표 ${state.config.target}% · `}
+            추가 세션{' '}
+            {state.config.maxSessions === null
+              ? state.used + '회 · 횟수 제한 없음'
+              : state.used + '/' + state.config.maxSessions}{' '}
+            · {new Date(state.config.until).toLocaleString('ko-KR')}까지
           </p>
           <p>{state.note}</p>
           {state.checks.length > 0 && (
@@ -185,7 +238,9 @@ export function AutoSession({
       {!editing &&
         state?.config &&
         !state.enabled &&
-        ((canConfigure && state.note.startsWith('평가 또는 인계')) ||
+        ((canConfigure &&
+          (state.note.startsWith('평가 또는 인계') ||
+            state.note === '사용자의 직접 검토 또는 답변이 필요합니다.')) ||
           (canRetry &&
             (state.note === '실행이 끝나 위임을 마쳤습니다.' ||
               state.note.startsWith('단계 응답 시간') ||
@@ -219,12 +274,48 @@ export function AutoSession({
           자동승인 해제
         </button>
       ) : (
-        canConfigure &&
+        (canConfigure || canRestart) &&
         !editing && (
-          <button onClick={() => void propose()}>자동승인 설정</button>
+          <button onClick={() => (handoffOnly ? edit(true) : void propose())}>
+            {canRestart ? '마지막 인계로 새 실행' : '자동승인 설정'}
+          </button>
         )
       )}
-      {editing && (
+      {editing && handoffOnly && (
+        <fieldset>
+          <legend>마지막 회차 승인 위임</legend>
+          <p>
+            중간 추천 과제는 직접 승인합니다. 마지막 인계 문서를 다음 회차에
+            전달합니다.
+          </p>
+          {sessionLimit}
+          <label>
+            종료 시각 (24시간 이내)
+            <input
+              type="datetime-local"
+              value={until}
+              onChange={(e) => setUntil(e.target.value)}
+            />
+          </label>
+          <button
+            disabled={
+              busy ||
+              invalidLimit ||
+              !(
+                Date.parse(until) > Date.now() &&
+                Date.parse(until) <= Date.now() + 86400000
+              )
+            }
+            onClick={() => void save(true)}
+          >
+            {canRestart ? '인계로 실행하고 위임 시작' : '위임 시작'}
+          </button>
+          <button disabled={busy} onClick={() => edit(false)}>
+            닫기
+          </button>
+        </fieldset>
+      )}
+      {editing && !handoffOnly && (
         <fieldset>
           <legend>완성 목표 설정</legend>
           <p>
@@ -279,16 +370,7 @@ export function AutoSession({
                   }
                 />
               </label>
-              <label>
-                최대 추가 세션 (1~{MAX_ADDITIONAL_SESSIONS}개)
-                <input
-                  type="number"
-                  min={1}
-                  max={MAX_ADDITIONAL_SESSIONS}
-                  value={max}
-                  onChange={(e) => setMax(Number(e.target.value))}
-                />
-              </label>
+              {sessionLimit}
               <label>
                 종료 시각 (24시간 이내)
                 <input
@@ -307,9 +389,7 @@ export function AutoSession({
                       .map((s) => s.trim())
                       .filter(Boolean),
                   }).success ||
-                  !Number.isInteger(max) ||
-                  max < 1 ||
-                  max > MAX_ADDITIONAL_SESSIONS ||
+                  invalidLimit ||
                   !(
                     Date.parse(until) > Date.now() &&
                     Date.parse(until) <= Date.now() + 86400000
@@ -317,7 +397,7 @@ export function AutoSession({
                 }
                 onClick={() => void save(true)}
               >
-                위임 시작
+                {canRestart ? '인계로 실행하고 위임 시작' : '위임 시작'}
               </button>
             </>
           )}
