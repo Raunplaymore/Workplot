@@ -40,7 +40,7 @@ import {
 } from 'lucide-react';
 import { DocumentComparison } from './DocumentComparison';
 import { LocalRequestError, localRequest } from './local-request';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import {
   Background,
   Controls,
@@ -3399,6 +3399,7 @@ function RunHistory({
   editStep: (stepId: string) => void;
   rerun: (stepId: string, instructions: string) => void;
 }) {
+  const rerunDescriptionId = useId();
   const [targetId, setTargetId] = useState('');
   const [instructions, setInstructions] = useState('');
   const [expanded, setExpanded] = useState(openLog);
@@ -3583,7 +3584,7 @@ function RunHistory({
               충돌합니다. 최신 저장 흐름에서 새 실행을 시작하세요.
             </p>
           )}
-          <fieldset>
+          <fieldset className={styles.rerunFields}>
             <label>
               변경할 단계
               <select
@@ -3640,8 +3641,19 @@ function RunHistory({
                     펼친 실행 순서를 불러오면 다시 수행할 범위를 표시합니다.
                   </p>
                 )}
+                {!outdated && targetIndex >= 0 && (
+                  <p id={rerunDescriptionId}>
+                    바꾼 지침은 새 흐름 버전으로 저장되며, 이후 최신 저장본으로
+                    시작하는 실행에 적용됩니다.
+                  </p>
+                )}
                 <button
                   type="button"
+                  aria-describedby={
+                    !outdated && targetIndex >= 0
+                      ? rerunDescriptionId
+                      : undefined
+                  }
                   disabled={
                     disabled ||
                     outdated ||
@@ -3656,7 +3668,7 @@ function RunHistory({
                   }
                   onClick={() => rerun(targetId, instructions.trim())}
                 >
-                  이 단계부터 다시 실행
+                  지침 저장하고 이 단계부터 다시 실행
                 </button>
               </>
             )}

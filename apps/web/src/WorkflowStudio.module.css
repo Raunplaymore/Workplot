@@ -677,6 +677,13 @@
 .gate {
   margin: 16px 0;
 }
+.rerunFields {
+  min-inline-size: 0;
+}
+.rerunFields > button {
+  max-inline-size: 100%;
+  white-space: normal;
+}
 .sequence {
   padding-left: 22px;
   font-size: var(--type-ui);

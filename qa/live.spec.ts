@@ -1009,7 +1009,7 @@ test('Q31 완료한 흐름의 AI 검토 지침을 바꾸고 새 승인 뒤 수�
   const started = page.waitForResponse((r) =>
     r.url().endsWith('/' + oldId + '/rerun'),
   );
-  await button(page, '이 단계부터 다시 실행').click();
+  await button(page, '지침 저장하고 이 단계부터 다시 실행').click();
   const response = await started;
   expect(response.status()).toBe(200);
   const { summary } = await response.json();
