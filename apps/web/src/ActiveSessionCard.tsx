@@ -33,10 +33,12 @@ export function ActiveSessionCard({
   row,
   history,
   status,
+  action,
 }: {
   row: RunList[number];
   history: RunList;
   status: string;
+  action: string;
 }) {
   const [detail, setDetail] = useState<Detail | null>(null),
     [error, setError] = useState(false);
@@ -195,9 +197,7 @@ export function ActiveSessionCard({
           </ul>
         </details>
       )}
-      <a href={'#/runs/' + id}>
-        {row.status === 'waiting' ? '대기 단계 열기' : '실행 상세 열기'} →
-      </a>
+      <a href={'#/runs/' + id}>{action} →</a>
     </article>
   );
 }
