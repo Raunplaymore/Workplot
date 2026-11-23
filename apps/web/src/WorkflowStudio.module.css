@@ -1271,6 +1271,9 @@
   justify-content: space-between;
   margin-bottom: 8px;
 }
+.monitor .runListHeader h3:only-child {
+  margin-bottom: 0;
+}
 .pagination {
   font-size: var(--type-caption);
 }

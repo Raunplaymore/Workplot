@@ -36,6 +36,66 @@ test('tool detection shows partial availability without enabling work', async ({
   ).toBeDisabled();
 });
 
+for (const width of [1440, 390]) {
+  test(`실행 현황에서 Codex 상태 바로 열기 (${width}px)`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.route('**/api/tools', (route) =>
+      route.fulfill({
+        json: [
+          {
+            id: 'codex',
+            status: 'not_found',
+            version: null,
+            authentication: 'unchecked',
+          },
+        ],
+      }),
+    );
+    const runStarts: string[] = [];
+    page.on('request', (request) => {
+      if (
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname === '/api/runs'
+      ) {
+        runStarts.push(request.url());
+      }
+    });
+    await page.goto('/');
+    await expect(
+      page.getByRole('button', { name: '목표로 시작' }),
+    ).toBeDisabled();
+    const panel = page.getByRole('region', { name: '내 에이전트 도구' });
+    await expect(panel).toBeHidden();
+    const shortcut = page.getByRole('button', { name: 'Codex 설치 상태 보기' });
+    const workspace = page.getByRole('main');
+    const scrollTop = await workspace.evaluate((element) => element.scrollTop);
+    if (width === 390) {
+      await shortcut.focus();
+      await page.keyboard.press('Enter');
+    } else {
+      await shortcut.click();
+    }
+    const status = panel.getByText('서버에서 찾지 못함');
+    await expect(status).toBeInViewport({ ratio: 1 });
+    await expect(panel.getByRole('listitem')).toBeFocused();
+    const bounds = await panel.boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
+
+    const summary = page
+      .locator('summary')
+      .filter({ hasText: '내 에이전트 도구' });
+    await summary.click();
+    await expect(panel).toBeHidden();
+    await expect(summary).toBeFocused();
+    expect(await workspace.evaluate((element) => element.scrollTop)).toBe(
+      scrollTop,
+    );
+    expect(runStarts).toEqual([]);
+  });
+}
+
 test('the built workspace connects to the local server without pretending to run an agent', async ({
   page,
 }) => {
@@ -137,7 +197,7 @@ test('실행 목록에서 세션 묶음을 유지한 채 페이지와 표시 개
     workflowId: uuid(200),
     workflowVersion: 1,
     recordedAt: '2026-01-01T00:00:00.000Z',
-    status: i === 25 ? 'waiting' : 'completed',
+    status: i < 30 ? 'running' : i < 61 ? 'waiting' : 'completed',
     name: '기록 ' + i,
     ...(i === 0 && { previousSessionId: uuid(104) }),
   }));
@@ -165,9 +225,22 @@ test('실행 목록에서 세션 묶음을 유지한 채 페이지와 표시 개
   await expect(next).toBeDisabled();
   await prev.click();
   await expect(table.first()).toContainText('기록 50');
+  await size.selectOption('30');
+  await page.getByRole('button', { name: /진행 중/ }).click();
+  await expect(table).toHaveCount(30);
+  await expect(
+    page.getByRole('navigation', { name: '실행 목록 페이지' }),
+  ).toHaveCount(0);
   await page.getByRole('button', { name: /사용자 확인 대기/ }).click();
+  await expect(table).toHaveCount(30);
+  await expect(table.first()).toContainText('기록 30');
+  await next.click();
   await expect(table).toHaveCount(1);
-  await expect(table.first()).toContainText('기록 25');
+  await expect(table.first()).toContainText('기록 60');
+  await size.selectOption('50');
+  await expect(table).toHaveCount(31);
+  await expect(size).toHaveValue('50');
+  await expect(next).toBeDisabled();
   await page.getByRole('button', { name: /전체 실행/ }).click();
   await size.selectOption('100');
   await expect(table).toHaveCount(100);

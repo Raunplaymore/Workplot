@@ -134,6 +134,7 @@ const blank: WorkflowDefinition = {
   ],
   links: [],
 };
+const runPageSizes = [30, 50, 100] as const;
 const activeStatuses = new Set(['queued', 'running', 'waiting']);
 const runLabels: Record<RunView['summary']['status'], string> = {
   queued: '실행 준비 중',
@@ -461,12 +462,12 @@ export function WorkflowStudio({
     }
   }
   const [rows, setRows] = useState<RunList | null>(null);
-  const [pageSize, setPageSize] = useState(() => {
+  const [pageSize, setPageSize] = useState<number>(() => {
     try {
       const saved = Number(localStorage.getItem('workplot.runList.pageSize'));
-      return [50, 100].includes(saved) ? saved : 30;
+      return runPageSizes.find((size) => size === saved) ?? runPageSizes[0];
     } catch {
-      return 30;
+      return runPageSizes[0];
     }
   });
   const [requestedPage, setPage] = useState(1);
@@ -2055,7 +2056,11 @@ export function WorkflowStudio({
                     시작하려면 ‘내 에이전트 도구’에서 Codex 설치 상태를
                     확인하세요.
                   </p>
-                  <button type="button" onClick={onShowTools}>
+                  <button
+                    type="button"
+                    aria-controls="agent-tools-panel"
+                    onClick={onShowTools}
+                  >
                     Codex 설치 상태 보기
                   </button>
                 </div>
@@ -2063,55 +2068,57 @@ export function WorkflowStudio({
               <MasterLinks rows={pageRows} />
               <div className={styles.runListHeader}>
                 <h3>실행 목록</h3>
-                {connected && !dashboardError && !!visibleRows?.length && (
-                  <nav
-                    className={styles.pagination}
-                    aria-label="실행 목록 페이지"
-                  >
-                    <select
-                      aria-label="페이지당 실행 개수"
-                      value={pageSize}
-                      onChange={(event) => {
-                        const size = Number(event.target.value);
-                        setPageSize(size);
-                        setPage(1);
-                        try {
-                          localStorage.setItem(
-                            'workplot.runList.pageSize',
-                            String(size),
-                          );
-                        } catch {
-                          /* This selection still applies to the current view. */
-                        }
-                      }}
+                {connected &&
+                  !dashboardError &&
+                  (visibleRows?.length ?? 0) > runPageSizes[0] && (
+                    <nav
+                      className={styles.pagination}
+                      aria-label="실행 목록 페이지"
                     >
-                      {[30, 50, 100].map((size) => (
-                        <option key={size} value={size}>
-                          {size}개씩 보기
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      aria-label="이전 페이지"
-                      disabled={currentPage === 1}
-                      onClick={() => setPage(currentPage - 1)}
-                    >
-                      이전
-                    </button>
-                    <span aria-live="polite">
-                      {currentPage} / {pageCount} 페이지
-                    </span>
-                    <button
-                      type="button"
-                      aria-label="다음 페이지"
-                      disabled={currentPage === pageCount}
-                      onClick={() => setPage(currentPage + 1)}
-                    >
-                      다음
-                    </button>
-                  </nav>
-                )}
+                      <select
+                        aria-label="페이지당 실행 개수"
+                        value={pageSize}
+                        onChange={(event) => {
+                          const size = Number(event.target.value);
+                          setPageSize(size);
+                          setPage(1);
+                          try {
+                            localStorage.setItem(
+                              'workplot.runList.pageSize',
+                              String(size),
+                            );
+                          } catch {
+                            /* This selection still applies to the current view. */
+                          }
+                        }}
+                      >
+                        {runPageSizes.map((size) => (
+                          <option key={size} value={size}>
+                            {size}개씩 보기
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        aria-label="이전 페이지"
+                        disabled={currentPage === 1}
+                        onClick={() => setPage(currentPage - 1)}
+                      >
+                        이전
+                      </button>
+                      <span aria-live="polite">
+                        {currentPage} / {pageCount} 페이지
+                      </span>
+                      <button
+                        type="button"
+                        aria-label="다음 페이지"
+                        disabled={currentPage === pageCount}
+                        onClick={() => setPage(currentPage + 1)}
+                      >
+                        다음
+                      </button>
+                    </nav>
+                  )}
               </div>
               {!connected || dashboardError || rows === null ? (
                 <p>

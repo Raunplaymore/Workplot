@@ -10,9 +10,15 @@ export function App() {
   const toolsPanel = useRef<HTMLDetailsElement>(null);
   const toolsTitle = useRef<HTMLHeadingElement>(null);
 
+  const codexStatus = useRef<HTMLLIElement>(null);
+  const toolsMessage = useRef<HTMLParagraphElement>(null);
+
   function showTools() {
     if (toolsPanel.current) toolsPanel.current.open = true;
-    toolsTitle.current?.focus({ preventScroll: true });
+    const target =
+      codexStatus.current ?? toolsMessage.current ?? toolsTitle.current;
+    target?.focus({ preventScroll: true });
+    target?.scrollIntoView({ block: 'nearest' });
   }
 
   useEffect(() => {
@@ -68,7 +74,7 @@ export function App() {
         <span role="status">{connection}</span>
         <details className={styles.tools} ref={toolsPanel}>
           <summary>내 에이전트 도구</summary>
-          <section aria-labelledby="tools-title">
+          <section id="agent-tools-panel" aria-labelledby="tools-title">
             <h2 id="tools-title" ref={toolsTitle} tabIndex={-1}>
               내 에이전트 도구
             </h2>
@@ -77,16 +83,22 @@ export function App() {
               확인합니다.
             </p>
             {toolsError ? (
-              <p role="alert">
+              <p ref={toolsMessage} tabIndex={-1} role="alert">
                 도구 정보를 가져올 수 없습니다. 서버 연결을 확인하고
                 새로고침하세요.
               </p>
             ) : tools === null ? (
-              <p>설치된 도구 확인 중…</p>
+              <p ref={toolsMessage} tabIndex={-1} role="status">
+                설치된 도구 확인 중…
+              </p>
             ) : (
               <ul>
                 {tools.map((tool) => (
-                  <li key={tool.id}>
+                  <li
+                    key={tool.id}
+                    ref={tool.id === 'codex' ? codexStatus : undefined}
+                    tabIndex={tool.id === 'codex' ? -1 : undefined}
+                  >
                     <strong>
                       {tool.id === 'claude' ? 'Claude Code' : 'Codex'}
                     </strong>
