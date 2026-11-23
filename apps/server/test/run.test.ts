@@ -121,6 +121,110 @@ async function until(
   throw new Error('Run did not reach ' + status);
 }
 
+test('saving a writing rule preserves completed results and applies to new material', async () => {
+  const rule = '첫 줄에 검토용 표식을 씁니다.';
+  const marker = '# 검토용 표식';
+  const received: unknown[] = [];
+  await withStudio(
+    {
+      ready: async () => '0.166.0',
+      async write(prompt) {
+        const input = JSON.parse(prompt);
+        received.push(input);
+        return {
+          kind: 'document',
+          text: input.instructions === rule ? marker : '# 기존 문서',
+        };
+      },
+    },
+    async ({ inject }) => {
+      const workflow = await setup(inject);
+      const id = '00000000-0000-4000-8000-000000000001';
+      const nextId = '00000000-0000-4000-8000-000000000002';
+      const route = '/workflows/' + workflow.id;
+      const complete = async (
+        runId: string,
+        workflowVersion: number,
+        material: { name: string; source: string },
+      ) => {
+        expect(
+          (
+            await inject('POST', '/runs', {
+              id: runId,
+              workflowId: workflow.id,
+              workflowVersion,
+              material,
+            })
+          ).statusCode,
+        ).toBe(200);
+        const waiting = await until(inject, runId, 'waiting');
+        expect(
+          (
+            await inject('POST', '/runs/' + runId + '/decision', {
+              gateId: waiting.gate?.id,
+              decision: 'accept',
+            })
+          ).statusCode,
+        ).toBe(200);
+        return until(inject, runId, 'completed');
+      };
+      await complete(id, 1, { name: 'first.md', source: '첫 번째 자료' });
+      const oldDraft = '/runs/' + id + '/results/draft.md';
+      const before = await inject('GET', oldDraft);
+      expect(before.statusCode).toBe(200);
+      const sha = (body: string) =>
+        createHash('sha256').update(body).digest('hex');
+      const runs = (await inject('GET', '/runs')).json();
+      expect(runs).toEqual([
+        expect.objectContaining({ id, workflowVersion: 1 }),
+      ]);
+      const update = {
+        baseVersion: 1,
+        definition: {
+          ...definition,
+          steps: definition.steps.map((item) =>
+            item.id === 'draft' ? { ...item, instructions: rule } : item,
+          ),
+        },
+      };
+      const saved = await inject('PUT', route, update);
+      expect(saved.statusCode).toBe(200);
+      expect((await inject('PUT', route, update)).statusCode).toBe(409);
+      expect((await inject('GET', '/runs')).json()).toEqual(runs);
+      expect(received).toHaveLength(2);
+      expect((await inject('GET', route)).json()).toMatchObject({
+        version: 2,
+        definition: update.definition,
+      });
+      expect((await inject('GET', route + '/versions/1')).json()).toMatchObject(
+        {
+          version: 1,
+          definition,
+        },
+      );
+      const after = await inject('GET', oldDraft);
+      expect(after.statusCode).toBe(200);
+      expect(sha(after.body)).toBe(sha(before.body));
+      const next = await complete(nextId, 2, {
+        name: 'second.md',
+        source: '두 번째 자료',
+      });
+      expect(next.summary).toMatchObject({ id: nextId, workflowVersion: 2 });
+      expect(received[2]).toMatchObject({
+        currentStepId: 'draft',
+        source: '두 번째 자료',
+        instructions: rule,
+      });
+      const output = await inject(
+        'GET',
+        '/runs/' + nextId + '/results/draft.md',
+      );
+      expect(output.statusCode).toBe(200);
+      expect(output.body.trim()).toBe(marker);
+    },
+  );
+});
+
 test('pins the original workflow, waits for review, and handles duplicate start and approval exactly once', async () => {
   const prompts: string[] = [];
   await withStudio(

@@ -42,7 +42,7 @@ import {
 } from 'lucide-react';
 import { DocumentComparison } from './DocumentComparison';
 import { LocalRequestError, localRequest } from './local-request';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import {
   Background,
   Controls,
@@ -3666,6 +3666,11 @@ export function WorkflowStudio({
                   if (run && routeRun() === run.summary.id)
                     openWorkflow(run.summary.workflowId, stepId);
                 }}
+                onInstructionsSaved={() => {
+                  void updateList().catch((error: unknown) =>
+                    setError(message(error)),
+                  );
+                }}
                 rerun={(stepId, instructions) => {
                   if (!run) return;
                   perform(async () => {
@@ -3858,6 +3863,7 @@ function RunHistory({
   disabled,
   editDisabled,
   editStep,
+  onInstructionsSaved,
   rerun,
 }: {
   openEvidence: (file: string, quote: string) => void;
@@ -3868,8 +3874,18 @@ function RunHistory({
   disabled: boolean;
   editDisabled: boolean;
   editStep: (stepId: string) => void;
+  onInstructionsSaved: () => void;
   rerun: (stepId: string, instructions: string) => void;
 }) {
+  const rerunDescriptionId = useId();
+  const saveDescriptionId = useId();
+  const savingRef = useRef(false);
+  const [savingInstructions, setSavingInstructions] = useState(false);
+  const [instructionSaveError, setInstructionSaveError] = useState('');
+  const [instructionSaveResult, setInstructionSaveResult] = useState<{
+    title: string;
+    version: number;
+  } | null>(null);
   const [targetId, setTargetId] = useState('');
   const [instructions, setInstructions] = useState('');
   const [expanded, setExpanded] = useState(openLog);
@@ -3908,8 +3924,50 @@ function RunHistory({
   }, [openLog, id]);
   const { saved, refresh } = useSavedVersion(run?.summary.workflowId);
   if (!run) return null;
-  const outdated = !!saved && saved.version !== run.summary.workflowVersion;
+  const outdated =
+    !!instructionSaveResult ||
+    (!!saved && saved.version !== run.summary.workflowVersion);
   const steps = record ? orderedSteps(record.definition) : [];
+  const targetTask = steps.find(
+    (item) => item.id === targetId && item.kind === 'task' && !item.workflowRef,
+  );
+  const editedInstructions = instructions.trim();
+  const changed =
+    targetTask?.kind === 'task' &&
+    !!editedInstructions &&
+    targetTask.instructions !== editedInstructions;
+
+  async function saveInstructions() {
+    if (!record || !targetTask || savingRef.current) return;
+    savingRef.current = true;
+    setSavingInstructions(true);
+    setInstructionSaveError('');
+    try {
+      const response = await localRequest('/workflows/' + record.id, 'PUT', {
+        baseVersion: record.version,
+        definition: {
+          ...record.definition,
+          steps: record.definition.steps.map((item) =>
+            item.id === targetTask.id
+              ? { ...item, instructions: editedInstructions }
+              : item,
+          ),
+        },
+      });
+      const updated = workflowVersionSchema.parse(await response.json());
+      setInstructionSaveResult({
+        title: targetTask.title,
+        version: updated.version,
+      });
+      onInstructionsSaved();
+    } catch (error) {
+      setInstructionSaveError(message(error));
+    } finally {
+      refresh();
+      savingRef.current = false;
+      setSavingInstructions(false);
+    }
+  }
   const currentIndex = executionSteps.findIndex((item) => item.id === step);
   const targetIndex = targetId
     ? executionSteps.findIndex((item) => item.id === targetId)
@@ -4057,21 +4115,22 @@ function RunHistory({
       )}
       {status === 'completed' && record && !run.retention?.expired && (
         <details>
-          <summary>단계 지침을 바꿔 다시 실행</summary>
-          {outdated && (
+          <summary>단계 지침 저장 또는 다시 실행</summary>
+          {saved && outdated && !instructionSaveResult && (
             <p role="status">
-              최신 저장본은 v{saved.version}입니다. 이 실행의 v
-              {run.summary.workflowVersion}에서 재실행하면 저장 버전이
-              충돌합니다. 최신 저장 흐름에서 새 실행을 시작하세요.
+              최신 저장본은 v{saved.version}입니다. 지침을 변경하려면 최신 저장
+              흐름을 여세요.
             </p>
           )}
-          <fieldset>
+          <fieldset className={styles.rerunFields}>
             <label>
               변경할 단계
               <select
                 value={targetId}
+                disabled={savingInstructions}
                 onChange={(e) => {
                   const task = steps.find((s) => s.id === e.target.value);
+                  setInstructionSaveError('');
                   setTargetId(task?.id ?? '');
                   setInstructions(
                     task?.kind === 'task' ? task.instructions : '',
@@ -4094,10 +4153,37 @@ function RunHistory({
                   새 작업 지침
                   <textarea
                     value={instructions}
+                    disabled={savingInstructions}
                     maxLength={8000}
                     onChange={(e) => setInstructions(e.target.value)}
                   />
                 </label>
+                <p id={saveDescriptionId}>
+                  대상 단계 · {targetTask?.title}. 새 흐름 버전으로 저장됩니다.
+                  이후 최신 저장본으로 시작하는 실행에 적용됩니다. 지금은 새
+                  실행이 시작되지 않습니다.
+                </p>
+                <button
+                  type="button"
+                  aria-describedby={saveDescriptionId}
+                  disabled={
+                    editDisabled ||
+                    !saved ||
+                    outdated ||
+                    savingInstructions ||
+                    !changed
+                  }
+                  onClick={saveInstructions}
+                >
+                  {savingInstructions ? '저장 중…' : '작성 지침만 저장'}
+                </button>
+                {instructionSaveError && (
+                  <p role="alert">{instructionSaveError}</p>
+                )}
+                <p role="status">
+                  {instructionSaveResult &&
+                    `작성 지침 저장됨 · v${instructionSaveResult.version} · ${instructionSaveResult.title}`}
+                </p>
                 {targetIndex >= 0 ? (
                   <dl>
                     <dt>선택한 작업의 입력 문서</dt>
@@ -4122,23 +4208,29 @@ function RunHistory({
                     펼친 실행 순서를 불러오면 다시 수행할 범위를 표시합니다.
                   </p>
                 )}
+                {!outdated && targetIndex >= 0 && (
+                  <p id={rerunDescriptionId}>
+                    바꾼 지침은 새 흐름 버전으로 저장되며, 이후 최신 저장본으로
+                    시작하는 실행에 적용됩니다.
+                  </p>
+                )}
                 <button
                   type="button"
+                  aria-describedby={
+                    !outdated && targetIndex >= 0
+                      ? rerunDescriptionId
+                      : undefined
+                  }
                   disabled={
                     disabled ||
                     outdated ||
+                    savingInstructions ||
                     targetIndex < 0 ||
-                    !instructions.trim() ||
-                    steps.some(
-                      (s) =>
-                        s.id === targetId &&
-                        s.kind === 'task' &&
-                        s.instructions === instructions.trim(),
-                    )
+                    !changed
                   }
                   onClick={() => rerun(targetId, instructions.trim())}
                 >
-                  이 단계부터 다시 실행
+                  지침 저장하고 이 단계부터 다시 실행
                 </button>
               </>
             )}
