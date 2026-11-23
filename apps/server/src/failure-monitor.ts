@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import type { WorkflowDefinition } from '@studio/contracts';
 import type { StudioStore } from './studio-store.js';
@@ -62,7 +62,14 @@ export function prepareFailureMonitor(db: Database.Database) {
       AND json_extract(NEW.record,'$.retry.quotaRetryAt') IS NULL
     BEGIN INSERT OR IGNORE INTO failure_monitor(source,step,failure,repair)
       VALUES(NEW.id,coalesce(json_extract(NEW.record,'$.retry.stepId'),'unknown'),
-        coalesce(json_extract(NEW.record,'$.retry.failureId'),''),lower(hex(randomblob(4))||'-'||hex(randomblob(2))||'-4'||substr(hex(randomblob(2)),2)||'-8'||substr(hex(randomblob(2)),2)||'-'||hex(randomblob(6)))); END;`);
+        coalesce(json_extract(NEW.record,'$.retry.failureId'),''),lower(hex(randomblob(4))||'-'||hex(randomblob(2))||'-4'||substr(hex(randomblob(2)),2)||'-8'||substr(hex(randomblob(2)),2)||'-'||hex(randomblob(6)))); END;
+    CREATE TRIGGER IF NOT EXISTS observe_manual_workplot_retry AFTER UPDATE OF record ON runs
+    WHEN json_extract(OLD.record,'$.summary.status')='failed' AND json_extract(NEW.record,'$.summary.status')='queued'
+    BEGIN
+      UPDATE failure_monitor SET state='복구 실행 중' WHERE repair=NEW.id AND state='복구 중단 · 검토 필요'
+        AND EXISTS (SELECT 1 FROM runs r WHERE r.id=source AND json_extract(r.record,'$.retry.failureId')=failure);
+      UPDATE failure_monitor SET state='원본 재검사 중' WHERE source=NEW.id AND failure=json_extract(OLD.record,'$.retry.failureId');
+    END;`);
 }
 export function installFailureMonitor(
   db: Database.Database,
@@ -165,16 +172,33 @@ export function createFailureMonitor(
     }
     if (repair.summary.status !== 'completed') return;
     const report = await runs.artifact(row.repair, 'verify-repair.md');
+    const record = store.run(row.repair);
+    if (
+      record.completedHashes?.[record.results.indexOf('verify-repair.md')] !==
+      createHash('sha256').update(report).digest('hex')
+    ) {
+      change('원인 보고 · 검토 필요');
+      return;
+    }
+    const lines = report.split(/\r?\n/).filter(Boolean).slice(0, 2);
+    const retryOnly =
+      retry?.timedOut &&
+      lines[0] === '작성 단계 복구 · 원본 재시도만 허용' &&
+      lines[1] === '원본 재시도 가능';
     if (
       !retry ||
       source.summary.master ||
-      !report.split(/\r?\n/).filter(Boolean).slice(0, 2).includes('검증 통과')
+      (!retryOnly && !lines.includes('검증 통과'))
     ) {
       change('원인 보고 · 검토 필요');
       return;
     }
     if (!runs.hasRetrySlot(source.summary)) return;
     const state = delegation.status(row.source);
+    if (state.config && Date.parse(state.config.until) <= Date.now()) {
+      change('위임 종료 · 원본 재시도 대기');
+      return;
+    }
     if (
       !state.enabled &&
       state.config &&

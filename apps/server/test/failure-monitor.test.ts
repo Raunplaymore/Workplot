@@ -101,7 +101,13 @@ it.each([false, true])(
   },
 );
 
-it('reuses the verified repair commit on the original worktree without a second commit', async () => {
+it.each([
+  'commit',
+  'recover document',
+  'retry document',
+  'withhold',
+  'expired',
+])('preserves the original commit gate after %s', async (scenario) => {
   const db = new Database(':memory:'),
     store = openStudioStore(db),
     dir = await mkdtemp(join(tmpdir(), 'workplot-repair-git-')),
@@ -111,7 +117,11 @@ it('reuses the verified repair commit on the original worktree without a second 
   const check = vi
     .spyOn(checks, 'checkCandidate')
     .mockResolvedValue('후보 검사 통과');
-  let originalChecks = 0;
+  let originalChecks = 0,
+    writes = 0,
+    recoveries = 0,
+    reviews = 0;
+  const blocked = scenario === 'withhold';
   const runs = createRunService(
     store,
     {
@@ -124,13 +134,50 @@ it('reuses the verified repair commit on the original worktree without a second 
         _evidence,
         _images,
         workDir,
+        readOnly,
       ) {
-        const step = JSON.parse(prompt).currentStepId;
-        if (step === 'draft')
-          await writeFile(join(workDir!, 'change.txt'), 'original edit');
+        const input = JSON.parse(prompt),
+          step = input.currentStepId;
+        if (input.evidenceRecovery) {
+          recoveries++;
+          expect(readOnly).toBe(true);
+          return {
+            kind: 'document',
+            text:
+              scenario === 'recover document'
+                ? '기록 회수\nchange.txt 검사 기록'
+                : '회수 보류',
+          };
+        }
+        if (step === 'draft') {
+          writes++;
+          if (writes > 1) {
+            expect(input.retryHandoff.repairEvidence.report).toContain(
+              '원본 재시도 가능',
+            );
+          } else {
+            await writeFile(join(workDir!, 'change.txt'), 'original edit');
+            if (scenario !== 'commit')
+              throw new RunnerError('timeout', undefined, undefined, 'idle');
+          }
+        }
+        if (step === 'verify-repair' && scenario !== 'commit') {
+          expect(input.instructions).toContain('원본 재시도 가능');
+          reviews++;
+          return {
+            kind: 'document',
+            text:
+              blocked && reviews === 1
+                ? '복구 보류'
+                : '원본 재시도 가능\n변경 파일 검사',
+          };
+        }
         if (step === 'check') {
           originalChecks++;
-          return { kind: 'document', text: '검증 보류' };
+          return {
+            kind: 'document',
+            text: scenario === 'commit' ? '검증 보류' : '검증 통과',
+          };
         }
         if (step === 'repair')
           await writeFile(join(workDir!, 'repair.txt'), 'repair');
@@ -190,25 +237,70 @@ it('reuses the verified repair commit on the original worktree without a second 
       workspace: repo,
       gitTarget: target,
     });
-    await vi.waitFor(() => expect(runs.view(id).summary.status).toBe('failed'));
-    await m.tick();
-    const repair = store.recoveryReport(id)!.repair;
+    if (scenario !== 'recover document') {
+      await vi.waitFor(() =>
+        expect(runs.view(id).summary.status).toBe('failed'),
+      );
+      await m.tick();
+      const repair = store.recoveryReport(id)!.repair;
+      if (blocked) {
+        await vi.waitFor(() =>
+          expect(runs.view(repair).summary.status).toBe('failed'),
+        );
+        await m.tick();
+        expect(store.recoveryReport(id)?.state).toBe('복구 중단 · 검토 필요');
+        expect(check).not.toHaveBeenCalled();
+        await runs.retry(repair, runs.view(repair).failureId!);
+        expect(store.recoveryReport(id)?.state).toBe('복구 실행 중');
+      }
+      await vi.waitFor(
+        () => expect(runs.view(repair).summary.status).toBe('completed'),
+        { timeout: 5000 },
+      );
+      expect(runs.view(repair).summary.workflowId).toBe(flow);
+      if (scenario !== 'commit') expect(check).not.toHaveBeenCalled();
+      if (scenario === 'expired') {
+        vi.spyOn(delegation, 'status').mockReturnValue({
+          ...delegation.status(id),
+          config: {
+            goal: '검증',
+            criteria: ['후보 검사'],
+            target: 100,
+            maxSessions: 1,
+            until: new Date(0).toISOString(),
+          },
+        });
+      }
+      await m.tick();
+      if (scenario === 'expired') {
+        await m.tick();
+        expect(writes).toBe(1);
+        expect(store.recoveryReport(id)?.state).toBe(
+          '위임 종료 · 원본 재시도 대기',
+        );
+        await runs.retry(id, runs.view(id).failureId!);
+        expect(store.recoveryReport(id)?.state).toBe('원본 재검사 중');
+      }
+    }
     await vi.waitFor(
-      () => expect(runs.view(repair).summary.status).toBe('completed'),
+      () => expect(runs.view(id).summary.status).toBe('completed'),
       { timeout: 5000 },
-    );
-    expect(runs.view(repair).summary.workflowId).toBe(flow);
-    await m.tick();
-    await vi.waitFor(() =>
-      expect(runs.view(id).summary.status).toBe('completed'),
     );
     await m.tick();
     expect(originalChecks).toBe(1);
     expect(check).toHaveBeenCalledTimes(1);
     expect(await runs.artifact(id, 'check.md')).toContain(
-      '복구 실행에서 검증된 커밋 · ' + store.worktree(id)!.head,
+      (scenario === 'commit'
+        ? '복구 실행에서 검증된 커밋 · '
+        : '작업 브랜치 커밋 · ') + store.worktree(id)!.head,
     );
-    expect(store.recoveryReport(id)?.state).toBe('복구 확인');
+    expect(writes).toBe(
+      ['commit', 'recover document'].includes(scenario) ? 1 : 2,
+    );
+    expect(recoveries).toBe(scenario === 'commit' ? 0 : 1);
+    expect(store.recoveryReport(id)?.state).toBe(
+      scenario === 'recover document' ? undefined : '복구 확인',
+    );
   } finally {
     await m.close();
     await delegation.close();

@@ -405,6 +405,31 @@ export function createRunService(
       '`의 후보 검사를 통과했습니다.'
     );
   }
+  async function retryRepairReport(
+    id: string,
+    retry: RetryCheckpoint,
+    task?: string,
+  ) {
+    const repairId = store.repairForFailure(id, retry.failureId, retry.stepId);
+    if (!task || !repairId) return;
+    const repair = store.run(repairId);
+    const index = repair.results.indexOf('verify-repair.md');
+    if (
+      repair.summary.status !== 'completed' ||
+      repair.summary.developmentTaskId !== task ||
+      index < 0
+    )
+      return;
+    const report = await artifact(repairId, 'verify-repair.md');
+    if (hash(report) !== repair.completedHashes?.[index])
+      throw new StoreConflict();
+    return {
+      repairId,
+      report: report.slice(0, 4000),
+      usage:
+        '복구 관찰 자료다. 현재 변경과 실제 파일을 대조한 뒤 남은 일만 수행하고 현재 단계의 결과 문서를 반환한다.',
+    };
+  }
   async function hostRetryEvidence(
     runId: string,
     failureId: string,
@@ -675,6 +700,62 @@ export function createRunService(
       execution.attempt = undefined;
     }
     let partialTree: Awaited<ReturnType<typeof worktrees.open>> | undefined;
+    // Recover only the missing document. The original verified-commit gate must still run.
+    async function writeWithEvidenceRecovery(
+      tree: Awaited<ReturnType<typeof worktrees.open>>,
+      target: GitTarget,
+      base: string | undefined,
+      prompt: string,
+      observe: Parameters<DocumentRunner['write']>[2],
+      images: string[],
+      documentOnly: boolean,
+    ) {
+      const before = store.worktree(tree.task)?.dirtyHash;
+      try {
+        return await runner.write(
+          prompt,
+          signal,
+          observe,
+          undefined,
+          documentOnly,
+          images,
+          tree.path,
+          false,
+        );
+      } catch (error) {
+        if (
+          !(error instanceof RunnerError && error.reason === 'timeout') ||
+          signal.aborted
+        )
+          throw error;
+        await worktrees.rememberChanges(tree);
+        partialTree = undefined;
+        const dirty = store.worktree(tree.task)?.dirtyHash;
+        if (!dirty || dirty === before) throw error;
+        const review = await runner.write(
+          JSON.stringify({
+            ...JSON.parse(prompt),
+            evidenceRecovery:
+              '작성 도중 시간 초과로 결과 문서가 누락됐다. 같은 작업본의 현재 diff와 이번 시도의 검사 기록을 읽어 원래 지침의 구현과 검증이 실제로 끝났는지 확인한다. 새 작업이나 재검사는 수행하지 않는다. 완료한 근거가 있으면 첫 줄에 정확히 기록 회수, 다음 줄부터 변경·검사 결과와 근거 파일 경로를 쓴다. 빠진 작업이나 근거가 있으면 첫 줄에 회수 보류를 쓴다.',
+          }),
+          signal,
+          observe,
+          undefined,
+          true,
+          images,
+          tree.path,
+          true,
+        );
+        signal.throwIfAborted();
+        await worktrees.open(tree.task, target, base);
+        if (
+          review.kind !== 'document' ||
+          !/^기록 회수\r?\n\s*\S/.test(review.text.trim())
+        )
+          throw error;
+        return review;
+      }
+    }
     let answer = '',
       question = 0;
     const produced = resume?.documents ?? new Map<string, Document>();
@@ -1056,6 +1137,50 @@ export function createRunService(
                   tree.task,
                 )
               : undefined;
+          // A timeout before the original commit gate needs a retry decision, not an early commit.
+          const repairIncident =
+            step.tool === 'verified-commit' && step.id === 'verify-repair'
+              ? store.recoveryReport(id)
+              : undefined;
+          const sourceRun =
+            repairIncident?.repair === id
+              ? store.run(repairIncident.source)
+              : undefined;
+          if (
+            sourceRun &&
+            (sourceRun.summary.status !== 'failed' ||
+              !sourceRun.retry ||
+              store.repairForFailure(
+                sourceRun.summary.id,
+                sourceRun.retry.failureId,
+                sourceRun.retry.stepId,
+              ) !== id)
+          )
+            throw new AttachmentError(
+              '원본 실패 상태가 바뀌어 이전 복구 작업을 중단했습니다.',
+            );
+          let timeoutReview = false;
+          if (
+            tree &&
+            sourceRun?.retry?.timedOut &&
+            sourceRun.summary.developmentTaskId === tree.task
+          ) {
+            const originalSteps = orderedSteps(
+              store.executionDefinition(
+                sourceRun.summary.workflowId,
+                sourceRun.summary.workflowVersion,
+              ),
+            );
+            const index = originalSteps.findIndex(
+              (s) => s.id === sourceRun.retry!.stepId,
+            );
+            timeoutReview =
+              index >= 0 &&
+              writableStep(originalSteps[index]!, originalSteps) &&
+              originalSteps
+                .slice(index + 1)
+                .some((s) => s.kind === 'task' && s.tool === 'verified-commit');
+          }
           const previousChecks =
             resume?.retryCheckpoint && resume.stepId === step.id
               ? priorChecks(id, step.id)
@@ -1071,6 +1196,13 @@ export function createRunService(
                     failureId: resume.retryCheckpoint.failureId,
                     previousFailure: resume.retryCheckpoint.failureNote ?? null,
                     recoveryReport: store.recoveryReport(id),
+                    ...(resume.retryCheckpoint.timedOut && {
+                      repairEvidence: await retryRepairReport(
+                        id,
+                        resume.retryCheckpoint,
+                        state.summary.developmentTaskId,
+                      ),
+                    }),
                     ...(previousChecks.length > 0 && {
                       previousChecks,
                       checkPolicy:
@@ -1186,7 +1318,9 @@ export function createRunService(
               }),
             }),
             currentStepId: step.id,
-            instructions: step.instructions,
+            instructions: timeoutReview
+              ? '원본 작성 단계가 시간 초과됐다. 현재 작업 폴더의 diff와 보존된 검사 기록을 확인해 같은 단계부터 안전하게 재개할 수 있는지 판정한다. 재개할 근거가 있으면 첫 줄에 정확히 원본 재시도 가능, 없으면 복구 보류라고 쓴다. 확인한 파일·검사 경로와 남은 작업을 구체적으로 남긴다. 이 판정은 재시도만 허용한다. 제품 변경 검증과 커밋은 원본의 후속 노드가 수행한다.'
+              : step.instructions,
             documentFormat:
               'Markdown 문서는 주제가 바뀔 때 빈 줄로 문단을 나눈다. 연속된 검사 결과나 단계는 항목마다 한 줄의 목록으로 쓴다. 전후 비교는 소제목으로 구분한다. 사용자가 지정한 출력 형식, 인용 원문, 표, 코드와 diff의 줄바꿈은 보존한다.',
             ...(skill && {
@@ -1279,28 +1413,45 @@ export function createRunService(
                       : undefined,
                   },
                 )
-              : await runner.write(
-                  prompt,
-                  signal,
-                  observe,
-                  step.tool === 'market-calendar' ? step.tool : undefined,
-                  !!evidence,
-                  images,
-                  tree
-                    ? step.tool === 'market-calendar'
-                      ? undefined
-                      : tree.path
-                    : workspace &&
-                        step.tool !== 'market-calendar' &&
-                        (step.tool === 'workplot-ui' ||
-                          !steps.some(
-                            (s) =>
-                              s.kind === 'task' && s.tool === 'workplot-ui',
-                          ))
-                      ? await checkWorkspace(workspace)
-                      : undefined,
-                  !!tree && !gitWrite,
-                );
+              : tree &&
+                  gitWrite &&
+                  isolated &&
+                  steps
+                    .slice(index + 1)
+                    .some(
+                      (s) => s.kind === 'task' && s.tool === 'verified-commit',
+                    )
+                ? await writeWithEvidenceRecovery(
+                    tree,
+                    isolated,
+                    state.summary.sessionGit?.base,
+                    prompt,
+                    observe,
+                    images,
+                    !!evidence,
+                  )
+                : await runner.write(
+                    prompt,
+                    signal,
+                    observe,
+                    step.tool === 'market-calendar' ? step.tool : undefined,
+                    !!evidence,
+                    images,
+                    tree
+                      ? step.tool === 'market-calendar'
+                        ? undefined
+                        : tree.path
+                      : workspace &&
+                          step.tool !== 'market-calendar' &&
+                          (step.tool === 'workplot-ui' ||
+                            !steps.some(
+                              (s) =>
+                                s.kind === 'task' && s.tool === 'workplot-ui',
+                            ))
+                        ? await checkWorkspace(workspace)
+                        : undefined,
+                    !!tree && !gitWrite,
+                  );
           if (
             step.id === recommendationStep?.id &&
             approved.length &&
@@ -1355,7 +1506,20 @@ export function createRunService(
           partialTree = undefined;
           let commitNote = '';
           if (step.tool === 'verified-commit') {
-            if (checkedRepair && tree && isolated) {
+            if (timeoutReview && tree && isolated) {
+              await worktrees.open(
+                tree.task,
+                isolated,
+                state.summary.sessionGit?.base,
+              );
+              if (
+                response.text.trim().split(/\r?\n/, 1)[0] !== '원본 재시도 가능'
+              )
+                throw new AttachmentError(
+                  '원본 재시도 보류 · ' + response.text.trim().slice(0, 350),
+                );
+              commitNote = '작성 단계 복구 · 원본 재시도만 허용';
+            } else if (checkedRepair && tree && isolated) {
               const confirmed = await worktrees.open(
                 tree.task,
                 isolated,
