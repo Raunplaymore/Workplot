@@ -6,6 +6,7 @@ import {
   type GitIntegrationEntry,
   type GitPromotion,
   type PromotionDecision,
+  type PromotionScope,
   type RunView,
   type RunList,
 } from '@studio/contracts';
@@ -127,6 +128,191 @@ function RunAction({
         {pending ? '처리 중…' : label}
       </button>
       {error && <p role="alert">{error}</p>}
+    </>
+  );
+}
+function PromotionReview({
+  id,
+  promotion,
+  queue,
+  allowApproval,
+  goal,
+  repository,
+  branch,
+  refresh,
+}: {
+  id: string;
+  promotion: GitPromotion;
+  queue: GitIntegrationEntry[];
+  allowApproval: boolean;
+  goal: string;
+  repository: string;
+  branch: string;
+  refresh: () => void;
+}) {
+  const [scope, setScope] = useState<PromotionScope>();
+  const [copyState, setCopyState] = useState<'' | 'copied' | 'manual'>('');
+  const [error, setError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const { ticket, expected, candidate } = promotion;
+  const path = '/master-runs/' + id + '/git-promotion/';
+  useEffect(() => {
+    const controller = new AbortController();
+    async function read() {
+      try {
+        const result: PromotionScope = await (
+          await localRequest(
+            path + 'scope',
+            'GET',
+            undefined,
+            controller.signal,
+          )
+        ).json();
+        if (
+          result.expected !== expected ||
+          result.candidate !== candidate ||
+          result.ticket !== ticket
+        )
+          throw Error();
+        if (!controller.signal.aborted) setScope(result);
+      } catch {
+        if (!controller.signal.aborted) setError(true);
+      }
+    }
+    void read();
+    return () => controller.abort();
+  }, [path, ticket, expected, candidate, attempt]);
+  if (error)
+    return (
+      <p role="alert">
+        전체 변경을 불러오지 못했습니다.{' '}
+        <button
+          onClick={() => {
+            setError(false);
+            setAttempt((n) => n + 1);
+          }}
+        >
+          다시 조회
+        </button>
+      </p>
+    );
+  if (!scope) return <p role="status">반영 범위 조회 중…</p>;
+  const included = new Set(scope.included.map((job) => job.run));
+  const outside = queue.filter((job) => !included.has(job.run));
+  const summary = [
+    '## PR 검토 요약',
+    goal,
+    '',
+    '대상 저장소 · ' + repository,
+    '대상 브랜치 · ' + branch,
+    '기준 SHA · ' + expected,
+    '후보 SHA · ' + candidate,
+    '반영 상태 · ' + promotionLabel[promotion.status],
+    ...(promotion.appliedAt ? ['반영 시각 · ' + promotion.appliedAt] : []),
+    '',
+    '포함 작업',
+    ...scope.included.map((job) => '- ' + job.task + ' · 실행 ' + job.run),
+    ...(scope.included.length ? [] : ['- 없음']),
+    ...(outside.length
+      ? [
+          '이번 실행에서 후보에 포함되지 않은 작업',
+          ...outside.map(
+            (job) =>
+              '- ' +
+              job.task +
+              ' · ' +
+              queueStates[job.status] +
+              ' · 실행 ' +
+              job.run,
+          ),
+        ]
+      : []),
+    '',
+    '변경 파일',
+    ...scope.files.map((file) => '- ' + file),
+    ...(scope.files.length ? [] : ['- 없음']),
+    '',
+    '검증 기록',
+    ...queue
+      .filter((job) => job.candidate === candidate)
+      .map((job) => '- ' + job.task + ' · ' + queueStates[job.status]),
+    ...(promotion.checks.startsWith('팀 필수 검사 통과 ·')
+      ? ['- 기준 커밋의 팀 필수 검사 통과']
+      : []),
+    '검증 범위는 이 후보에 기록된 검사에 한정됩니다.',
+  ].join('\n');
+  async function copySummary() {
+    try {
+      await navigator.clipboard.writeText(summary);
+      setCopyState('copied');
+    } catch {
+      setCopyState('manual');
+    }
+  }
+  return (
+    <>
+      <h5>반영 범위 · 변경 파일 {scope.files.length}개</h5>
+      <p>
+        포함 작업 ·{' '}
+        {scope.included.length
+          ? scope.included.map((job) => (
+              <a key={job.run} href={'#/runs/' + job.run}>
+                {' '}
+                {job.task} ({job.run.slice(0, 8)}){' '}
+              </a>
+            ))
+          : '없음'}
+      </p>
+      {outside.length > 0 && (
+        <p>
+          이번 실행에서 추가 변경이 없는 작업 ·{' '}
+          {outside
+            .map((job) => job.task + ' (' + queueStates[job.status] + ')')
+            .join(', ')}
+        </p>
+      )}
+      <ul>
+        {scope.files.map((file) => (
+          <li key={file}>
+            <code>{file}</code>
+          </li>
+        ))}
+      </ul>
+      <details>
+        <summary>전체 diff 보기</summary>
+        <pre
+          style={{
+            whiteSpace: 'pre-wrap',
+            overflowWrap: 'anywhere',
+            maxHeight: '32rem',
+            overflow: 'auto',
+          }}
+        >
+          {scope.patch || '변경 없음'}
+        </pre>
+      </details>
+      <button type="button" onClick={() => void copySummary()}>
+        PR 검토 요약 복사
+      </button>
+      {copyState === 'copied' && <span role="status">복사했습니다.</span>}
+      {copyState === 'manual' && (
+        <label>
+          아래 요약을 선택해 복사하세요
+          <textarea
+            readOnly
+            value={summary}
+            onFocus={(e) => e.target.select()}
+          />
+        </label>
+      )}
+      {allowApproval && (
+        <RunAction
+          path={path + 'approve'}
+          label="승인하고 원본에 반영"
+          body={{ ticket, expected, candidate }}
+          refresh={refresh}
+        />
+      )}
     </>
   );
 }
@@ -349,9 +535,6 @@ export function MasterRun({ id }: { id: string }) {
                       {promotion.candidate.slice(0, 12)}
                     </code>
                   </p>
-                  {data.gitQueue.some((j) => j.status !== 'verified') && (
-                    <p>통과한 작업까지만 포함합니다.</p>
-                  )}
                   {promotion.detail && <p role="status">{promotion.detail}</p>}
                   {promotion.appliedAt && (
                     <p>
@@ -367,30 +550,35 @@ export function MasterRun({ id }: { id: string }) {
                       </pre>
                     </details>
                   )}
+                  <PromotionReview
+                    key={[
+                      id,
+                      promotion.ticket,
+                      promotion.expected,
+                      promotion.candidate,
+                    ].join('/')}
+                    id={id}
+                    promotion={promotion}
+                    queue={data.gitQueue}
+                    goal={data.plan.goal}
+                    repository={target.repository}
+                    branch={target.branch}
+                    allowApproval={
+                      !data.stopped &&
+                      ['ready', 'blocked'].includes(promotion.status)
+                    }
+                    refresh={refresh}
+                  />
                   {!data.stopped &&
-                    ['ready', 'blocked', 'stale', 'failed'].includes(
-                      promotion.status,
-                    ) && (
+                    ['stale', 'failed'].includes(promotion.status) && (
                       <RunAction
-                        key={promotion.ticket + promotion.status}
-                        path={
-                          '/master-runs/' +
-                          id +
-                          '/git-promotion/' +
-                          (['stale', 'failed'].includes(promotion.status)
-                            ? 'recheck'
-                            : 'approve')
-                        }
+                        path={'/master-runs/' + id + '/git-promotion/recheck'}
+                        label="현재 원본으로 재검사"
                         body={{
                           ticket: promotion.ticket,
                           expected: promotion.expected,
                           candidate: promotion.candidate,
                         }}
-                        label={
-                          ['stale', 'failed'].includes(promotion.status)
-                            ? '현재 원본으로 재검사'
-                            : '승인하고 원본에 반영'
-                        }
                         refresh={refresh}
                       />
                     )}

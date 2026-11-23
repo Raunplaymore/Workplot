@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { git } from './git-worktree.js';
 import { verifyGitLocation, inspectGit } from './git-target.js';
-import { checkCandidate } from './git-candidate-check.js';
+import { checkCandidate, checkTeamPolicy } from './git-candidate-check.js';
 import { StoreConflict, type StudioStore } from './studio-store.js';
 
 type Status = GitPromotion['status'];
@@ -23,6 +23,31 @@ export function createGitPromotions(db: Database.Database, store: StudioStore) {
     return row ? (JSON.parse(row) as GitPromotion) : null;
   }
   function view(master: string): GitPromotion | null {
+    const row = loadView(master);
+    if (!row || !['ready', 'blocked', 'applied'].includes(row.status))
+      return row;
+    const policy = store.gitQueue.teamPolicy(row.expected, row.candidate);
+    if (!policy && row.status === 'applied') return row;
+    if (!policy)
+      return {
+        ...row,
+        status: 'stale',
+        detail: '이 후보의 팀 필수 검사 기록이 없어 재검사가 필요합니다.',
+      };
+    return {
+      ...row,
+      checks:
+        '팀 필수 검사 통과 · 기준 ' +
+        row.expected +
+        ' · 검사 버전 ' +
+        policy +
+        ' · 후보 ' +
+        row.candidate +
+        '\n' +
+        row.checks,
+    };
+  }
+  function loadView(master: string): GitPromotion | null {
     const previous = saved(master);
     if (previous) return previous;
     const jobs = store.gitQueue.list(master);
@@ -95,6 +120,7 @@ export function createGitPromotions(db: Database.Database, store: StudioStore) {
           ...row,
           status: action === 'approve' ? 'applying' : 'checking',
           detail: '',
+          checks: loadView(master)?.checks ?? '',
           approvedAt: action === 'approve' ? new Date().toISOString() : null,
         }),
       };
@@ -112,6 +138,58 @@ export function createGitPromotions(db: Database.Database, store: StudioStore) {
       common: join(pool, 'repo.git'),
       receipt: 'refs/workplot/receipts/' + row.ticket,
       ref: 'refs/heads/' + t.branch,
+    };
+  }
+  async function scope(master: string) {
+    const row = view(master);
+    if (!row) throw new StoreConflict();
+    const { common, t } = context(row);
+    const args = ['--no-ext-diff', '--no-textconv', '--no-color', '-M'];
+    const [names, patch, history] = await Promise.all([
+      git(
+        common,
+        '-c',
+        'core.quotePath=false',
+        'diff',
+        ...args,
+        '--name-status',
+        row.expected,
+        row.candidate,
+        '--',
+      ),
+      git(
+        common,
+        '-c',
+        'core.quotePath=false',
+        'diff',
+        ...args,
+        '--patch',
+        row.expected,
+        row.candidate,
+        '--',
+      ),
+      git(common, 'rev-list', row.expected + '..' + row.candidate),
+    ]);
+    const commits = new Set(history.trim().split('\n'));
+    // A lane can carry verified work from an earlier master into this candidate.
+    const jobs = db
+      .prepare(
+        "SELECT task, run, candidate FROM git_queue WHERE lane=? AND status='verified' AND candidate!=parent ORDER BY sequence",
+      )
+      .all(t.checkoutId + '/' + t.branch) as {
+      task: string;
+      run: string;
+      candidate: string;
+    }[];
+    return {
+      ticket: row.ticket,
+      expected: row.expected,
+      candidate: row.candidate,
+      included: jobs
+        .filter((j) => commits.has(j.candidate))
+        .map(({ task, run }) => ({ task, run })),
+      files: names.trimEnd() ? names.replace(/\n$/, '').split('\n') : [],
+      patch,
     };
   }
   async function received(row: GitPromotion) {
@@ -355,6 +433,14 @@ export function createGitPromotions(db: Database.Database, store: StudioStore) {
       scratch = await mkdtemp(join(pool, 'recheck-'));
       stage = join(scratch, 'checkout');
       await git(common, 'worktree', 'add', '--detach', stage, candidate);
+      const team = await checkTeamPolicy(
+        common,
+        observed.sha,
+        candidate,
+        stage,
+        scratch,
+        new AbortController().signal,
+      );
       const checks = await checkCandidate(
         common,
         observed.sha,
@@ -371,6 +457,7 @@ export function createGitPromotions(db: Database.Database, store: StudioStore) {
         'refs/workplot/verified/' + row.run + '/' + candidate,
         candidate,
       );
+      store.gitQueue.recordTeamCheck(team);
       return record(master, {
         ...row,
         ticket: randomUUID(),
@@ -436,5 +523,5 @@ export function createGitPromotions(db: Database.Database, store: StudioStore) {
       }
     }
   }
-  return { view, approve, recheck, recover };
+  return { view, scope, approve, recheck, recover };
 }

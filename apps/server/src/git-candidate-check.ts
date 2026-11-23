@@ -1,8 +1,10 @@
-import { spawn } from 'node:child_process';
+import { reserveQaPort } from './qa-port.js';
+import { promisify } from 'node:util';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { constants } from 'node:fs';
-import { copyFile, mkdir, realpath } from 'node:fs/promises';
+import { copyFile, mkdir, realpath, writeFile } from 'node:fs/promises';
 import { git } from './git-worktree.js';
 
 // Candidate scripts can only write to the disposable checkout and its private home.
@@ -12,6 +14,8 @@ async function runNpm(
   scratch: string,
   args: string[],
   signal: AbortSignal,
+  qaPort?: number,
+  independent?: string,
 ) {
   signal.throwIfAborted();
   if (process.platform !== 'darwin')
@@ -19,13 +23,39 @@ async function runNpm(
   const node = await realpath(process.execPath);
   const bin = dirname(node),
     toolchain = dirname(bin);
+  const developer = await realpath(
+    execFileSync('/usr/bin/xcode-select', ['-p'], { encoding: 'utf8' }).trim(),
+  );
+  const gitBin = join(developer, 'usr', 'bin');
   const home = join(scratch, 'home');
   await mkdir(home, { recursive: true });
+  const browsers = join(homedir(), 'Library/Caches/ms-playwright');
+  // Allow tool discovery using the installed CLI, keeping credentials outside the sandbox.
+  const codex = qaPort
+    ? await promisify(execFile)('/usr/bin/which', ['codex'])
+        .then((r) => r.stdout.trim())
+        .catch(() => '')
+    : '';
+  const cliFile = codex ? await realpath(codex) : '';
+  const cliRoot = cliFile.endsWith('/@openai/codex/bin/codex.js')
+    ? dirname(dirname(cliFile))
+    : cliFile;
+  const browserProfile = qaPort
+    ? `
+    (allow network-bind network-inbound (local ip "localhost:${qaPort}"))
+    (allow network-outbound (remote ip "localhost:${qaPort}"))
+    (allow file-read* (subpath (param "BROWSERS")))
+    ${codex ? '(allow file-read* (literal (param "CODEX_LINK")) (subpath (param "CODEX_CODE")))' : ''}
+    (allow mach-register mach-lookup (global-name-prefix "org.chromium.Chromium.MachPortRendezvousServer."))
+  `
+    : '';
   const profile = `(version 1) (deny default) (import "system.sb")
     (allow process-exec process-fork sysctl-read)
+    (allow signal (target children) (target same-sandbox))
+    ${browserProfile}
     (allow file-read-metadata)
-    (allow file-read* (subpath "/usr") (subpath "/bin") (subpath "/System") (subpath "/Library/Apple") (subpath "/private/etc") (subpath "/dev") (subpath (param "TOOLCHAIN")) (subpath (param "SCRATCH")))
-    (allow file-write* (subpath (param "SCRATCH")) (literal "/dev/null"))`;
+    (allow file-read* (subpath "/usr") (subpath "/bin") (subpath "/System") (subpath "/Library/Apple") (subpath "/private/etc") (subpath "/dev") (subpath (param "DEVELOPER_USR")) (subpath (param "TOOLCHAIN")) (subpath (param "SCRATCH")))
+    (allow file-write* (subpath (param "${independent === undefined ? 'SCRATCH' : 'PRIVATE_HOME'}")) (literal "/dev/null"))`;
   const cli = join(toolchain, 'lib/node_modules/npm/bin/npm-cli.js');
   return new Promise<string>((resolve, reject) => {
     const child = spawn(
@@ -34,21 +64,44 @@ async function runNpm(
         '-D',
         'TOOLCHAIN=' + toolchain,
         '-D',
+        'DEVELOPER_USR=' + join(developer, 'usr'),
+        '-D',
         'SCRATCH=' + scratch,
+        '-D',
+        'PRIVATE_HOME=' + home,
+        '-D',
+        'BROWSERS=' + browsers,
+        '-D',
+        'CODEX_LINK=' + (codex || '/dev/null'),
+        '-D',
+        'CODEX_CODE=' + (cliRoot || '/dev/null'),
         '-p',
         profile,
         node,
-        cli,
-        ...args,
+        ...(independent === undefined
+          ? [cli, ...args]
+          : ['--input-type=module', '--eval', independent]),
       ],
       {
         cwd,
         detached: true,
         stdio: ['ignore', 'pipe', 'pipe'],
         env: {
-          PATH: bin + ':/usr/bin:/bin',
+          PATH: [
+            bin,
+            ...(codex ? [dirname(codex)] : []),
+            gitBin,
+            '/usr/bin',
+            '/bin',
+          ].join(':'),
+          GIT_EXEC_PATH: join(developer, 'usr/libexec/git-core'),
           HOME: home,
           TMPDIR: home,
+          ...(qaPort && {
+            WORKPLOT_QA_PORT: String(qaPort),
+            PLAYWRIGHT_BROWSERS_PATH: browsers,
+            STUDIO_QA_DIR: home,
+          }),
           CI: '1',
           npm_config_offline: 'true',
           npm_config_audit: 'false',
@@ -83,7 +136,8 @@ async function runNpm(
     child.on('close', (code) => {
       clearTimeout(timer);
       signal.removeEventListener('abort', stop);
-      const label = 'npm ' + args.join(' ');
+      const label =
+        independent === undefined ? 'npm ' + args.join(' ') : '팀 필수 검사';
       if (code === 0 && !timeout && !signal.aborted)
         resolve(label + ' · 통과\n' + log.trim());
       else
@@ -153,6 +207,26 @@ async function seedOfflineCache(
     }
   }
 }
+// Read the team check from the target commit and execute it before any candidate script.
+export async function checkTeamPolicy(
+  common: string,
+  base: string,
+  candidate: string,
+  checkout: string,
+  scratch: string,
+  signal: AbortSignal,
+) {
+  const ref = base + ':.workplot/required-check.mjs';
+  const program = await git(common, 'show', ref).catch(() => {
+    throw Error(
+      '대상 브랜치에 팀 필수 검사 .workplot/required-check.mjs가 없습니다.',
+    );
+  });
+  if (!program.trim()) throw Error('팀 필수 검사 내용이 비어 있습니다.');
+  const policy = (await git(common, 'rev-parse', ref)).trim();
+  await runNpm(checkout, scratch, [], signal, undefined, program);
+  return { policy, base, candidate };
+}
 export async function checkCandidate(
   common: string,
   base: string,
@@ -164,6 +238,7 @@ export async function checkCandidate(
   async function manifest(sha: string) {
     try {
       return JSON.parse(await git(common, 'show', sha + ':package.json')) as {
+        name?: string;
         scripts?: Record<string, string>;
         dependencies?: object;
         devDependencies?: object;
@@ -177,6 +252,7 @@ export async function checkCandidate(
     merged = await manifest(candidate);
   if (!original.scripts?.test?.trim())
     throw Error('기준 커밋에 npm test가 없어 통합 후보를 검증할 수 없습니다.');
+  const workplot = original.name === 'agent-workflow-studio';
   const commands = ['typecheck', 'build', 'test', 'test:e2e'].filter(
     (k) => original.scripts?.[k] || merged.scripts?.[k],
   );
@@ -205,7 +281,53 @@ export async function checkCandidate(
           merged.scripts[name] !== original.scripts[name])
       )
         throw Error('기준 검사 명령이 달라졌습니다: ' + name);
-      logs.push(await runNpm(checkout, scratch, ['run', name], signal));
+      // Recognize the legacy Workplot config pinned to the live port. Its tests and script
+      // run unchanged, with an alternate Playwright webServer in the disposable checkout.
+      const browserQA =
+        workplot &&
+        name === 'test:e2e' &&
+        merged.scripts[name] === 'npm run build && playwright test';
+      const args = ['run', name];
+      if (!browserQA) {
+        logs.push(await runNpm(checkout, scratch, args, signal));
+        continue;
+      }
+      const lease = await reserveQaPort();
+      try {
+        const { port } = lease;
+        const filename = 'workplot-candidate.playwright.config.ts';
+        const fixture = 'workplot-qa-server.mjs';
+        // Older committed fixtures listen on 5173 and enforce that exact Host.
+        // Adapt those two QA-only literals inside the disposable server process.
+        await copyFile(
+          new URL('../../../qa/candidate-server.mjs', import.meta.url),
+          join(checkout, fixture),
+          constants.COPYFILE_EXCL,
+        );
+        await writeFile(
+          join(checkout, filename),
+          [
+            "import config from './playwright.config';",
+            "export default {...config, workers:1, use:{...config.use,baseURL:'http://127.0.0.1:" +
+              port +
+              "'},webServer:{command:'node " +
+              fixture +
+              "', wait:{stdout:/Workplot QA port " +
+              port +
+              '\\b/},reuseExistingServer:false}};',
+          ].join('\n'),
+          { flag: 'wx' },
+        );
+        args.push('--', '--config', filename);
+        logs.push(
+          'QA http://127.0.0.1:' +
+            port +
+            '\n' +
+            (await runNpm(checkout, scratch, args, signal, port)),
+        );
+      } finally {
+        lease.release();
+      }
     }
     return logs.join('\n');
   } catch (err) {

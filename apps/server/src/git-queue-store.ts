@@ -10,6 +10,9 @@ export function openGitQueue(db: Database.Database) {
       parent TEXT, candidate TEXT, detail TEXT NOT NULL DEFAULT '', files TEXT NOT NULL DEFAULT '[]'
     );
     CREATE INDEX IF NOT EXISTS git_queue_lane ON git_queue(lane, sequence);`);
+  db.exec(
+    'CREATE TABLE IF NOT EXISTS team_check_receipts(base TEXT NOT NULL,candidate TEXT NOT NULL,policy TEXT NOT NULL,PRIMARY KEY(base,candidate))',
+  );
   function entries(where: string, value: string) {
     const rows = db
       .prepare('SELECT * FROM git_queue WHERE ' + where + ' ORDER BY sequence')
@@ -21,6 +24,17 @@ export function openGitQueue(db: Database.Database) {
     return rows.map((r) => ({ ...r, files: JSON.parse(r.files) as string[] }));
   }
   return {
+    recordTeamCheck: (r: { base: string; candidate: string; policy: string }) =>
+      db
+        .prepare('INSERT OR REPLACE INTO team_check_receipts VALUES(?,?,?)')
+        .run(r.base, r.candidate, r.policy),
+    teamPolicy: (base: string, candidate: string) =>
+      db
+        .prepare(
+          'SELECT policy FROM team_check_receipts WHERE base=? AND candidate=?',
+        )
+        .pluck()
+        .get(base, candidate) as string | undefined,
     register: (id: string) =>
       db.prepare('INSERT OR IGNORE INTO git_batches VALUES(?)').run(id),
     batches: () =>

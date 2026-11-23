@@ -297,6 +297,10 @@ export function registerStudioRoutes(
       '/master-runs/:id/stop',
       (req) => runs.stopMaster(req.params.id),
     );
+    protectedRoutes.get<{ Params: { id: string } }>(
+      '/master-runs/:id/git-promotion/scope',
+      (req) => promotions.scope(req.params.id),
+    );
     for (const action of ['approve', 'recheck'] as const) {
       protectedRoutes.post<{ Params: { id: string } }>(
         '/master-runs/:id/git-promotion/' + action,

@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, realpath } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, relative, sep } from 'node:path';
 import { promisify } from 'node:util';
@@ -224,6 +224,8 @@ export function manageWorktrees(store: StudioStore, root: string) {
       tree: Awaited<ReturnType<typeof open>>,
       run: string,
       step: string,
+      verify?: AbortSignal,
+      recordCheck?: (log: string) => Promise<void>,
     ) {
       const { directory, path, head, branch, task, common } = tree;
       if (
@@ -297,9 +299,39 @@ export function manageWorktrees(store: StudioStore, root: string) {
           'Workplot ' + run + ' / ' + step,
         )
       ).trim();
+      if (verify) {
+        const scratch = await mkdtemp(join(dirname(common), 'commit-check-'));
+        const checkout = join(scratch, 'checkout');
+        try {
+          await git(common, 'worktree', 'add', '--detach', checkout, next);
+          const { checkCandidate } = await import('./git-candidate-check.js');
+          const log = await checkCandidate(
+            common,
+            head,
+            next,
+            checkout,
+            scratch,
+            verify,
+          );
+          await recordCheck?.(log);
+          verify.throwIfAborted();
+          if (
+            (await git(directory, 'write-tree')).trim() !== treeId ||
+            (await git(directory, 'diff', '--name-only')).trim()
+          )
+            problem('검사 중 작업 내용이 변경됐습니다.');
+        } finally {
+          await git(common, 'worktree', 'remove', '--force', checkout).catch(
+            () => {},
+          );
+          await rm(scratch, { recursive: true, force: true });
+          store.saveWorktreeChanges(task, await dirtyDigest(directory));
+        }
+      }
       store.prepareCheckpoint(task, head, next);
       await git(common, 'update-ref', 'refs/heads/' + branch, next, head);
       store.finishWorktree(task, next);
+      return next;
     },
   };
 }

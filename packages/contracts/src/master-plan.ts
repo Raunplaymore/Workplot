@@ -86,6 +86,11 @@ export const promotionDecisionSchema = z.strictObject({
   candidate: gitSha,
 });
 export type PromotionDecision = z.infer<typeof promotionDecisionSchema>;
+export type PromotionScope = PromotionDecision & {
+  included: { task: string; run: string }[];
+  files: string[];
+  patch: string;
+};
 export type GitPromotion = PromotionDecision & {
   run: string;
   status:

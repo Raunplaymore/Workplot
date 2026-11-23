@@ -12,17 +12,54 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import process from 'node:process';
 import console from 'node:console';
 import { setTimeout as delay } from 'node:timers/promises';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, URL } from 'node:url';
 import Database from 'better-sqlite3';
 import { chromium } from 'playwright';
 import { buildApp } from '../apps/server/dist/app.js';
+import { codexRunner } from '../apps/server/dist/codex-runner.js';
+
+const teamCheckOnly = process.argv.includes('--team-check-only');
+const weakenedTask = 'weakened-checks';
+const policyPath = '.workplot/required-check.mjs';
+const missingFile = 'G4 팀 필수 파일 a.txt 누락';
+const runner = {
+  ready: teamCheckOnly ? async () => '0.166.0' : codexRunner.ready,
+  async write(...args) {
+    const { masterTask, workFolder } = JSON.parse(args[0]);
+    if (masterTask?.taskId === weakenedTask) {
+      await unlink(join(workFolder, 'a.txt'));
+      await writeFile(
+        join(workFolder, 'test.cjs'),
+        "require('node:test')('weakened candidate test', () => {});\n",
+      );
+      await writeFile(join(workFolder, policyPath), 'process.exitCode = 0;\n');
+      execFileSync('npm', ['test'], { cwd: workFolder });
+      execFileSync(process.execPath, [policyPath], { cwd: workFolder });
+    } else if (masterTask?.taskId === 'control') {
+      // The second independent task contributes no source changes.
+    } else if (teamCheckOnly) {
+      const task = masterTask.taskId;
+      assert.ok(['a', 'b'].includes(task));
+      await writeFile(join(workFolder, task + '.txt'), task + '-first\n');
+    } else {
+      return codexRunner.write(...args);
+    }
+    args[2]({ sessionId: randomUUID() });
+    return { kind: 'document', text: 'QA 작업 완료' };
+  },
+};
 
 if (process.argv[2] === 'serve') {
-  const app = await buildApp(process.argv[3], resolve('apps/web/dist'));
+  const app = await buildApp(
+    process.argv[3],
+    resolve('apps/web/dist'),
+    undefined,
+    runner,
+  );
   await app.listen({ host: '127.0.0.1', port: 5173 });
   process.once('SIGTERM', () => app.close().then(() => process.exit(0)));
   process.send('ready');
@@ -99,6 +136,13 @@ async function verify() {
     "require('node:assert/strict').ok(require('node:fs').existsSync('a.txt'));\n",
   );
   for (const key of ['a', 'b']) await file(key + '.txt', 'base\n');
+  await mkdir(join(repo, '.workplot'));
+  await file(
+    policyPath,
+    "import {existsSync} from 'node:fs';if (!existsSync('a.txt')) throw Error(" +
+      JSON.stringify(missingFile) +
+      ');',
+  );
   git('add', '.');
   git('commit', '-qm', 'original');
   const head = () => git('rev-parse', 'HEAD'),
@@ -114,8 +158,19 @@ async function verify() {
     (await readFile(events, 'utf8')).trim().split('\n').filter(Boolean).length;
   const origin = 'http://127.0.0.1:5173',
     headers = { origin, 'x-studio-client': 'browser' };
-  let child, browser;
+  let child, browser, app;
   async function start() {
+    if (teamCheckOnly) {
+      app = await buildApp(database, undefined, undefined, runner);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/session',
+        headers: { ...headers, host: new URL(origin).host },
+      });
+      assert.equal(res.statusCode, 204);
+      headers.cookie = res.headers['set-cookie'].split(';')[0];
+      return;
+    }
     child = fork(fileURLToPath(import.meta.url), ['serve', database], {
       env: { ...process.env, PATH: bin + ':' + process.env.PATH },
       stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
@@ -132,6 +187,19 @@ async function verify() {
     headers.cookie = res.headers.get('set-cookie').split(';')[0];
   }
   async function call(method, path, body, expected = 200) {
+    if (app) {
+      const res = await app.inject({
+        method,
+        url: '/api' + path,
+        headers: { ...headers, host: new URL(origin).host },
+        payload: body,
+      });
+      assert.ok(
+        expected === 200 ? res.statusCode < 300 : res.statusCode === expected,
+        res.body,
+      );
+      return res.json();
+    }
     const res = await globalThis.fetch(origin + '/api' + path, {
       method,
       headers: {
@@ -147,13 +215,13 @@ async function verify() {
     );
     return obj;
   }
-  async function prepare(round) {
+  async function prepare(round, weakened = false) {
     const target = await call('POST', '/git/targets', {
         path: repo,
         service: 'G4 검증 저장소',
       }),
       tasks = [];
-    for (const k of ['a', 'b']) {
+    for (const k of weakened ? [weakenedTask, 'control'] : ['a', 'b']) {
       const wf = await call('POST', '/workflows', {
         name: 'G4 ' + round + ' ' + k,
         input: '명시한 파일 수정',
@@ -205,9 +273,18 @@ async function verify() {
             m.children.map((c) => [c.view.summary.status, c.view.note]),
           ),
         );
+      if (
+        weakened &&
+        m.gitQueue.some((j) => j.task === weakenedTask && j.status === 'failed')
+      ) {
+        assert.equal(m.gitQueue.length, 2);
+        assert.ok(!m.gitPromotion || m.gitPromotion.status === 'unchanged');
+        return { route, job: m.gitQueue.find((j) => j.task === weakenedTask) };
+      }
       if (m.gitQueue.some((j) => ['failed', 'conflict'].includes(j.status)))
         throw Error(JSON.stringify(m.gitQueue));
       if (m.gitPromotion?.status === 'ready') {
+        assert.equal(weakened, false, '약화 후보가 승인 대기에 도달했습니다.');
         const calls = await Promise.all(
           m.children.map(
             async (c) =>
@@ -240,11 +317,128 @@ async function verify() {
   console.log('G4 QA', root);
   try {
     await start();
-    browser = await chromium.launch();
+    const { route, job } = await prepare('weakened', true);
+    const { base, candidate, source, run } = job;
+    assert.equal(base, report.initialHead);
+    assert.match(candidate, /^[a-f0-9]{40}$/);
+    const { worktree } = await call('GET', '/runs/' + run + '/view');
+    const gitPool = (...args) =>
+      execFileSync(
+        realGit,
+        ['-C', join(dirname(dirname(worktree.directory)), 'repo.git'), ...args],
+        { encoding: 'utf8' },
+      ).trim();
+    assert.equal(
+      gitPool('rev-parse', candidate + '^{tree}'),
+      gitPool('rev-parse', source + '^{tree}'),
+    );
+    const policy = git('rev-parse', base + ':' + policyPath);
+    assert.notEqual(gitPool('rev-parse', candidate + ':' + policyPath), policy);
+    const db = new Database(database, { readonly: true });
+    try {
+      assert.equal(
+        db
+          .prepare(
+            'SELECT policy FROM team_check_receipts WHERE base=? AND candidate=?',
+          )
+          .get(base, candidate),
+        undefined,
+      );
+    } finally {
+      db.close();
+    }
+    await call(
+      'POST',
+      route + '/git-promotion/approve',
+      { expected: base, candidate, ticket: run },
+      409,
+    );
+    assert.equal(head(), base);
+    assert.equal(await count(), 0);
+    report.teamCheckFailure = {
+      base,
+      candidate,
+      policy,
+      status: job.status,
+      detail: job.detail,
+      candidateTestExit: 0,
+      candidatePolicyExit: 0,
+      receipt: null,
+      promotion: null,
+      approvalStatus: 409,
+      head: head(),
+    };
+    assert.match(job.detail, /팀 필수 검사 · 실패 \(1\)/);
+    assert.ok(job.detail.includes(missingFile), job.detail);
+    console.log('PASS weakened candidate', base, candidate, policy);
+
+    if (teamCheckOnly) return;
     const s = await prepare('first');
     report.concurrent = s;
-    const pages = await pagesFor(s),
-      api = s.route + '/git-promotion/approve';
+    const api = s.route + '/git-promotion/approve';
+    // Old candidates have no team receipt. Both an absent receipt and one for a different SHA must fail closed.
+    const probeDb = new Database(database);
+    const receipt = probeDb
+      .prepare('SELECT * FROM team_check_receipts WHERE base=? AND candidate=?')
+      .get(s.initial.expected, s.initial.candidate);
+    assert.ok(receipt?.policy);
+    assert.equal(
+      receipt.policy,
+      git('rev-parse', receipt.base + ':' + policyPath),
+    );
+    assert.ok(
+      s.initial.checks.includes(
+        '팀 필수 검사 통과 · 기준 ' +
+          receipt.base +
+          ' · 검사 버전 ' +
+          receipt.policy +
+          ' · 후보 ' +
+          receipt.candidate,
+      ),
+    );
+    report.teamCheckPass = receipt;
+    try {
+      probeDb
+        .prepare('DELETE FROM team_check_receipts WHERE base=? AND candidate=?')
+        .run(receipt.base, receipt.candidate);
+      probeDb
+        .prepare('INSERT INTO team_check_receipts VALUES(?,?,?)')
+        .run(receipt.base, '0'.repeat(40), receipt.policy);
+      await call('POST', api, decision(s.initial), 409);
+      assert.equal(head(), receipt.base);
+    } finally {
+      probeDb
+        .prepare('INSERT INTO team_check_receipts VALUES(?,?,?)')
+        .run(receipt.base, receipt.candidate, receipt.policy);
+      probeDb.close();
+    }
+    console.log(
+      'PASS verified candidate',
+      receipt.base,
+      receipt.candidate,
+      receipt.policy,
+    );
+
+    browser = await chromium.launch();
+    const pages = await pagesFor(s);
+    const scope = await call('GET', s.route + '/git-promotion/scope');
+    assert.deepEqual(decision(scope), decision(s.initial));
+    assert.deepEqual(scope.included.map((j) => j.task).sort(), ['a', 'b']);
+    assert.deepEqual(scope.files, ['M\ta.txt', 'M\tb.txt']);
+    const review = pages[0].getByRole('region', {
+      name: '원본 반영',
+      exact: true,
+    });
+    await review.getByText('반영 범위 · 변경 파일 2개').waitFor();
+    await review.getByText('전체 diff 보기').click();
+    assert.match(
+      await review.locator('details pre').last().innerText(),
+      /\+a-first/,
+    );
+    assert.match(
+      await review.locator('details pre').last().innerText(),
+      /\+b-first/,
+    );
     await file('personal.txt', '사용자 메모\n');
     await call('POST', api, decision(s.initial), 409);
     assert.equal(head(), s.initial.expected);
@@ -420,6 +614,7 @@ async function verify() {
       JSON.stringify(report, null, 2),
     );
     await browser?.close();
+    await app?.close();
     if (child && child.exitCode === null && child.signalCode === null) {
       const gone = once(child, 'exit');
       child.kill('SIGTERM');

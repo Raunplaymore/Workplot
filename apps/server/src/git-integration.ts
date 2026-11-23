@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { git } from './git-worktree.js';
 import { verifyGit } from './git-target.js';
-import { checkCandidate } from './git-candidate-check.js';
+import { checkCandidate, checkTeamPolicy } from './git-candidate-check.js';
 import {
   StoreConflict,
   StoreNotFound,
@@ -140,6 +140,14 @@ export function createGitIntegration(store: StudioStore) {
       scratch = await mkdtemp(join(attempts, job.run + '-'));
       stage = join(scratch, 'checkout');
       await git(common, 'worktree', 'add', '--detach', stage, candidate);
+      const team = await checkTeamPolicy(
+        common,
+        job.base,
+        candidate,
+        stage,
+        scratch,
+        signal,
+      );
       const log = await checkCandidate(
         common,
         job.base,
@@ -157,6 +165,7 @@ export function createGitIntegration(store: StudioStore) {
         candidate,
       );
       signal.throwIfAborted();
+      queue.recordTeamCheck(team);
       queue.finish(
         job.sequence,
         'verified',

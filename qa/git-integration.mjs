@@ -64,6 +64,11 @@ await file(
 );
 await file('legacy-note.txt', 'this note will move unchanged\n');
 await file('obsolete-note.txt', 'this note will disappear\n');
+await mkdir(join(repo, '.workplot'));
+await file(
+  '.workplot/required-check.mjs',
+  "import {accessSync} from 'node:fs';accessSync('shared.txt');",
+);
 git(repo, 'add', '.');
 git(repo, 'commit', '-qm', 'source');
 await file('personal.txt', 'staged personal edit\n');
