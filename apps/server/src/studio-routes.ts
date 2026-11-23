@@ -1100,6 +1100,7 @@ export function registerStudioRoutes(
         return {
           ...view,
           portCheck: await runs.portCheck(id.data),
+          hasTimeoutHistory: store.timeouts.steps(id.data).length > 0,
           modelCalls: store.modelCalls(id.data),
           editedFiles: store.editedFiles(id.data),
           ...(view.summary.developmentTaskId && {
@@ -1109,6 +1110,15 @@ export function registerStudioRoutes(
             wait.gate === view.gate?.id && { quotaRetryAt: wait.retry_at }),
           retention: history.info(id.data),
         };
+      },
+    );
+    protectedRoutes.get<{ Params: { id: string } }>(
+      '/runs/:id/timeouts',
+      async (request, reply) => {
+        const id = workflowIdSchema.safeParse(request.params.id);
+        if (!id.success)
+          return reply.code(400).send({ error: 'invalid_run_id' });
+        return runs.timeoutReport(id.data);
       },
     );
     protectedRoutes.get<{ Params: { id: string } }>(

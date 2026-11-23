@@ -12,6 +12,7 @@ export function expandWorkflow(
   parentId: string,
   definition: WorkflowDefinition,
   lookup: (id: string, version: number) => { definition: WorkflowDefinition },
+  onLinkedStep?: (runtimeId: string, callId: string, childStep: string) => void,
 ): WorkflowDefinition {
   if (
     !definition.steps.some((step) => step.kind === 'task' && step.workflowRef)
@@ -56,6 +57,7 @@ export function expandWorkflow(
     }
     for (const [index, step] of steps.entries()) {
       const id = mapped(step.id);
+      onLinkedStep?.(id, call.id, step.id);
       if (step.kind === 'review') {
         expanded.push({ ...step, id });
         continue;

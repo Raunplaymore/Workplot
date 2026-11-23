@@ -258,6 +258,7 @@ const reviewReceiptSchema = z.strictObject({
   gateId: z.uuid(),
   stepId,
   decision: z.enum(['accept', 'decline', 'finish']),
+  savedWorkflowVersion: versionSchema.optional(),
   at: z.iso.datetime(),
 });
 export type ReviewReceipt = z.infer<typeof reviewReceiptSchema>;
@@ -493,6 +494,7 @@ export const runDecisionSchema = z.discriminatedUnion('decision', [
       .strictObject({
         file: artifactName,
         expected: z.string().regex(/^[0-9a-f]{64}$/),
+        rule: z.string().trim().min(1).max(2000).optional(),
         text: z
           .string()
           .max(128000)
@@ -513,7 +515,26 @@ export const portCheckSchema = z.strictObject({
   status: z.enum(['failed', 'checking', 'passed']),
   reason: z.string(),
 });
+export const timeoutReportSchema = z.array(
+  z.object({
+    step: stepId,
+    attempts: z.array(
+      z.object({
+        begin: z.number(),
+        end: z.number(),
+        elapsedMs: z.number(),
+        parallel: z.number().nullable(),
+        lastCheck: z.string().nullable(),
+        retryMs: z.number().nullable(),
+        recoveredMs: z.number().nullable(),
+        repeatedChecks: z.number().nullable(),
+      }),
+    ),
+    peers: z.array(z.object({ run: z.uuid(), overlap: z.boolean() })),
+  }),
+);
 export const runViewSchema = z.strictObject({
+  hasTimeoutHistory: z.boolean().optional(),
   recovery: z
     .strictObject({ source: z.uuid(), repair: z.string(), state: z.string() })
     .optional(),

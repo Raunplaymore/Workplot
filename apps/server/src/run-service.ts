@@ -1,3 +1,8 @@
+import {
+  previousAttempts,
+  describeTimeouts,
+  type CommandCheck,
+} from './timeout-history.js';
 import { reserveQaPort } from './qa-port.js';
 import { probeRecovery } from './recovery-probe.js';
 import { verificationRecovery } from './verification-recovery.js';
@@ -69,6 +74,7 @@ type Execution = {
   redirected?: boolean;
   done?: Promise<void>;
   logDescriptor?: number;
+  attempt?: { id: number; checks: CommandCheck[] };
   storageFailed?: boolean;
   review?: PausedReview;
   restored?: boolean;
@@ -552,11 +558,87 @@ export function createRunService(
     }
   }
 
+  function priorChecks(id: string, step: string) {
+    const last = store.timeouts
+      .attempts(id, step)
+      .filter((a) => a.end !== null)
+      .at(-1);
+    if (!last?.checks) return [];
+    return (JSON.parse(last.checks) as CommandCheck[]).map(
+      ({ label, status }) => ({ label, status }),
+    );
+  }
+  async function timeoutDetails(id: string, step: string) {
+    const tracked = store.timeouts.attempts(id, step);
+    const log = await readRunFile(id, 'events.jsonl', true).catch(() => '');
+    const legacy = previousAttempts(
+      log
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .flatMap((line) => {
+          try {
+            return [JSON.parse(line)];
+          } catch {
+            return [];
+          }
+        }),
+      step,
+    ).filter(
+      (a) => !tracked.length || (a.end !== null && a.end < tracked[0]!.begin),
+    );
+    return describeTimeouts([...legacy, ...tracked]);
+  }
+  async function timeoutReport(id: string) {
+    const state = view(id);
+    if (expired(id)) return [];
+    const steps = new Set(store.timeouts.steps(id));
+    if (state.timedOut && state.stepId) steps.add(state.stepId);
+    const output = [];
+    for (const step of steps) {
+      const attempts = await timeoutDetails(id, step);
+      if (!attempts.length) continue;
+      const peers = await Promise.all(
+        store.timeouts
+          .peers(step)
+          .filter((p) => p !== id && !expired(p))
+          .map(async (run) => ({
+            run,
+            attempts: await timeoutDetails(run, step),
+          })),
+      );
+      output.push({
+        step,
+        attempts,
+        peers: peers
+          .filter((p) => p.attempts.length)
+          .map((p) => ({
+            run: p.run,
+            overlap: p.attempts.some((a) =>
+              attempts.some((b) => a.begin < b.end && b.begin < a.end),
+            ),
+          })),
+      });
+    }
+    return output;
+  }
   function run(...args: Parameters<typeof executeRun>) {
     const { view } = args[0];
     return codexCallContext.run(
       {
         settings: view.summary.modelSettings,
+        check: (value) => {
+          const attempt = args[0].attempt;
+          if (!attempt) return;
+          const checks = attempt.checks.filter((c) => c.key !== value.key);
+          checks.push(value);
+          attempt.checks = checks.slice(-64);
+          try {
+            store.timeouts.save(attempt.id, attempt.checks);
+          } catch {
+            args[0].storageFailed = true;
+          }
+        },
         record: (model, effort) =>
           store.recordModel(
             view.summary.id,
@@ -587,6 +669,11 @@ export function createRunService(
     let imageFolder: string | undefined;
     let log;
     let retryableTask = false;
+    function closeAttempt(outcome: string) {
+      if (execution.attempt)
+        store.timeouts.finish(execution.attempt.id, outcome);
+      execution.attempt = undefined;
+    }
     let partialTree: Awaited<ReturnType<typeof worktrees.open>> | undefined;
     let answer = '',
       question = 0;
@@ -900,6 +987,16 @@ export function createRunService(
           signal.throwIfAborted();
           persist(execution, 'running');
           retryableTask = true;
+          execution.attempt = {
+            id: store.timeouts.start(
+              id,
+              step.id,
+              [...executions.values()].filter(
+                (e) => e.view.summary.status === 'running',
+              ).length,
+            ),
+            checks: [],
+          };
           const boundSkill = step.codexSkill;
           const skill =
             boundSkill &&
@@ -959,6 +1056,10 @@ export function createRunService(
                   tree.task,
                 )
               : undefined;
+          const previousChecks =
+            resume?.retryCheckpoint && resume.stepId === step.id
+              ? priorChecks(id, step.id)
+              : [];
           const retryContext =
             resume?.retryCheckpoint && resume.stepId === step.id
               ? {
@@ -970,6 +1071,11 @@ export function createRunService(
                     failureId: resume.retryCheckpoint.failureId,
                     previousFailure: resume.retryCheckpoint.failureNote ?? null,
                     recoveryReport: store.recoveryReport(id),
+                    ...(previousChecks.length > 0 && {
+                      previousChecks,
+                      checkPolicy:
+                        '직전 검사 기록은 재개 위치를 찾는 단서다. 작업 트리와 검사 대상이 같고 검증 결과가 남아 있을 때만 재사용한다. 중단된 검사와 변경 뒤 필요한 검사를 수행한다.',
+                    }),
                     ...(tree && {
                       instructions: hostQa
                         ? '현재 diff와 호스트 QA 실측을 대조해 구현·검증 결과를 기록한다. 일치하면 기존 변경을 유지하고 이미 끝난 검사를 반복하지 않는다. 검증하지 않은 항목을 구분한다.'
@@ -1233,6 +1339,7 @@ export function createRunService(
             partialTree = undefined;
             if (evidence || question >= 2) throw new RunnerError('output');
             retryableTask = false;
+            closeAttempt('question');
             const decision = await wait('question', response.text);
             if (decision?.decision !== 'answer')
               throw new RunnerError('output');
@@ -1314,6 +1421,7 @@ export function createRunService(
             throw new RunnerError('output');
           previous = { file, text };
           produced.set(step.id, previous);
+          closeAttempt('done');
           persist(execution, 'running');
           break;
         }
@@ -1387,6 +1495,7 @@ export function createRunService(
       if (execution.storageFailed)
         state.note = '실행 정보를 저장하지 못했습니다. 종료 상태를 확인하세요.';
       try {
+        closeAttempt(reason === 'timeout' ? 'timeout' : status);
         const retry =
           status === 'failed' && retryableTask && state.stepId
             ? {
@@ -1481,6 +1590,7 @@ export function createRunService(
       }
     },
     view,
+    timeoutReport,
     async failureEvidence(id: string, step: string) {
       const state = store.run(id);
       const log =
@@ -1489,7 +1599,18 @@ export function createRunService(
           : '';
       const last = state.results.at(-1);
       const text = last ? await artifact(id, last).catch(() => '') : '';
-      return (log.slice(-4200) + '\n' + text.slice(0, 1400)).trim();
+      const history = await timeoutReport(id);
+      const checks = priorChecks(id, step);
+      return [
+        history.length
+          ? '시간 초과 기록 ' + JSON.stringify(history).slice(0, 2000)
+          : '',
+        checks.length ? '직전 검사 ' + JSON.stringify(checks) : '',
+        log.slice(-4200),
+        text.slice(0, 1400),
+      ]
+        .filter(Boolean)
+        .join('\n');
     },
     launchRepair(
       id: string,
@@ -2109,8 +2230,13 @@ export function createRunService(
             Buffer.byteLength(edit.text) > 128000)
         )
           throw new StoreConflict();
-        store.recordReviewDecision(id, receipt, !!active.restored, edit);
-        active.view.summary = { ...active.view.summary, lastReview: receipt };
+        const lastReview = store.recordReviewDecision(
+          id,
+          receipt,
+          !!active.restored,
+          edit,
+        );
+        active.view.summary = { ...active.view.summary, lastReview };
         active.restored = false;
       }
       active.redirected = Boolean(

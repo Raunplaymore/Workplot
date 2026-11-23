@@ -61,6 +61,7 @@ import {
   removeWorkflowStep,
   runViewSchema,
   runEventsSchema,
+  timeoutReportSchema,
   runListSchema,
   slotSettingsSchema,
   portCheckSchema,
@@ -374,6 +375,7 @@ export function WorkflowStudio({
   }, [preview]);
   const [editing, setEditing] = useState<{
     gate: string;
+    rule?: string;
     original: string;
     text: string;
   }>();
@@ -641,6 +643,9 @@ export function WorkflowStudio({
     void updateList().catch((error: unknown) => setError(message(error)));
   }, [connected]);
   const reviewFile = run?.results.at(-1);
+  const reviewAuthor = executionSteps.find(
+    (s) => s.kind === 'task' && s.id + '.md' === reviewFile,
+  );
   const gateId = run?.gate?.id;
   const autoOpenReview =
     run?.gate?.kind === 'review' &&
@@ -1054,7 +1059,7 @@ export function WorkflowStudio({
   }
   function decide(
     decision: RunDecision,
-    edit?: { file: string; text: string; original: string },
+    edit?: { file: string; text: string; original: string; rule?: string },
   ) {
     perform(async () => {
       if (edit && decision.decision === 'accept') {
@@ -1067,6 +1072,7 @@ export function WorkflowStudio({
           edit: {
             file: edit.file,
             text: edit.text,
+            ...(edit.rule?.trim() && { rule: edit.rule.trim() }),
             expected: Array.from(new Uint8Array(bytes), (b) =>
               b.toString(16).padStart(2, '0'),
             ).join(''),
@@ -1090,7 +1096,9 @@ export function WorkflowStudio({
         if (edit) {
           if (routeRun() === runId) setRun(updated);
           throw Error(
-            '승인 상태가 변경되어 수정본을 저장하지 못했습니다. 현재 결과를 확인하세요.',
+            edit.rule
+              ? '규칙과 수정본을 저장하지 못했습니다. 현재 흐름 버전과 승인 상태를 확인하거나 이번 결과만 승인하세요.'
+              : '승인 상태가 변경되어 수정본을 저장하지 못했습니다. 현재 결과를 확인하세요.',
             { cause: error },
           );
         }
@@ -3533,6 +3541,14 @@ export function WorkflowStudio({
                 )}
                 {run?.note ? ` · ${run.note}` : ''}
               </p>
+              {run && (run.timedOut || run.hasTimeoutHistory) && (
+                <TimeoutHistory
+                  key={run.summary.id}
+                  id={run.summary.id}
+                  status={run.summary.status}
+                  steps={executionSteps}
+                />
+              )}
               {failedCommit && run && (
                 <CommitRecovery
                   key={run.summary.id + run.failureId}
@@ -3580,6 +3596,10 @@ export function WorkflowStudio({
                       finish: '세션 마침',
                     }[run.summary.lastReview.decision]
                   }
+                  {run.summary.lastReview.savedWorkflowVersion &&
+                    ' · 흐름 v' +
+                      run.summary.lastReview.savedWorkflowVersion +
+                      '에 규칙 저장'}
                 </p>
               )}
               {run?.gate && (
@@ -3618,6 +3638,7 @@ export function WorkflowStudio({
                           승인할 수정본
                           <textarea
                             rows={8}
+                            aria-label="승인할 수정본"
                             value={editing.text}
                             maxLength={128000}
                             onChange={(e) =>
@@ -3625,8 +3646,70 @@ export function WorkflowStudio({
                             }
                           />
                         </label>
+                        {reviewAuthor?.kind === 'task' && (
+                          <fieldset>
+                            <legend>수정 적용 범위</legend>
+                            <label>
+                              <input
+                                type="radio"
+                                name="review-scope"
+                                checked={editing.rule === undefined}
+                                onChange={() =>
+                                  setEditing({ ...editing, rule: undefined })
+                                }
+                              />
+                              이번 결과만 수정
+                            </label>
+                            <label>
+                              <input
+                                type="radio"
+                                name="review-scope"
+                                checked={editing.rule !== undefined}
+                                onChange={() =>
+                                  setEditing({ ...editing, rule: '' })
+                                }
+                              />
+                              다음 실행에도 규칙 적용
+                            </label>
+                            {editing.rule !== undefined && (
+                              <>
+                                <label>
+                                  {reviewAuthor.title}에 추가할 규칙
+                                  <textarea
+                                    rows={3}
+                                    maxLength={Math.max(
+                                      0,
+                                      Math.min(
+                                        2000,
+                                        7998 - reviewAuthor.instructions.length,
+                                      ),
+                                    )}
+                                    value={editing.rule}
+                                    onChange={(e) =>
+                                      setEditing({
+                                        ...editing,
+                                        rule: e.target.value,
+                                      })
+                                    }
+                                  />
+                                </label>
+                                <details>
+                                  <summary>저장될 노드 지침 미리보기</summary>
+                                  <p style={{ whiteSpace: 'pre-wrap' }}>
+                                    {reviewAuthor.instructions}
+                                  </p>
+                                  <ins style={{ whiteSpace: 'pre-wrap' }}>
+                                    {editing.rule.trim()}
+                                  </ins>
+                                </details>
+                              </>
+                            )}
+                          </fieldset>
+                        )}
                         {button(
-                          '수정 후 승인',
+                          editing.rule === undefined
+                            ? '수정 후 승인'
+                            : '규칙 저장 후 승인',
                           () =>
                             decide(
                               { gateId: run.gate!.id, decision: 'accept' },
@@ -3635,7 +3718,10 @@ export function WorkflowStudio({
                           busy ||
                             !connected ||
                             !editing.text.trim() ||
-                            editing.text === editing.original,
+                            (editing.rule !== undefined &&
+                              !editing.rule.trim()) ||
+                            (editing.text === editing.original &&
+                              editing.rule === undefined),
                         )}
                         {button('수정 취소', () => setEditing(undefined), busy)}
                       </div>
@@ -3782,6 +3868,99 @@ export function WorkflowStudio({
         )}
       </main>
     </>
+  );
+}
+
+function TimeoutHistory({
+  id,
+  status,
+  steps,
+}: {
+  id: string;
+  status: string;
+  steps: Step[];
+}) {
+  const [report, setReport] = useState<
+    ReturnType<typeof timeoutReportSchema.parse>
+  >([]);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    const controller = new AbortController();
+    void localRequest(
+      '/runs/' + id + '/timeouts',
+      'GET',
+      undefined,
+      controller.signal,
+    )
+      .then((r) => r.json())
+      .then((data) => {
+        if (!controller.signal.aborted) {
+          setReport(timeoutReportSchema.parse(data));
+          setError('');
+        }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted)
+          setError('시간 초과 기록을 읽을 수 없습니다.');
+      });
+    return () => controller.abort();
+  }, [id, status]);
+  if (error) return <p role="status">{error}</p>;
+  if (!report.length) return null;
+  const seconds = (ms: number) => Math.round(ms / 1000) + '초';
+  return (
+    <section aria-label="시간 초과와 복구">
+      {report.map((r) => (
+        <details key={r.step} open={status === 'failed' || undefined}>
+          <summary>
+            {steps.find((s) => s.id === r.step)?.title ?? r.step} · 시간 초과{' '}
+            {r.attempts.length}회
+          </summary>
+          <p>
+            다시 시작할 단계 ·{' '}
+            {steps.find((s) => s.id === r.step)?.title ?? r.step}
+          </p>
+          {r.attempts.map((a) => (
+            <p key={a.begin}>
+              {new Date(a.begin).toLocaleTimeString('ko-KR')} 시작 ·{' '}
+              {seconds(a.elapsedMs)} 경과
+              {a.parallel !== null &&
+                ' · 시작 당시 실행 중 ' + a.parallel + '개'}
+              <br />
+              마지막 검사 · {a.lastCheck ?? '기록 없음'}
+              {a.retryMs !== null && (
+                <>
+                  <br />
+                  다음 시도 {seconds(a.retryMs)} · 다시 실행한 통과 검사{' '}
+                  {a.repeatedChecks === null
+                    ? '기록 없음'
+                    : a.repeatedChecks + '개'}
+                </>
+              )}
+              {a.recoveredMs !== null && (
+                <>
+                  <br />
+                  실패부터 단계 완료까지 {seconds(a.recoveredMs)}
+                </>
+              )}
+            </p>
+          ))}
+          {r.peers.length > 0 && (
+            <>
+              <strong>같은 단계에서 시간 초과한 실행</strong>
+              <ul>
+                {r.peers.map((p) => (
+                  <li key={p.run}>
+                    <a href={'#/runs/' + p.run}>{p.run.slice(0, 8)}</a>
+                    {p.overlap && ' · 실행 시간 겹침'}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </details>
+      ))}
+    </section>
   );
 }
 

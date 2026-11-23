@@ -15,7 +15,12 @@ import {
   type WorkflowDefinition,
 } from '@studio/contracts';
 import { buildApp } from '../src/app.js';
-import { RunnerError, type DocumentRunner } from '../src/codex-runner.js';
+import { commandCheck } from '../src/timeout-history.js';
+import {
+  codexCallContext,
+  RunnerError,
+  type DocumentRunner,
+} from '../src/codex-runner.js';
 
 const definition: WorkflowDefinition = {
   name: '가상 문서',
@@ -1462,6 +1467,7 @@ test('edited approval binds the displayed original and advances once with the ac
           .update((await inject('GET', route + '/results/draft.md')).body)
           .digest('hex'),
         text: '사람이 고친 승인본',
+        rule: '완료한 일은 출처를 명시한다.',
       };
       const decision = { gateId: gate.id, decision: 'accept', edit };
       expect(
@@ -1486,6 +1492,17 @@ test('edited approval binds the displayed original and advances once with the ac
       const winner =
         replies[0]!.statusCode === 200 ? edit.text : '다른 탭 수정';
       expect(JSON.parse(prompts[1]!).priorDocument).toBe(winner);
+      const saved = await inject('GET', '/workflows/' + workflow.id);
+      expect(saved.json()).toMatchObject({
+        version: 2,
+        definition: {
+          steps: [{ instructions: '원본 지침\n\n' + edit.rule }, {}, {}],
+        },
+      });
+      expect(
+        (await until(inject, id, 'completed')).summary.lastReview
+          ?.savedWorkflowVersion,
+      ).toBe(2);
       await restart();
       expect((await inject('GET', route + '/results/draft.md')).body).toBe(
         winner,
@@ -1644,6 +1661,192 @@ test('a skipped commit with pending edits stays retryable at the commit step', a
       const clean = await until(inject, await start(), 'waiting');
       expect(clean.results).toEqual(['draft.md', 'check.md']);
       expect(clean.gate?.startNextSession).toBe(true);
+    },
+  );
+});
+
+test('a stale workflow version rolls back the review and still allows a result-only approval', async () => {
+  await withStudio(
+    {
+      ready: async () => '0.166.0',
+      write: async () => ({ kind: 'document', text: 'draft' }),
+    },
+    async ({ inject }) => {
+      const flow = await setup(inject),
+        id = randomUUID(),
+        url = '/runs/' + id;
+      await inject('POST', '/runs', {
+        id,
+        workflowId: flow.id,
+        workflowVersion: 1,
+      });
+      const waiting = await until(inject, id, 'waiting');
+      await inject('PUT', '/workflows/' + flow.id, {
+        baseVersion: 1,
+        definition: { ...definition, name: '새 이름' },
+      });
+      const edit = {
+        file: 'draft.md',
+        expected: createHash('sha256').update('draft\n').digest('hex'),
+        text: '검토본',
+      };
+      const decision = { decision: 'accept', gateId: waiting.gate!.id };
+      expect(
+        (
+          await inject('POST', url + '/decision', {
+            ...decision,
+            edit: { ...edit, rule: '새 규칙' },
+          })
+        ).statusCode,
+      ).toBe(409);
+      expect((await until(inject, id, 'waiting')).gate?.id).toBe(
+        waiting.gate!.id,
+      );
+      expect((await inject('GET', url + '/results/draft.md')).body).toBe(
+        'draft\n',
+      );
+      expect(
+        (await inject('POST', url + '/decision', { ...decision, edit }))
+          .statusCode,
+      ).toBe(200);
+      await until(inject, id, 'completed');
+      expect(
+        (await inject('GET', '/workflows/' + flow.id)).json(),
+      ).toMatchObject({ version: 2 });
+    },
+  );
+});
+test('a retry receives only observed check labels and reports repeated checks and recovery to the user', async () => {
+  let attempt = 0;
+  await withStudio(
+    {
+      ready: async () => '0.166.0',
+      async write(prompt) {
+        attempt++;
+        const check = commandCheck(
+          JSON.stringify({
+            type: 'item.completed',
+            item: {
+              type: 'command_execution',
+              command: 'npm run typecheck -- local-only-argument',
+              exit_code: 0,
+            },
+          }),
+        )!;
+        codexCallContext.getStore()!.check!(check);
+        if (attempt === 1) throw new RunnerError('timeout');
+        const handoff = JSON.parse(prompt).retryHandoff;
+        expect(handoff.previousChecks).toEqual([
+          { label: 'typecheck', status: '통과' },
+        ]);
+        expect(prompt).not.toContain('local-only-argument');
+        return { kind: 'document', text: '검사 완료' };
+      },
+    },
+    async ({ inject }) => {
+      const flow = (
+        await inject('POST', '/workflows', {
+          ...definition,
+          steps: [definition.steps[0]],
+          links: [],
+        })
+      ).json() as { id: string };
+      const id = randomUUID(),
+        url = '/runs/' + id;
+      await inject('POST', '/runs', {
+        id,
+        workflowId: flow.id,
+        workflowVersion: 1,
+      });
+      const failed = await until(inject, id, 'failed');
+      await inject('POST', url + '/retry', { failureId: failed.failureId });
+      await until(inject, id, 'completed');
+      expect((await inject('GET', url + '/timeouts')).json()).toMatchObject([
+        {
+          step: 'draft',
+          attempts: [
+            {
+              parallel: 1,
+              lastCheck: 'typecheck · 통과',
+              repeatedChecks: 1,
+              recoveredMs: expect.any(Number),
+            },
+          ],
+        },
+      ]);
+    },
+  );
+});
+
+test('approving a linked result versions its owning child and pins the new child in the parent', async () => {
+  await withStudio(
+    {
+      ready: async () => '0.166.0',
+      write: async () => ({ kind: 'document', text: '원문' }),
+    },
+    async ({ inject }) => {
+      const child = (
+        await inject('POST', '/workflows', {
+          name: '연결 작업',
+          steps: [{ ...definition.steps[0], skill: 'none' }],
+          links: [],
+        })
+      ).json() as { id: string };
+      const flow = (
+        await inject('POST', '/workflows', {
+          ...definition,
+          steps: [
+            {
+              ...definition.steps[0],
+              id: 'report',
+              skill: 'none',
+              workflowRef: { id: child.id, version: 1 },
+            },
+            definition.steps[1],
+          ],
+          links: [{ from: 'report', to: 'review' }],
+        })
+      ).json() as { id: string };
+      const id = randomUUID(),
+        url = '/runs/' + id;
+      await inject('POST', '/runs', {
+        id,
+        workflowId: flow.id,
+        workflowVersion: 1,
+      });
+      const waiting = await until(inject, id, 'waiting');
+      const body = (await inject('GET', url + '/results/report.md')).body;
+      expect(
+        (
+          await inject('POST', url + '/decision', {
+            decision: 'accept',
+            gateId: waiting.gate!.id,
+            edit: {
+              file: 'report.md',
+              expected: createHash('sha256').update(body).digest('hex'),
+              text: body,
+              rule: '추가 지침',
+            },
+          })
+        ).statusCode,
+      ).toBe(200);
+      const end = await until(inject, id, 'completed');
+      expect(end.editedFiles).toEqual([]);
+      expect(end.summary.workflowVersion).toBe(1);
+      expect(
+        (await inject('GET', '/workflows/' + flow.id)).json(),
+      ).toMatchObject({
+        version: 2,
+        definition: {
+          steps: [{ workflowRef: { id: child.id, version: 2 } }, {}],
+        },
+      });
+      expect(
+        (await inject('GET', '/workflows/' + child.id)).json(),
+      ).toMatchObject({
+        version: 2,
+        definition: { steps: [{ instructions: '원본 지침\n\n추가 지침' }] },
+      });
     },
   );
 });

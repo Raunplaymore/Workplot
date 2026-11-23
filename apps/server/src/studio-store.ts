@@ -1,8 +1,9 @@
+import { openTimeoutHistory } from './timeout-history.js';
 import { prepareFailureMonitor } from './failure-monitor.js';
 import { openGitQueue } from './git-queue-store.js';
 import type { Reference } from './request-files.js';
 import { expandWorkflow } from './linked-workflow.js';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import {
   masterPlanSchema,
@@ -138,6 +139,40 @@ export function openStudioStore(db: Database.Database) {
       return insertWorkflow(id, baseVersion + 1, definition);
     },
   );
+
+  const saveLinkedInstructions = db.transaction(
+    (
+      id: string,
+      baseVersion: number,
+      definition: WorkflowDefinition,
+      stepId: string,
+      childDefinition: WorkflowDefinition,
+    ) => {
+      const step = definition.steps.find((s) => s.id === stepId);
+      if (
+        step?.kind !== 'task' ||
+        !step.workflowRef ||
+        step.workflowRef.id === id
+      )
+        throw new StoreConflict();
+      const child = updateWorkflow(
+        step.workflowRef.id,
+        step.workflowRef.version,
+        childDefinition,
+      );
+      return updateWorkflow(id, baseVersion, {
+        ...definition,
+        steps: definition.steps.map((s) =>
+          s.id === stepId
+            ? {
+                ...step,
+                workflowRef: { id: child.id, version: child.version },
+              }
+            : s,
+        ),
+      });
+    },
+  ).immediate;
 
   prepareFailureMonitor(db);
   const list = db.prepare(`
@@ -315,6 +350,7 @@ export function openStudioStore(db: Database.Database) {
     return tree;
   }
   return {
+    timeouts: openTimeoutHistory(db),
     bindings,
     portResult(run: string, evidence: string) {
       return db
@@ -668,39 +704,7 @@ export function openStudioStore(db: Database.Database) {
     listWorkflows: () => workflowListSchema.parse(list.all()),
     createWorkflow: (definition: WorkflowDefinition) =>
       insertWorkflow(randomUUID(), 1, definition),
-    saveLinkedInstructions: db.transaction(
-      (
-        id: string,
-        baseVersion: number,
-        definition: WorkflowDefinition,
-        stepId: string,
-        childDefinition: WorkflowDefinition,
-      ) => {
-        const step = definition.steps.find((s) => s.id === stepId);
-        if (
-          step?.kind !== 'task' ||
-          !step.workflowRef ||
-          step.workflowRef.id === id
-        )
-          throw new StoreConflict();
-        const child = updateWorkflow(
-          step.workflowRef.id,
-          step.workflowRef.version,
-          childDefinition,
-        );
-        return updateWorkflow(id, baseVersion, {
-          ...definition,
-          steps: definition.steps.map((s) =>
-            s.id === stepId
-              ? {
-                  ...step,
-                  workflowRef: { id: child.id, version: child.version },
-                }
-              : s,
-          ),
-        });
-      },
-    ).immediate,
+    saveLinkedInstructions,
     updateWorkflow: (
       id: string,
       baseVersion: number,
@@ -845,15 +849,61 @@ export function openStudioStore(db: Database.Database) {
         id: string,
         receipt: ReviewReceipt,
         restored: boolean,
-        edit?: { file: string; expected: string; text: string },
+        edit?: { file: string; expected: string; text: string; rule?: string },
       ) => {
+        if (edit?.rule) {
+          const { workflowId, workflowVersion } = run(id).summary;
+          const { definition } = workflow(workflowId, workflowVersion);
+          const target = edit.file.slice(0, -3);
+          const rule = edit.rule;
+          function appendRule(source: WorkflowDefinition, stepId: string) {
+            const step = source.steps.find((s) => s.id === stepId);
+            if (step?.kind !== 'task') throw new StoreConflict();
+            const instructions = step.instructions + '\n\n' + rule;
+            if (instructions.length > 8000) throw new StoreConflict();
+            return {
+              ...source,
+              steps: source.steps.map((s) =>
+                s === step ? { ...step, instructions } : s,
+              ),
+            };
+          }
+          const origins = new Map<string, { call: string; child: string }>();
+          expandWorkflow(workflowId, definition, workflow, (key, call, child) =>
+            origins.set(key, { call, child }),
+          );
+          const linked = origins.get(target);
+          const call = definition.steps.find((s) => s.id === linked?.call);
+          const saved =
+            linked && call?.kind === 'task' && call.workflowRef
+              ? saveLinkedInstructions(
+                  workflowId,
+                  workflowVersion,
+                  definition,
+                  call.id,
+                  appendRule(
+                    workflow(call.workflowRef.id, call.workflowRef.version)
+                      .definition,
+                    linked.child,
+                  ),
+                )
+              : updateWorkflow(
+                  workflowId,
+                  workflowVersion,
+                  appendRule(definition, target),
+                );
+          receipt = { ...receipt, savedWorkflowVersion: saved.version };
+        }
         const result = db
           .prepare(
             "UPDATE runs SET record=json_set(json_remove(record,'$.pausedReview'),'$.summary.lastReview',json(?)) WHERE id=? AND json_extract(record,'$.summary.status')='waiting' AND (?=0 OR json_extract(record,'$.pausedReview.gateId')=?)",
           )
           .run(JSON.stringify(receipt), id, Number(restored), receipt.gateId);
         if (!result.changes) throw new StoreConflict();
-        if (edit)
+        if (
+          edit &&
+          createHash('sha256').update(edit.text).digest('hex') !== edit.expected
+        )
           db.prepare('INSERT INTO review_edits VALUES(?,?,?,?,?,?)').run(
             id,
             receipt.gateId,
@@ -862,6 +912,7 @@ export function openStudioStore(db: Database.Database) {
             edit.text,
             receipt.at,
           );
+        return receipt;
       },
     ).immediate,
     updateRun(

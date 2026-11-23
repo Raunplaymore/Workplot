@@ -1,3 +1,4 @@
+import { commandCheck, type CommandCheck } from './timeout-history.js';
 import { quotaRetryTime } from './quota-classifier.js';
 import { execFile, spawn } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -9,6 +10,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { ModelSettings } from '@studio/contracts';
 export const codexCallContext = new AsyncLocalStorage<{
   settings?: ModelSettings;
+  check?: (value: CommandCheck) => void;
   record: (model: string, effort: string) => void;
 }>();
 const exec = promisify(execFile);
@@ -283,6 +285,7 @@ export async function runCodexJson(
       }
     });
     let output = '';
+    let pendingLine = '';
     let closing = false;
     let overflow = false;
     let force: NodeJS.Timeout | undefined;
@@ -336,7 +339,17 @@ export async function runCodexJson(
         if (output.length + chunk.length > 524_288) {
           overflow = true;
           terminate();
-        } else if (!overflow) output += chunk;
+        } else if (!overflow) {
+          output += chunk;
+          if (context?.check) {
+            const lines = (pendingLine + chunk).split('\n');
+            pendingLine = lines.pop() ?? '';
+            for (const line of lines) {
+              const check = commandCheck(line);
+              if (check) context.check(check);
+            }
+          }
+        }
       });
       child.on('message', (value) => {
         if (typeof value === 'string' && /^SIG[A-Z0-9]{1,12}$/.test(value))
