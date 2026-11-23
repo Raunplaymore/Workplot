@@ -21,7 +21,7 @@ export async function buildApp(
   runner = codexRunner,
   generateProposal = runCodexJson,
   evaluateDocuments = runCodexJson,
-  skillDestination?: { root: string; port: 4310 | 5173 },
+  skillDestination?: { root: string; port: number },
 ) {
   const app = Fastify();
   const db = new Database(databasePath);

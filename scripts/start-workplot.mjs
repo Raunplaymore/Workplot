@@ -8,7 +8,9 @@ const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 
 async function start() {
   if (
-    !['4310', '5173'].includes(port) ||
+    !/^\d{4,5}$/.test(port) ||
+    Number(port) < 1024 ||
+    Number(port) > 65535 ||
     !uuid.test(workflowId) ||
     !/^[1-9]\d*$/.test(version) ||
     !uuid.test(runId)

@@ -75,7 +75,7 @@ export function registerStudioRoutes(
   history: ReturnType<typeof createSessionHistory>,
   delegation: ReturnType<typeof createDelegation>,
   promotions: ReturnType<typeof createGitPromotions>,
-  skillDestination?: { root: string; port: 4310 | 5173 },
+  skillDestination?: { root: string; port: number },
 ) {
   function developmentView(id: string) {
     const view = runs.view(id);
@@ -95,7 +95,10 @@ export function registerStudioRoutes(
     const origin = request.headers.origin;
     if (
       !host ||
-      !browserHosts.has(host) ||
+      !(
+        browserHosts.has(host) ||
+        (skillDestination && host === '127.0.0.1:' + skillDestination.port)
+      ) ||
       (origin !== undefined && origin !== `http://${host}`) ||
       (request.method !== 'GET' &&
         request.method !== 'HEAD' &&

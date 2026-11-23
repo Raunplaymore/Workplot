@@ -1,15 +1,19 @@
+import console from 'node:console';
 import process from 'node:process';
 import { createHash } from 'node:crypto';
 import { URL } from 'node:url';
 import { appendFileSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import Database from 'better-sqlite3';
 import { buildApp } from '../apps/server/dist/app.js';
 import { openStudioStore } from '../apps/server/dist/studio-store.js';
 import { codexRunner, runCodexJson } from '../apps/server/dist/codex-runner.js';
 
-const dir = process.env.STUDIO_QA_DIR;
-if (!dir) throw new Error('npm run qa 로 실행하세요.');
+const dir =
+  process.env.STUDIO_QA_DIR ??
+  (await mkdtemp(join(tmpdir(), 'workplot-browser-qa-')));
 const file = join(dir, 'studio.sqlite');
 const db = new Database(file);
 const store = openStudioStore(db);
@@ -19,6 +23,13 @@ if (!process.env.STUDIO_FIRST_USE && !store.listWorkflows().length)
       readFileSync(new URL('./workflow.json', import.meta.url), 'utf8'),
     ),
   );
+const qaPort = Number(process.env.WORKPLOT_QA_PORT ?? 5173);
+if (
+  !Number.isInteger(qaPort) ||
+  (qaPort !== 0 && (qaPort < 1024 || qaPort > 65535 || qaPort === 4310))
+)
+  throw Error('잘못된 QA 포트');
+const destination = { root: join(dir, 'skills'), port: qaPort };
 const app = await buildApp(
   file,
   resolve('apps/web/dist'),
@@ -154,11 +165,15 @@ const app = await buildApp(
     );
     return result;
   },
-  { root: join(dir, 'skills'), port: 5173 },
+  destination,
 );
-await app.listen({ host: '127.0.0.1', port: 5173 });
+await app.listen({ host: '127.0.0.1', port: qaPort });
+destination.port = app.server.address().port;
+console.log('Workplot QA port ' + destination.port);
 process.send?.('ready');
 process.once('SIGTERM', async () => {
   await app.close();
   db.close();
+  if (!process.env.STUDIO_QA_DIR)
+    await rm(dir, { recursive: true, force: true });
 });

@@ -22,7 +22,7 @@ const launcher = fileURLToPath(
 const marker = /^<!-- workplot-export ([a-f0-9-]{36}) ([1-9]\d*) -->$/m;
 export class SkillConflict extends Error {}
 
-function content(name: string, flow: WorkflowVersion, port: 4310 | 5173) {
+function content(name: string, flow: WorkflowVersion, port: number) {
   const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
   const description =
     flow.definition.name.replace(/[\r\n]+/g, ' ') +
@@ -83,7 +83,7 @@ export function installWorkflowSkill(
   expected: number | null,
   lookup: (version: number) => WorkflowVersion,
   root = personalSkills,
-  port: 4310 | 5173 = 4310,
+  port: number = 4310,
 ) {
   if (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(name) || name.length > 64)
     throw new SkillConflict();
