@@ -18,7 +18,9 @@ export const nodeTemplateSchema = z.discriminatedUnion('kind', [
     instructions: z.string().trim().min(1).max(8000),
     ...nodeDocumentsSchema.shape,
     agent: z.enum(['codex', 'unassigned']).optional(),
-    tool: z.enum(['market-calendar', 'workplot-ui']).optional(),
+    tool: z
+      .enum(['market-calendar', 'workplot-ui', 'verified-commit'])
+      .optional(),
     skill: z.enum(['source-check', 'none']).optional(),
     codexSkill: taskSkillSchema.optional(),
   }),

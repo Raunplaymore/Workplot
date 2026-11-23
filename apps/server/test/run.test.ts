@@ -879,6 +879,7 @@ test('UI implementation evidence reaches the handoff without a question or stale
         const id = randomUUID();
         await inject('POST', '/runs', {
           id,
+          modelSettings: { model: 'gpt-6.2-sol', effort: 'medium' },
           workflowId: workflow.id,
           workflowVersion: workflow.version,
         });
@@ -894,6 +895,30 @@ test('UI implementation evidence reaches the handoff without a question or stale
         expect(
           (await until(inject, id, 'completed')).summary.nextSessionId,
         ).toBeFalsy();
+        const config = {
+          handoffOnly: true,
+          goal: '인계',
+          criteria: ['확인'],
+          target: 100,
+          maxSessions: 2,
+          until: new Date(Date.now() + 60000).toISOString(),
+        };
+        const restart = () =>
+          inject('POST', '/runs/' + id + '/delegation/restart', config);
+        const replies = await Promise.all([restart(), restart()]);
+        expect(replies.map((r) => r.statusCode).sort()).toEqual([200, 409]);
+        const child = (
+          replies.find((r) => r.statusCode === 200)!.json() as { id: string }
+        ).id;
+        const next = await until(inject, child, 'waiting');
+        expect(next.summary.modelSettings).toEqual({
+          model: 'gpt-6.2-sol',
+          effort: 'medium',
+        });
+        expect(next.summary.previousSessionId).toBe(id);
+        expect(
+          (await inject('GET', '/runs/' + child + '/delegation')).json(),
+        ).toMatchObject({ enabled: true, used: 0, config });
       },
     );
   } finally {
@@ -1046,13 +1071,25 @@ test('checks the confirmed Git binding before starting and keeps node calls acro
     },
   );
 });
-test('admits at most two isolated Git tasks and preserves the ordinary execution slot', async () => {
+test('enforces the saved parallel limit and preserves running tasks when lowered', async () => {
   await withStudio(
     {
       ready: async () => '0.166.0',
       write: async () => ({ kind: 'document', text: '결과' }),
     },
-    async ({ inject, path }) => {
+    async ({ inject, path, restart }) => {
+      const settings = await inject('PUT', '/development-slots', { limit: 3 });
+      expect(settings.json()).toMatchObject({
+        limit: 3,
+        recommended: expect.any(Number),
+      });
+      expect(
+        (await inject('PUT', '/development-slots', { limit: 0 })).statusCode,
+      ).toBe(400);
+      await restart();
+      expect((await inject('GET', '/development-slots')).json()).toMatchObject({
+        limit: 3,
+      });
       const workspace = join(path, 'parallel');
       await mkdir(workspace);
       const git = (...args: string[]) =>
@@ -1082,11 +1119,11 @@ test('admits at most two isolated Git tasks and preserves the ordinary execution
         workflowVersion: wf.version,
         requestFiles: { workspace, gitTarget: target, references: [] },
       });
-      const runs = [create(), create(), create()];
+      const runs = [create(), create(), create(), create()];
       const res = await Promise.all(
         runs.map((body) => inject('POST', '/runs', body)),
       );
-      expect(res.map((r) => r.statusCode).sort()).toEqual([200, 200, 409]);
+      expect(res.map((r) => r.statusCode).sort()).toEqual([200, 200, 200, 409]);
       const admitted = runs.filter((_, i) => res[i]!.statusCode === 200);
       const views = await Promise.all(
         admitted.map((r) => until(inject, r.id, 'waiting')),
@@ -1105,6 +1142,11 @@ test('admits at most two isolated Git tasks and preserves the ordinary execution
           })
         ).statusCode,
       ).toBe(409);
+      await inject('PUT', '/development-slots', { limit: 2 });
+      expect((await inject('POST', '/runs', create())).statusCode).toBe(409);
+      await inject('POST', '/runs/' + admitted[2]!.id + '/stop');
+      await until(inject, admitted[2]!.id, 'stopped');
+      expect((await inject('POST', '/runs', create())).statusCode).toBe(409);
       await inject('POST', '/runs/' + admitted[0]!.id + '/stop');
       await until(inject, admitted[0]!.id, 'stopped');
       expect((await inject('POST', '/runs', create())).statusCode).toBe(200);
@@ -1113,4 +1155,281 @@ test('admits at most two isolated Git tasks and preserves the ordinary execution
       );
     },
   );
+});
+
+test('a successor replaces a repeated recommendation before the manual gate', async () => {
+  const first = '추천 과제 · 승인 경로 확인';
+  const revised = '추천 과제 · 편집 진입점 표시';
+  const prompts: {
+    priorApprovedRecommendations?: string[];
+    correction?: string;
+  }[] = [];
+  await withStudio(
+    {
+      ready: async () => '0.166.0',
+      write: async (prompt) => {
+        const p = JSON.parse(prompt);
+        prompts.push(p);
+        if (p.task === 'compare_recommendation_scope')
+          return {
+            kind: 'document',
+            text: JSON.stringify({
+              match: p.candidate === revised ? null : p.approved[0].runId,
+              reason:
+                p.candidate === revised
+                  ? '편집 진입 경로 개선'
+                  : '같은 승인 경로 점검',
+            }),
+          };
+        return {
+          kind: 'document',
+          text: p.correction
+            ? revised
+            : p.priorApprovedRecommendations?.length
+              ? '추천 과제 · 저장 기록에서 승인 흐름 대조'
+              : first,
+        };
+      },
+    },
+    async ({ inject }) => {
+      const flow = await inject('POST', '/workflows', {
+        ...definition,
+        steps: [
+          definition.steps[0],
+          { ...definition.steps[1], title: '추천 과제 승인' },
+          definition.steps[2],
+          { ...definition.steps[1], id: 'next', startNextSession: true },
+        ],
+        links: [...definition.links, { from: 'revision', to: 'next' }],
+      });
+      const id = randomUUID();
+      await inject('POST', '/runs', {
+        id,
+        workflowId: (flow.json() as { id: string }).id,
+        workflowVersion: 1,
+      });
+      for (const step of ['review', 'next']) {
+        let v = await until(inject, id, 'waiting');
+        for (let i = 0; i < 100 && (!v.gate || v.stepId !== step); i++) {
+          await delay(10);
+          v = await until(inject, id, 'waiting');
+        }
+        expect(v.stepId).toBe(step);
+        await inject('POST', '/runs/' + id + '/decision', {
+          gateId: v.gate!.id,
+          decision: 'accept',
+        });
+      }
+      const child = (await until(inject, id, 'completed')).summary
+        .nextSessionId!;
+      const gate = await until(inject, child, 'waiting');
+      expect(gate.stepId).toBe('review');
+      expect(
+        prompts.some(
+          (p) =>
+            p.priorApprovedRecommendations?.includes('승인 경로 확인') &&
+            p.correction,
+        ),
+      ).toBe(true);
+    },
+  );
+});
+
+test('copies the completed handoff into the isolated development input and links both runs', async () => {
+  const body = '개발 과제와 합격 기준 · 이전 회차의 전체 인계';
+  const prompts: string[] = [];
+  await withStudio(
+    {
+      ready: async () => '0.166.0',
+      write: async (prompt) => {
+        prompts.push(prompt);
+        return { kind: 'document', text: body };
+      },
+    },
+    async ({ path, inject }) => {
+      const flow = await inject('POST', '/workflows', {
+        ...definition,
+        steps: [definition.steps[0]],
+        links: [],
+      });
+      const version = flow.json() as { id: string; version: number };
+      const root = randomUUID();
+      const start = {
+        workflowId: version.id,
+        workflowVersion: version.version,
+      };
+      await inject('POST', '/runs', { ...start, id: root });
+      await until(inject, root, 'completed');
+      const workspace = join(path, 'handoff-repo');
+      await mkdir(workspace);
+      execFileSync('git', ['-C', workspace, 'init', '-q', '-b', 'main']);
+      execFileSync('git', [
+        '-C',
+        workspace,
+        '-c',
+        'user.name=QA',
+        '-c',
+        'user.email=q@localhost',
+        '-c',
+        'commit.gpgsign=false',
+        'commit',
+        '-qm',
+        'base',
+        '--allow-empty',
+      ]);
+      const gitTarget = (
+        await inject('POST', '/git/targets', {
+          service: '인계 QA',
+          path: workspace,
+        })
+      ).json();
+      const id = randomUUID(),
+        files = {
+          gitTarget,
+          references: [],
+          workspace,
+          handoff: { runId: root, file: 'draft.md' },
+        };
+      expect(
+        (await inject('POST', '/runs', { ...start, id, requestFiles: files }))
+          .statusCode,
+      ).toBe(200);
+      await until(inject, id, 'completed');
+      expect(JSON.parse(prompts.at(-1)!)).toMatchObject({
+        readOnlyReferences: [
+          { name: 'draft.md', text: expect.stringContaining(body) },
+        ],
+      });
+      expect((await inject('GET', '/runs')).json()).toContainEqual(
+        expect.objectContaining({ id, handoffRunId: root }),
+      );
+    },
+  );
+});
+
+test('edited approval binds the displayed original and advances once with the accepted text', async () => {
+  const prompts: string[] = [];
+  await withStudio(
+    {
+      ready: async () => '0.166.0',
+      async write(prompt) {
+        prompts.push(prompt);
+        return {
+          kind: 'document',
+          text: prompts.length === 1 ? '원본' : '완료',
+        };
+      },
+    },
+    async ({ inject, restart }) => {
+      const workflow = await setup(inject),
+        id = randomUUID(),
+        route = '/runs/' + id;
+      await inject('POST', '/runs', {
+        id,
+        workflowId: workflow.id,
+        workflowVersion: workflow.version,
+      });
+      const gate = (await until(inject, id, 'waiting')).gate!;
+      const edit = {
+        file: 'draft.md',
+        expected: createHash('sha256')
+          .update((await inject('GET', route + '/results/draft.md')).body)
+          .digest('hex'),
+        text: '사람이 고친 승인본',
+      };
+      const decision = { gateId: gate.id, decision: 'accept', edit };
+      expect(
+        (
+          await inject('POST', route + '/decision', {
+            ...decision,
+            edit: { ...edit, expected: '0'.repeat(64) },
+          })
+        ).statusCode,
+      ).toBe(409);
+      const replies = await Promise.all(
+        [edit.text, '다른 탭 수정'].map((text) =>
+          inject('POST', route + '/decision', {
+            ...decision,
+            edit: { ...edit, text },
+          }),
+        ),
+      );
+      expect(replies.map((r) => r.statusCode).sort()).toEqual([200, 409]);
+      await until(inject, id, 'completed');
+      expect(prompts).toHaveLength(2);
+      const winner =
+        replies[0]!.statusCode === 200 ? edit.text : '다른 탭 수정';
+      expect(JSON.parse(prompts[1]!).priorDocument).toBe(winner);
+      await restart();
+      expect((await inject('GET', route + '/results/draft.md')).body).toBe(
+        winner,
+      );
+      expect(
+        (await inject('GET', route + '/results/draft.md/reviews')).json(),
+      ).toMatchObject({
+        original: '원본\n',
+        edits: [{ text: winner, expected: edit.expected }],
+      });
+    },
+  );
+});
+
+test('QA port retry checks the host once per failure and preserves documents and session', async () => {
+  const qa = await import('../src/qa-port.js');
+  const probe = vi.spyOn(qa, 'reserveQaPort');
+  try {
+    let calls = 0;
+    const original =
+      'QA 서버가 루프백 포트 할당 단계에서 EPERM으로 차단됐습니다.';
+    await withStudio(
+      {
+        ready: async () => '0.166.0',
+        async write() {
+          calls++;
+          return { kind: 'document', text: original };
+        },
+      },
+      async ({ inject, restart }) => {
+        const wf = (
+          await inject('POST', '/workflows', {
+            ...definition,
+            steps: [{ ...definition.steps[0], id: 'change-evidence' }],
+            links: [],
+          })
+        ).json() as { id: string; version: number };
+        const id = randomUUID(),
+          route = '/runs/' + id;
+        await inject('POST', '/runs', {
+          id,
+          workflowId: wf.id,
+          workflowVersion: wf.version,
+        });
+        const run = await until(inject, id, 'completed'),
+          token = run.portCheck!.token;
+        probe.mockRejectedValueOnce(Object.assign(Error(), { code: 'EPERM' }));
+        const failed = (
+          await inject('POST', route + '/qa-port/retry', { token })
+        ).json() as { status: string; token: string };
+        expect(failed.status).toBe('failed');
+        expect(failed.token).not.toBe(token);
+        const results = await Promise.all(
+          [1, 2].map(() =>
+            inject('POST', route + '/qa-port/retry', { token: failed.token }),
+          ),
+        );
+        expect(results.map((r) => r.statusCode).sort()).toEqual([200, 409]);
+        expect(probe).toHaveBeenCalledTimes(2);
+        await restart();
+        expect((await until(inject, id, 'completed')).portCheck?.status).toBe(
+          'passed',
+        );
+        expect(
+          (await inject('GET', route + '/results/change-evidence.md')).body,
+        ).toBe(original + '\n');
+        expect(calls).toBe(1);
+      },
+    );
+  } finally {
+    probe.mockRestore();
+  }
 });

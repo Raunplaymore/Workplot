@@ -5,6 +5,12 @@ import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
 import { promisify } from 'node:util';
 
+import { AsyncLocalStorage } from 'node:async_hooks';
+import type { ModelSettings } from '@studio/contracts';
+export const codexCallContext = new AsyncLocalStorage<{
+  settings?: ModelSettings;
+  record: (model: string, effort: string) => void;
+}>();
 const exec = promisify(execFile);
 const env = {
   HOME: process.env.HOME,
@@ -181,6 +187,8 @@ export async function runCodexJson(
         : []),
       join(import.meta.dirname, 'calendar-mcp' + extname(import.meta.filename)),
     ];
+    const context = codexCallContext.getStore();
+    const effort = context?.settings?.effort ?? (uiWork ? 'low' : undefined);
     const child = spawn(
       process.execPath,
       [
@@ -221,7 +229,12 @@ export async function runCodexJson(
         'skill_mcp_dependency_install',
         '-c',
         login,
-        ...(uiWork ? ['-c', 'model_reasoning_effort="low"'] : []),
+        ...(context?.settings?.model
+          ? ['--model', context.settings.model]
+          : []),
+        ...(effort
+          ? ['-c', 'model_reasoning_effort=' + JSON.stringify(effort)]
+          : []),
         '-c',
         ...(calendarEvidence
           ? [
@@ -242,10 +255,33 @@ export async function runCodexJson(
         schema,
         '-',
       ],
-      { cwd, env, stdio: ['pipe', 'pipe', 'ignore', 'ipc'], detached: true },
+      {
+        cwd,
+        env: context ? { ...env, RUST_LOG: 'feedback_tags=info' } : env,
+        stdio: ['pipe', 'pipe', context ? 'pipe' : 'ignore', 'ipc'],
+        detached: true,
+      },
     );
     let pid: number | undefined;
     let exitSignal: string | undefined;
+    // Keep only the CLI's structured model tag. Never persist raw diagnostics.
+    let diagnosticTail = '',
+      observed: { model: string; effort: string } | undefined;
+    child.stderr?.setEncoding('utf8');
+    child.stderr?.on('data', (chunk: string) => {
+      const lines = (diagnosticTail + chunk).split('\n');
+      diagnosticTail = (lines.pop() ?? '').slice(-8192);
+      for (const line of lines) {
+        const tag = line.match(
+          /^\S+\s+INFO feedback_tags: model="([A-Za-z0-9._-]{1,96})" .*? effort=(None|Some\(([A-Za-z]+)\))/,
+        );
+        if (tag)
+          observed = {
+            model: tag[1]!,
+            effort: (tag[2] === 'None' ? 'none' : tag[3]!).toLowerCase(),
+          };
+      }
+    });
     let output = '';
     let closing = false;
     let overflow = false;
@@ -285,7 +321,7 @@ export async function runCodexJson(
           timedOut = true;
           terminate();
         },
-        uiWork ? 240_000 : 120_000,
+        uiWork || (workspace && !readOnlyWorkspace) ? 240_000 : 120_000,
       );
       child.once('error', terminate);
       child.once('close', (code) => {
@@ -318,6 +354,7 @@ export async function runCodexJson(
       clearTimeout(limit);
       clearTimeout(timer);
     });
+    if (observed) context?.record(observed.model, observed.effort);
     if (!result.confirmed) throw new RunnerError('termination');
     if (signal.aborted) throw new RunnerError('cli');
     if (timedOut) throw new RunnerError('timeout');

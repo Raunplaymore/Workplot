@@ -51,7 +51,9 @@ export const workflowDefinitionSchema = z
             workspaceAccess: z.enum(['read-only', 'write']).optional(),
             agent: z.enum(['codex', 'unassigned']).optional(),
             codexSkill: taskSkillSchema.optional(),
-            tool: z.enum(['market-calendar', 'workplot-ui']).optional(),
+            tool: z
+              .enum(['market-calendar', 'workplot-ui', 'verified-commit'])
+              .optional(),
             skill: z.enum(['none', 'source-check']).optional(),
           }),
           z.strictObject({
@@ -274,17 +276,42 @@ export const gitTargetSchema = z.strictObject({
 });
 export type GitTarget = z.infer<typeof gitTargetSchema>;
 export const requestFilesSchema = z.strictObject({
+  handoff: z
+    .strictObject({
+      runId: z.uuid(),
+      file: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}\.md$/),
+    })
+    .optional(),
   gitTarget: gitTargetSchema.optional(),
   references: z.array(z.string().trim().min(1).max(4096)).max(32),
   workspace: z.string().trim().min(1).max(4096).optional(),
 });
 export type RequestFiles = z.infer<typeof requestFilesSchema>;
+export const effortLevels = [
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+  'ultra',
+] as const;
+export const modelSettingsSchema = z.strictObject({
+  model: z
+    .string()
+    .regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$/)
+    .optional(),
+  effort: z.enum(effortLevels).optional(),
+});
+export type ModelSettings = z.infer<typeof modelSettingsSchema>;
 const taskRequestSchema = z.string().trim().min(1).max(2000).optional();
 export const runSummarySchema = z.strictObject({
   isolatedGit: z.literal(true).optional(),
   developmentTaskId: z.uuid().optional(),
   requestFiles: requestFilesSchema.optional(),
   snapshotId: z.uuid().optional(),
+  modelSettings: modelSettingsSchema.optional(),
   taskRequest: taskRequestSchema,
   id: z.uuid(),
   workflowId: workflowIdSchema,
@@ -313,6 +340,14 @@ export const runSummarySchema = z.strictObject({
     .max(64),
 });
 
+export const MAX_DEVELOPMENT_SLOTS = 32;
+export const slotSettingsSchema = z.object({
+  limit: z.number().int().min(1).max(MAX_DEVELOPMENT_SLOTS),
+  recommended: z.number().int().positive(),
+  cores: z.number().int().positive(),
+  availableGiB: z.number().nonnegative(),
+});
+
 export const runListSchema = z.array(
   runSummarySchema
     .pick({
@@ -326,7 +361,9 @@ export const runListSchema = z.array(
       name: z.string(),
       quotaRetryAt: z.number().int().positive().nullish(),
       gateKind: z.enum(['review', 'question']).optional(),
+      occupiesSlot: z.boolean().optional(),
       isolatedTask: z.uuid().nullish(),
+      handoffRunId: z.uuid().nullish(),
       masterRunId: z.uuid().nullish(),
       previousSessionId: z.uuid().nullable().optional(),
       sessionSummary: z.string().optional(),
@@ -430,6 +467,7 @@ export function workflowPlan(definition: WorkflowDefinition) {
 
 export const runStartSchema = z.strictObject({
   requestFiles: requestFilesSchema.optional(),
+  modelSettings: modelSettingsSchema.optional(),
   taskRequest: taskRequestSchema,
   material: runMaterialSchema.optional(),
   id: z.uuid(),
@@ -439,7 +477,21 @@ export const runStartSchema = z.strictObject({
 export const runDecisionSchema = z.discriminatedUnion('decision', [
   z.strictObject({
     gateId: z.uuid(),
-    decision: z.enum(['accept', 'decline', 'finish']),
+    decision: z.enum(['decline', 'finish']),
+  }),
+  z.strictObject({
+    gateId: z.uuid(),
+    decision: z.literal('accept'),
+    edit: z
+      .strictObject({
+        file: artifactName,
+        expected: z.string().regex(/^[0-9a-f]{64}$/),
+        text: z
+          .string()
+          .max(128000)
+          .refine((s) => !!s.trim()),
+      })
+      .optional(),
   }),
   z.strictObject({
     gateId: z.uuid(),
@@ -449,7 +501,19 @@ export const runDecisionSchema = z.discriminatedUnion('decision', [
 ]);
 export type RunDecision = z.infer<typeof runDecisionSchema>;
 export type RunSummary = z.infer<typeof runSummarySchema>;
+export const portCheckSchema = z.strictObject({
+  token: z.string(),
+  status: z.enum(['failed', 'checking', 'passed']),
+  reason: z.string(),
+});
 export const runViewSchema = z.strictObject({
+  modelCalls: z
+    .array(
+      z.object({ step: z.string(), model: z.string(), effort: z.string() }),
+    )
+    .optional(),
+  portCheck: portCheckSchema.optional(),
+  editedFiles: z.array(artifactName).optional(),
   worktree: z
     .object({
       directory: z.string(),

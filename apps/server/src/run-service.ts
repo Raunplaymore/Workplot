@@ -1,3 +1,11 @@
+import { reserveQaPort } from './qa-port.js';
+import { probeRecovery } from './recovery-probe.js';
+import { verificationRecovery } from './verification-recovery.js';
+import {
+  recommendationTitle,
+  reviewRecommendation,
+  type ApprovedRecommendation,
+} from './recommendation-review.js';
 import { verifyGit, inspectGit } from './git-target.js';
 import {
   AttachmentError,
@@ -5,16 +13,21 @@ import {
   checkWorkspace,
 } from './request-files.js';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { availableParallelism, tmpdir } from 'node:os';
 import { extname } from 'node:path';
 import { createGitIntegration } from './git-integration.js';
 import { manageWorktrees } from './git-worktree.js';
-import type { GitTarget, RequestFiles } from '@studio/contracts';
+import type {
+  WorkflowDefinition,
+  GitTarget,
+  RequestFiles,
+} from '@studio/contracts';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants, writeSync } from 'node:fs';
 import { lstat, mkdir, open, realpath, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import {
+  MAX_DEVELOPMENT_SLOTS,
   requiredInputFields,
   missingInputFields,
   orderedSteps,
@@ -32,9 +45,14 @@ import { discoveryBrief, shots } from './visual-discovery.js';
 import { integrateUiSources } from './master-integration.js';
 import { readUiSources, runUiWork, selectUiTask } from './ui-work.js';
 import { readDesignSkill } from './design-skills.js';
-import { RunnerError, type DocumentRunner } from './codex-runner.js';
+import {
+  codexCallContext,
+  RunnerError,
+  type DocumentRunner,
+} from './codex-runner.js';
 import {
   StoreConflict,
+  RetrySlotBusy,
   StoreNotFound,
   type StudioStore,
 } from './studio-store.js';
@@ -174,11 +192,31 @@ export function createRunService(
   }
   const gitIntegration = createGitIntegration(store);
   const worktrees = manageWorktrees(store, root);
+  function capacity() {
+    const cores = availableParallelism();
+    const bytes = process.availableMemory();
+    const availableGiB = bytes / 2 ** 30;
+    const recommended = Math.max(
+      1,
+      Math.min(
+        MAX_DEVELOPMENT_SLOTS,
+        Math.floor(cores / 2),
+        Math.floor((availableGiB - 2) / 2),
+      ),
+    );
+    return {
+      cores,
+      availableGiB: Math.round(availableGiB * 10) / 10,
+      recommended,
+    };
+  }
+  const initialLimit = capacity().recommended;
+  const slotLimit = () => store.slotLimit() || initialLimit;
   const blocked = (isolatedTask?: string) => {
     const active = [...executions.values()].filter(occupied);
     if (closing || !isolatedTask) return closing || active.length > 0;
     return (
-      active.length >= 2 ||
+      active.length >= slotLimit() ||
       active.some(
         ({ view: { summary: s } }) =>
           !s.isolatedGit ||
@@ -188,6 +226,23 @@ export function createRunService(
       )
     );
   };
+  function hasRetrySlot(summary: RunView['summary']) {
+    const id = summary.id;
+    return (
+      !closing &&
+      (summary.isolatedGit && !summary.master
+        ? !blocked(summary.developmentTaskId)
+        : ![...executions.values()].some(
+            (e) =>
+              occupied(e) &&
+              (!summary.master ||
+                e.view.summary.master?.runId !== summary.master.runId ||
+                e.view.summary.id === id ||
+                e.view.summary.status === 'unknown'),
+          )) &&
+      (!summary.master || !store.masterStopped(summary.master.runId))
+    );
+  }
   async function verifyBinding(target: GitTarget, folder: string) {
     if (
       !store
@@ -301,7 +356,88 @@ export function createRunService(
 
   async function artifact(id: string, filename: string) {
     if (!view(id).results.includes(filename)) throw new StoreNotFound();
-    return readRunFile(id, filename);
+    let text = await readRunFile(id, filename);
+    for (const edit of store.reviewEdits(id, filename)) {
+      if (hash(text) !== edit.expected) throw new StoreConflict();
+      text = edit.text;
+    }
+    return text;
+  }
+  async function hostRetryEvidence(
+    runId: string,
+    failureId: string,
+    task: string,
+  ) {
+    const tree = store.worktree(task);
+    if (!tree?.dirtyHash) return;
+    const file = 'host-qa-' + failureId + '.json';
+    try {
+      const receipt = JSON.parse(await readRunFile(runId, file));
+      if (
+        receipt.run === runId &&
+        receipt.failure === failureId &&
+        receipt.head === tree.head &&
+        receipt.dirtyHash === tree.dirtyHash &&
+        typeof receipt.summary === 'string' &&
+        receipt.summary.length <= 6000
+      )
+        return {
+          file,
+          summary: receipt.summary,
+          head: tree.head,
+          dirtyHash: tree.dirtyHash,
+        };
+    } catch (error) {
+      if (
+        (error as NodeJS.ErrnoException).code !== 'ENOENT' &&
+        !(error instanceof SyntaxError) &&
+        !(error instanceof StoreNotFound)
+      )
+        throw error;
+    }
+  }
+  const checkingPorts = new Set<string>();
+  async function portEvidence(id: string) {
+    const run = view(id);
+    if (
+      !terminal.has(run.summary.status) ||
+      expired(id) ||
+      !run.results.includes('change-evidence.md')
+    )
+      return;
+    const text = await artifact(id, 'change-evidence.md').catch((error) => {
+      if (error instanceof StoreNotFound) return '';
+      throw error;
+    });
+    const line = text
+      .split('\n')
+      .find((s) =>
+        /(?:QA 서버|루프백 포트|listen).{0,180}(?:EPERM|EACCES|EADDRINUSE)|(?:EPERM|EACCES|EADDRINUSE).{0,180}(?:QA 서버|루프백 포트|listen)/i.test(
+          s,
+        ),
+      );
+    if (!line) return;
+    return {
+      evidence: hash(text),
+      reason: /EADDRINUSE/i.test(line)
+        ? '검사 기록에서 QA 포트가 이미 사용 중이었습니다.'
+        : '검사 기록에서 QA 서버의 로컬 포트 사용 권한이 거부됐습니다.',
+    };
+  }
+  function portState(
+    id: string,
+    failure: { evidence: string; reason: string },
+  ) {
+    const last = store.portResult(id, failure.evidence);
+    return {
+      token: last?.token ?? failure.evidence,
+      status: checkingPorts.has(id)
+        ? ('checking' as const)
+        : last?.passed
+          ? ('passed' as const)
+          : ('failed' as const),
+      reason: last?.reason ?? failure.reason,
+    };
   }
   async function captureDirectory(id: string, file: string) {
     const { summary, results } = view(id);
@@ -380,7 +516,23 @@ export function createRunService(
     }
   }
 
-  async function run(
+  function run(...args: Parameters<typeof executeRun>) {
+    const { view } = args[0];
+    return codexCallContext.run(
+      {
+        settings: view.summary.modelSettings,
+        record: (model, effort) =>
+          store.recordModel(
+            view.summary.id,
+            view.stepId ?? '작업',
+            model,
+            effort,
+          ),
+      },
+      () => executeRun(...args),
+    );
+  }
+  async function executeRun(
     execution: Execution,
     definition: ReturnType<StudioStore['workflow']>['definition'],
     resume?: {
@@ -450,6 +602,61 @@ export function createRunService(
               '이번 작업 요청은 사용자가 지정한 과제다. 현재 단계의 역할과 승인 절차를 지키면서 이 과제를 수행한다. 후속 세션은 인계문을 참고해 같은 과제의 남은 수정이나 검증을 진행한다. 이미 충족했다면 완료 근거를 기록하고 종료를 권한다. 별도 과제를 고르지 않는다.',
           }
         : {};
+      const recentSessions: {
+        runId: string;
+        results: Record<string, string>;
+      }[] = [];
+      const approved: ApprovedRecommendation[] = [];
+      let priorId = state.summary.previousSessionId;
+      const chainSteps = orderedSteps(definition);
+      const recommendationIndex = chainSteps.findIndex(
+        (s, i) =>
+          s.kind === 'task' &&
+          chainSteps[i + 1]?.kind === 'review' &&
+          /추천 과제/.test(chainSteps[i + 1]!.title),
+      );
+      const recommendationStep = chainSteps[recommendationIndex];
+      while (priorId && recentSessions.length < 5) {
+        const prior = store.run(priorId);
+        if (
+          prior.summary.workflowId !== state.summary.workflowId ||
+          prior.summary.workflowVersion !== state.summary.workflowVersion ||
+          prior.summary.status !== 'completed'
+        )
+          break;
+        const results: Record<string, string> = {};
+        for (const file of new Set([
+          recommendationStep && recommendationStep.id + '.md',
+          'session-review.md',
+          'verified-commit.md',
+          'change-evidence.md',
+          prior.results.at(-1),
+        ])) {
+          if (!file || !prior.results.includes(file) || expired(priorId))
+            continue;
+          const body = await artifact(priorId, file);
+          if (
+            hash(body) !== prior.completedHashes?.[prior.results.indexOf(file)]
+          )
+            continue;
+          results[file] = body.slice(0, 950);
+          if (recommendationStep && file === recommendationStep.id + '.md') {
+            const title = recommendationTitle(body);
+            if (title)
+              approved.push({
+                runId: priorId,
+                title,
+                document:
+                  body.length <= 6000
+                    ? body
+                    : body.slice(0, 3000) + '\n…\n' + body.slice(-3000),
+              });
+          }
+        }
+        recentSessions.push({ runId: priorId, results });
+        priorId = prior.summary.previousSessionId;
+      }
+      const recovery = verificationRecovery(recentSessions[0]);
       const missionContext = mission
         ? {
             originalMission: mission,
@@ -462,6 +669,24 @@ export function createRunService(
         : {};
       const append = resume && !resume.fresh;
       const directory = await folder(id, !append);
+      const recoveryProbe =
+        !append &&
+        recovery &&
+        definition.steps.some(
+          (step) => step.kind === 'task' && step.tool === 'workplot-ui',
+        )
+          ? await probeRecovery(directory, recovery.originalEvidence, signal)
+          : undefined;
+      if (recoveryProbe) {
+        images.push(
+          ...recoveryProbe.captures.map((name) => join(directory, name)),
+        );
+        await writeFile(
+          join(directory, 'verification-recovery.json'),
+          JSON.stringify({ sourceRun: recovery?.sourceRun, ...recoveryProbe }),
+          { mode: 0o600 },
+        );
+      }
       log = await open(
         join(directory, 'events.jsonl'),
         append
@@ -602,6 +827,8 @@ export function createRunService(
             persist(execution, 'stopped');
             return;
           }
+          if (previous && decision.decision === 'accept' && decision.edit)
+            previous.text = decision.edit.text;
           if (previous && previous.text !== (await artifact(id, previous.file)))
             throw new RunnerError('output');
           if (!step.startNextSession) logEvent(execution, 'running', true);
@@ -665,6 +892,17 @@ export function createRunService(
                   sha256: hash(previous.text),
                 }
               : undefined;
+          const tree = isolated
+            ? await worktrees.open(state.summary.developmentTaskId!, isolated)
+            : undefined;
+          const hostQa =
+            tree && resume?.retryCheckpoint && resume.stepId === step.id
+              ? await hostRetryEvidence(
+                  id,
+                  resume.retryCheckpoint.failureId,
+                  tree.task,
+                )
+              : undefined;
           const retryContext =
             resume?.retryCheckpoint && resume.stepId === step.id
               ? {
@@ -675,6 +913,12 @@ export function createRunService(
                     resumeStepId: step.id,
                     failureId: resume.retryCheckpoint.failureId,
                     previousFailure: resume.retryCheckpoint.failureNote ?? null,
+                    ...(tree && {
+                      instructions: hostQa
+                        ? '현재 diff와 호스트 QA 실측을 대조해 구현·검증 결과를 기록한다. 일치하면 기존 변경을 유지하고 이미 끝난 검사를 반복하지 않는다. 검증하지 않은 항목을 구분한다.'
+                        : '실패 직전의 미커밋 변경과 검증 로그를 먼저 확인하고 남은 작업만 수행한다. 브라우저 권한이나 네이티브 빌드 환경 차단은 원인을 기록하고 동일한 명령을 반복하지 않는다.',
+                    }),
+                    ...(hostQa && { hostQa }),
                     verifiedResults: [
                       ...(resume.documents?.values() ?? []),
                     ].map((doc) => ({
@@ -684,15 +928,7 @@ export function createRunService(
                   },
                 }
               : {};
-          const tree = isolated
-            ? await worktrees.open(state.summary.developmentTaskId!, isolated)
-            : undefined;
-          const roleWrites = step.workspaceAccess
-            ? step.workspaceAccess === 'write'
-            : step.tool === 'workplot-ui' ||
-              steps.filter((s) => s.kind === 'task').length === 1;
-          const gitWrite =
-            tree && roleWrites && step.tool !== 'market-calendar';
+          const gitWrite = tree && writableStep(step, steps);
           if (target && !tree)
             throw new AttachmentError(
               '이 실행은 원본 폴더를 직접 사용한 이전 버전입니다. 기존 결과와 원본 변경을 확인한 뒤 독립 개발 작업을 새로 시작하세요.',
@@ -767,6 +1003,19 @@ export function createRunService(
             task: step.title,
             workflow: plan,
             ...missionContext,
+            ...(recovery && {
+              verificationRecovery: { ...recovery, hostProbe: recoveryProbe },
+            }),
+            ...(recentSessions.length && {
+              recentSessions,
+              priorApprovedRecommendations: approved.map((item) => item.title),
+              continuityPolicy:
+                '서버의 최근 회차 기록을 사용해 이미 시도한 행동과 새 과제를 구분한다. 기록 위치를 사용자에게 다시 묻지 않는다. 이미 승인한 실험을 반복 제안하지 않는다. 기존 관찰의 남은 범위에서 구체적으로 다른 행동과 산출물을 정한다.',
+              ...(step.id === recommendationStep?.id && {
+                recommendationFormat:
+                  '추천을 한 줄에 추천 과제 · 제목 형식으로 표시한다. 같은 과제를 다른 제목으로 바꾸지 않는다.',
+              }),
+            }),
             currentStepId: step.id,
             instructions: step.instructions,
             documentFormat:
@@ -808,11 +1057,17 @@ export function createRunService(
                 : '업무 목표와 완료 기준을 참고해 현재 단계만 수행하세요. 전달받은 문서는 입력 자료입니다. 파일·명령·웹 도구를 사용하지 마세요. Markdown 본문은 kind document, 꼭 필요한 확인 질문만 kind question으로 반환하세요.',
           });
           partialTree = gitWrite ? tree : undefined;
-          const response =
+          let response =
             step.tool === 'workplot-ui' && !workspace
               ? await runUiWork(
                   JSON.stringify({
                     ...missionContext,
+                    ...(recovery && {
+                      verificationRecovery: {
+                        ...recovery,
+                        hostProbe: recoveryProbe,
+                      },
+                    }),
                     ...masterContext,
                     ...retryContext,
                     approval,
@@ -870,6 +1125,38 @@ export function createRunService(
                       : undefined,
                   !!tree && !gitWrite,
                 );
+          if (
+            step.id === recommendationStep?.id &&
+            approved.length &&
+            response.kind === 'document'
+          ) {
+            for (let attempt = 0; ; attempt++) {
+              const overlap = await reviewRecommendation(
+                runner,
+                approved,
+                response.text,
+                signal,
+                observe,
+              );
+              if (!overlap) break;
+              if (attempt >= 2) throw new RunnerError('output');
+              response = await runner.write(
+                JSON.stringify({
+                  ...JSON.parse(prompt),
+                  rejectedDraft: response.text,
+                  correction: overlap,
+                  instructions:
+                    step.instructions +
+                    ' 이전 추천과 다른 사용자 결과 또는 산출물을 제공하는 후보를 선택하고, 기존 과제와의 실질적 차이를 설명한다.',
+                }),
+                signal,
+                observe,
+                undefined,
+                true,
+              );
+              if (response.kind !== 'document') throw new RunnerError('output');
+            }
+          }
           signal.throwIfAborted();
           if (response.kind === 'question') {
             if (partialTree) await worktrees.rememberChanges(partialTree);
@@ -889,8 +1176,34 @@ export function createRunService(
           if (!response.text.trim() || response.text.length > 32_000)
             throw new RunnerError('output');
           partialTree = undefined;
-          if (gitWrite) {
-            await worktrees.checkpoint(tree, id, step.id);
+          let commitNote = '';
+          if (step.tool === 'verified-commit') {
+            if (!tree) commitNote = 'Git 작업 폴더 미지정 · 커밋 생략';
+            else if (response.text.trim().split(/\r?\n/, 1)[0] !== '검증 통과')
+              commitNote = '세션 검증 미충족 · 커밋 생략';
+            else {
+              const sha = await worktrees.checkpoint(
+                tree,
+                id,
+                step.id,
+                signal,
+                (log) =>
+                  writeFile(join(directory, step.id + '.log'), log, {
+                    mode: 0o600,
+                  }),
+              );
+              commitNote = sha
+                ? '작업 브랜치 커밋 · ' + sha
+                : '변경 없음 · 커밋 생략';
+            }
+          } else if (gitWrite) {
+            if (
+              steps
+                .slice(index + 1)
+                .some((s) => s.kind === 'task' && s.tool === 'verified-commit')
+            )
+              await worktrees.rememberChanges(tree);
+            else await worktrees.checkpoint(tree, id, step.id);
             signal.throwIfAborted();
           }
           if (parent && !tree && step.tool === 'workplot-ui') {
@@ -900,7 +1213,8 @@ export function createRunService(
             store.recordUiDigest(id, step.id, hash(JSON.stringify(files)));
           }
           const file = step.id + '.md';
-          const text = response.text + '\n';
+          const text =
+            (commitNote ? commitNote + '\n\n' : '') + response.text + '\n';
           retryableTask = false;
           await writeFile(join(directory, file), text, {
             flag: 'wx',
@@ -1076,12 +1390,14 @@ export function createRunService(
       }
     },
     view,
-    canStart: () => !blocked(),
+    slotSettings: () => ({ ...capacity(), limit: slotLimit() }),
+    hasRetrySlot,
     list: () =>
       store.listRuns().map((row) => {
         const active = executions.get(row.id);
         return {
           ...row,
+          occupiesSlot: !!active && occupied(active),
           ...(active?.view.summary.id === row.id &&
             active.view.gate && { gateKind: active.view.gate.kind }),
           status:
@@ -1135,6 +1451,88 @@ export function createRunService(
       store.saveReview(id, active.review);
       active.restored = true;
     },
+    async restartHandoff(id: string, configure: (childId: string) => void) {
+      const parent = store.run(id);
+      const { summary, results } = parent;
+      store.allowUse(summary.workflowId);
+      const definition = store.executionDefinition(
+        summary.workflowId,
+        summary.workflowVersion,
+      );
+      const gate = definition.steps.find(
+        (s) => s.id === summary.lastReview?.stepId,
+      );
+      const file = results.at(-1);
+      if (
+        expired(id) ||
+        summary.status !== 'completed' ||
+        summary.nextSessionId ||
+        summary.master ||
+        summary.lastReview?.decision !== 'finish' ||
+        gate?.kind !== 'review' ||
+        !gate.startNextSession ||
+        !file
+      )
+        throw new StoreConflict();
+      const text = await artifact(id, file);
+      if (
+        hash(text) !== parent.completedHashes?.at(-1) ||
+        !text.trim() ||
+        text.trim().length > 8000 ||
+        blocked(summary.developmentTaskId)
+      )
+        throw new StoreConflict();
+      const child = store.recordNextSession(
+        id,
+        text.trim(),
+        configure,
+        false,
+        'completed',
+      );
+      return launch(child, definition);
+    },
+    async portCheck(id: string) {
+      const failure = await portEvidence(id);
+      return failure && portState(id, failure);
+    },
+    async retryPort(id: string, token: string) {
+      const failure = await portEvidence(id);
+      if (!failure) throw new StoreConflict();
+      const current = portState(id, failure);
+      if (current.status !== 'failed' || current.token !== token)
+        throw new StoreConflict();
+      checkingPorts.add(id);
+      try {
+        let reason = '워크플롯 호스트에서 QA 전용 포트를 열고 해제했습니다.',
+          passed = false;
+        try {
+          const lease = await reserveQaPort();
+          lease.release();
+          passed = true;
+        } catch (error) {
+          reason =
+            'QA 포트 재검사 실패 · ' +
+            ((error as NodeJS.ErrnoException).code ?? '사용 가능한 포트 없음');
+        }
+        store.savePortResult(
+          id,
+          failure.evidence,
+          randomUUID(),
+          passed,
+          reason,
+        );
+      } finally {
+        checkingPorts.delete(id);
+      }
+      return portState(id, failure);
+    },
+    async reviewHistory(id: string, file: string) {
+      await artifact(id, file);
+      return {
+        original: await readRunFile(id, file),
+        edits: store.reviewEdits(id, file),
+      };
+    },
     async reviewedArtifact(id: string, gateId: string, file: string) {
       const active = executions.get(id);
       const text = await artifact(id, file);
@@ -1167,6 +1565,7 @@ export function createRunService(
       material?: RunMaterial,
       taskRequest?: string,
       requestFiles?: RequestFiles,
+      modelSettings?: RunView['summary']['modelSettings'],
     ) {
       function existing() {
         try {
@@ -1174,6 +1573,8 @@ export function createRunService(
           if (
             found.summary.workflowId !== workflowId ||
             found.summary.workflowVersion !== version ||
+            JSON.stringify(found.summary.modelSettings) !==
+              JSON.stringify(modelSettings) ||
             found.summary.taskRequest !== taskRequest ||
             JSON.stringify(found.summary.requestFiles) !==
               JSON.stringify(requestFiles) ||
@@ -1202,6 +1603,29 @@ export function createRunService(
         ? await snapshotFiles(requestFiles)
         : undefined;
       const target = requestFiles?.gitTarget;
+      const handoff = requestFiles?.handoff;
+      if (handoff) {
+        if (
+          !target ||
+          !snapshot ||
+          !definition.steps.some((s) => writableStep(s, definition.steps))
+        )
+          throw new AttachmentError(
+            '수정 가능한 개발 흐름과 Git 작업 폴더가 필요합니다.',
+          );
+        const parent = store.run(handoff.runId);
+        const index = parent.results.indexOf(handoff.file);
+        if (
+          parent.summary.status !== 'completed' ||
+          index < 0 ||
+          expired(handoff.runId)
+        )
+          throw new StoreConflict();
+        const text = await artifact(handoff.runId, handoff.file);
+        if (hash(text) !== parent.completedHashes?.[index])
+          throw new StoreConflict();
+        snapshot.refs.push({ name: handoff.file, text });
+      }
       if (target && !snapshot?.workspace)
         throw new AttachmentError('등록한 대상 폴더를 확인하세요.');
       const cliVersion = await runner.ready();
@@ -1223,6 +1647,7 @@ export function createRunService(
         workflowVersion: version,
         material,
         taskRequest,
+        modelSettings,
         cliVersion,
         status: 'queued',
         sessionId: null,
@@ -1406,6 +1831,7 @@ export function createRunService(
           origin: { runId: id, stepId },
           material: source.material,
           taskRequest: source.summary.taskRequest,
+          modelSettings: source.summary.modelSettings,
           isolatedGit: source.summary.isolatedGit,
           developmentTaskId: source.summary.developmentTaskId,
           requestFiles: source.summary.requestFiles,
@@ -1438,21 +1864,10 @@ export function createRunService(
     async retry(id: string, failureId: string, authorized = () => true) {
       const record = store.run(id);
       const { retry, results, summary } = record;
-      const eligible = () =>
-        !closing &&
-        (summary.isolatedGit && !summary.master
-          ? !blocked(summary.developmentTaskId)
-          : ![...executions.values()].some(
-              (e) =>
-                occupied(e) &&
-                (!summary.master ||
-                  e.view.summary.master?.runId !== summary.master.runId ||
-                  e.view.summary.id === id ||
-                  e.view.summary.status === 'unknown'),
-            )) &&
-        (!summary.master || !store.masterStopped(summary.master.runId)) &&
-        authorized() &&
-        store.run(id).retry?.failureId === failureId;
+      const eligible = () => {
+        if (!hasRetrySlot(summary)) throw new RetrySlotBusy();
+        return authorized() && store.run(id).retry?.failureId === failureId;
+      };
       if (!retry || summary.status !== 'failed' || !eligible())
         throw new StoreConflict();
       const definition = store.executionDefinition(
@@ -1541,7 +1956,16 @@ export function createRunService(
           decision: decision.decision,
           at: new Date().toISOString(),
         };
-        store.recordReviewDecision(id, receipt, !!active.restored);
+        const edit = decision.decision === 'accept' ? decision.edit : undefined;
+        if (
+          edit &&
+          (gate.startNextSession ||
+            edit.file !== active.view.results.at(-1) ||
+            edit.expected !== active.review?.documentHashes.at(-1) ||
+            Buffer.byteLength(edit.text) > 128000)
+        )
+          throw new StoreConflict();
+        store.recordReviewDecision(id, receipt, !!active.restored, edit);
         active.view.summary = { ...active.view.summary, lastReview: receipt };
         active.restored = false;
       }
@@ -1607,4 +2031,19 @@ export function createRunService(
       await gitIntegration.close();
     },
   };
+}
+
+function writableStep(
+  step: WorkflowDefinition['steps'][number],
+  steps: WorkflowDefinition['steps'],
+) {
+  return (
+    step.kind === 'task' &&
+    step.tool !== 'market-calendar' &&
+    step.tool !== 'verified-commit' &&
+    (step.workspaceAccess
+      ? step.workspaceAccess === 'write'
+      : step.tool === 'workplot-ui' ||
+        steps.filter((s) => s.kind === 'task').length === 1)
+  );
 }

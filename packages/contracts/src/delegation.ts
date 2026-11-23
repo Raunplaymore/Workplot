@@ -13,7 +13,8 @@ export const completionGoalSchema = z.strictObject({
   target: z.number().int().min(1).max(100),
 });
 export const delegationConfigSchema = completionGoalSchema.extend({
-  maxSessions: z.number().int().min(1).max(MAX_ADDITIONAL_SESSIONS),
+  handoffOnly: z.literal(true).optional(),
+  maxSessions: z.number().int().min(1).max(MAX_ADDITIONAL_SESSIONS).nullable(),
   until: z.iso.datetime(),
 });
 export const assessmentSchema = z

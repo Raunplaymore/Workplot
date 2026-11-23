@@ -97,7 +97,10 @@ export function createSessionHistory(
         );
         const stat = fstatSync(fd);
         if (stat.isFile() && stat.nlink === 1 && stat.size <= 128000) {
-          const lines = readFileSync(fd, 'utf8')
+          const lines = (
+            store.reviewEdits(row.id, name).at(-1)?.text ??
+            readFileSync(fd, 'utf8')
+          )
             .split('\n')
             .map((s) => s.trim())
             .filter(Boolean);
@@ -162,6 +165,11 @@ export function createSessionHistory(
       kept = JSON.parse(row.kept) as string[];
     const snapshot = run.summary.snapshotId;
     const discard = run.results.filter((n) => !kept.includes(n));
+    for (const file of discard)
+      db.prepare('DELETE FROM review_edits WHERE run=? AND file=?').run(
+        id,
+        file,
+      );
     db.prepare('UPDATE session_history SET expired=1,pending=? WHERE id=?').run(
       JSON.stringify([...discard, 'events.jsonl']),
       id,
@@ -228,6 +236,10 @@ export function createSessionHistory(
       const next = JSON.stringify(kept.filter((n) => n !== name));
       db.prepare('UPDATE session_history SET kept=? WHERE id=?').run(next, id);
       if (remove) {
+        db.prepare('DELETE FROM review_edits WHERE run=? AND file=?').run(
+          id,
+          name,
+        );
         db.prepare(
           "UPDATE session_history SET pending=json_insert(coalesce(pending,'[]'),'$[#]',?) WHERE id=?",
         ).run(name, id);

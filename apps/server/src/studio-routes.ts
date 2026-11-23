@@ -47,6 +47,7 @@ import {
   runRetrySchema,
   rerunSchema,
   selectChangesSchema,
+  slotSettingsSchema,
   workflowDefinitionSchema,
   workflowIdSchema,
   workflowUpdateSchema,
@@ -139,6 +140,16 @@ export function registerStudioRoutes(
       }
     });
 
+    protectedRoutes.get('/development-slots', async () => runs.slotSettings());
+    protectedRoutes.put('/development-slots', async (req, reply) => {
+      const value = slotSettingsSchema
+        .pick({ limit: true })
+        .safeParse(req.body);
+      if (!value.success)
+        return reply.code(400).send({ error: 'invalid_slot_limit' });
+      store.setSlotLimit(value.data.limit);
+      return runs.slotSettings();
+    });
     protectedRoutes.get('/git/targets', async () => store.bindings());
     protectedRoutes.post('/git/inspect', async (request, reply) => {
       const data = z
@@ -865,6 +876,29 @@ export function registerStudioRoutes(
         }
       },
     );
+    protectedRoutes.post<{ Params: { id: string } }>(
+      '/runs/:id/delegation/restart',
+      async (req, reply) => {
+        const id = workflowIdSchema.safeParse(req.params.id);
+        const config = delegationConfigSchema.safeParse(req.body);
+        if (!id.success || !config.success)
+          return reply.code(400).send({ error: 'invalid_delegation' });
+        const parent = store.run(id.data).summary;
+        const steps = store.executionDefinition(
+          parent.workflowId,
+          parent.workflowVersion,
+        ).steps;
+        if (
+          !config.data.handoffOnly &&
+          !steps.some((s) => s.kind === 'task' && s.tool === 'workplot-ui')
+        )
+          return reply.code(400).send({ error: 'invalid_delegation' });
+        const child = await runs.restartHandoff(id.data, (childId) =>
+          delegation.configureRestart(childId, config.data),
+        );
+        return { id: child.summary.id };
+      },
+    );
     protectedRoutes.route<{ Params: { id: string } }>({
       method: ['GET', 'PUT', 'DELETE'],
       url: '/runs/:id/delegation',
@@ -954,12 +988,58 @@ export function registerStudioRoutes(
           material,
           input.data.taskRequest,
           input.data.requestFiles,
+          input.data.modelSettings,
         );
       } catch (error) {
         if (!(error instanceof RunnerError)) throw error;
         return reply.code(422).send({ error: error.reason });
       }
     });
+    protectedRoutes.get<{ Params: { id: string } }>(
+      '/runs/:id/delivery',
+      async (request) => {
+        const { id } = request.params;
+        const { summary, results } = runs.view(id);
+        const steps = store.executionDefinition(
+          summary.workflowId,
+          summary.workflowVersion,
+        ).steps;
+        const receipts = [];
+        for (const step of steps) {
+          if (step.kind !== 'task' || step.tool !== 'verified-commit') continue;
+          const filename = step.id + '.md';
+          if (!results.includes(filename)) continue;
+          const first =
+            (await runs.artifact(id, filename)).split('\n', 1)[0] ?? '';
+          if (
+            /^작업 브랜치 커밋 · [a-f0-9]{40,64}$/.test(first) ||
+            [
+              '변경 없음 · 커밋 생략',
+              'Git 작업 폴더 미지정 · 커밋 생략',
+              '세션 검증 미충족 · 커밋 생략',
+            ].includes(first)
+          )
+            receipts.push(first);
+        }
+        const master = summary.master?.runId;
+        const job = master
+          ? store.gitQueue.list(master).find((entry) => entry.run === id)
+          : undefined;
+        const promotion = master ? promotions.view(master) : null;
+        return {
+          receipts,
+          integration: job
+            ? { status: job.status, candidate: job.candidate }
+            : null,
+          applied:
+            job?.candidate &&
+            promotion?.status === 'applied' &&
+            promotion.candidate === job.candidate
+              ? promotion.candidate
+              : null,
+        };
+      },
+    );
     protectedRoutes.get<{ Params: { id: string } }>(
       '/runs/:id/view',
       async (request, reply) => {
@@ -970,6 +1050,9 @@ export function registerStudioRoutes(
           wait = view.gate && delegation.assessmentWait(id.data);
         return {
           ...view,
+          portCheck: await runs.portCheck(id.data),
+          modelCalls: store.modelCalls(id.data),
+          editedFiles: store.editedFiles(id.data),
           ...(view.summary.developmentTaskId && {
             aiCalls: store.calls(id.data),
           }),
@@ -1011,6 +1094,18 @@ export function registerStudioRoutes(
       },
     );
     protectedRoutes.post<{ Params: { id: string } }>(
+      '/runs/:id/qa-port/retry',
+      async (req, reply) => {
+        const body = z
+          .strictObject({ token: z.string().max(64) })
+          .safeParse(req.body);
+        const id = workflowIdSchema.safeParse(req.params.id);
+        if (!body.success || !id.success)
+          return reply.code(400).send({ error: 'invalid_retry' });
+        return runs.retryPort(id.data, body.data.token);
+      },
+    );
+    protectedRoutes.post<{ Params: { id: string } }>(
       '/runs/:id/retry',
       async (request, reply) => {
         const id = workflowIdSchema.safeParse(request.params.id);
@@ -1035,6 +1130,12 @@ export function registerStudioRoutes(
         const decision = runDecisionSchema.safeParse(request.body);
         if (!id.success || !decision.success)
           return reply.code(400).send({ error: 'invalid_decision' });
+        if (decision.data.decision === 'accept' && decision.data.edit)
+          await runs.reviewedArtifact(
+            id.data,
+            decision.data.gateId,
+            decision.data.edit.file,
+          );
         return runs.decide(id.data, decision.data);
       },
     );
@@ -1068,6 +1169,14 @@ export function registerStudioRoutes(
           .header('X-Content-Type-Options', 'nosniff')
           .send(await runs.capture(id, file, phase, image));
       },
+    );
+    protectedRoutes.get<{ Params: { id: string; file: string } }>(
+      '/runs/:id/results/:file/reviews',
+      async (req) =>
+        runs.reviewHistory(
+          workflowIdSchema.parse(req.params.id),
+          req.params.file,
+        ),
     );
     protectedRoutes.get<{ Params: { id: string; file: string } }>(
       '/runs/:id/results/:file',

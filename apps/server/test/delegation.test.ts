@@ -71,7 +71,7 @@ function fixture() {
   const runs = {
     view: () => v,
     artifact: async () => evidence,
-    canStart: () => true,
+    hasRetrySlot: vi.fn(() => true),
     retry: vi.fn(),
     preserveQuotaReview: vi.fn(),
     reviewedArtifact: vi.fn(async () => evidence),
@@ -153,7 +153,19 @@ test.each(['question', 'review'] as const)(
     d.enable(id, config);
     await d.tick();
     expect(runs.decide).not.toHaveBeenCalled();
-    expect(d.status(id).enabled).toBe(false);
+    expect(d.status(id)).toMatchObject({ enabled: true, used: 0 });
+    const gateId = randomUUID();
+    v.gate = {
+      id: gateId,
+      kind: 'review',
+      text: '다음 회차',
+      startNextSession: true,
+    };
+    await d.tick();
+    expect(runs.decide).toHaveBeenCalledWith(id, {
+      gateId,
+      decision: 'finish',
+    });
   },
 );
 test('changed evidence fails closed before a decision', async () => {
@@ -359,6 +371,12 @@ test('delegated timeouts retry the same step once, keeping the session count', a
   v.stepId = 'work';
   v.failureId = randomUUID();
   v.timedOut = true;
+  runs.hasRetrySlot.mockReturnValue(false);
+  await d.tick();
+  expect(runs.hasRetrySlot).toHaveBeenCalledWith(v.summary);
+  expect(runs.retry).not.toHaveBeenCalled();
+  expect((await d.statusWithEvidence(id)).note).toContain('병렬 슬롯 대기');
+  runs.hasRetrySlot.mockReturnValue(true);
   await Promise.all([d.tick(), d.tick()]);
   expect(runs.retry).toHaveBeenCalledTimes(1);
   expect(runs.retry).toHaveBeenCalledWith(
@@ -399,4 +417,66 @@ test('an explicitly queued exploration is attached only to the next approved chi
     true,
   );
   expect(() => d.exploreNext(id)).toThrow();
+});
+
+test('handoff delegation preserves a manual gate and accepts only the verified final handoff', async () => {
+  const { id, v, runs, d, config, generate } = fixture();
+  const finalGate = v.gate!;
+  v.gate = { id: randomUUID(), kind: 'review', text: '추천 과제 승인' };
+  d.enable(id, { ...config, handoffOnly: true });
+  await d.tick();
+  expect(d.status(id).enabled).toBe(true);
+  expect(runs.decide).not.toHaveBeenCalled();
+  v.gate = finalGate;
+  await Promise.all([d.tick(), d.tick()]);
+  expect(runs.reviewedArtifact).toHaveBeenCalledWith(
+    id,
+    finalGate.id,
+    'work.md',
+  );
+  expect(runs.decide).toHaveBeenCalledTimes(1);
+  expect(runs.decide).toHaveBeenCalledWith(id, {
+    gateId: finalGate.id,
+    decision: 'accept',
+  });
+  expect(generate).not.toHaveBeenCalled();
+});
+
+test('isolated Git reports continue under the existing budget with unverified criteria', async () => {
+  const { id, v, d, config, runs, generate } = fixture();
+  v.summary.isolatedGit = true;
+  d.enable(id, config);
+  await d.tick();
+  expect(generate).not.toHaveBeenCalled();
+  expect(d.status(id)).toMatchObject({
+    enabled: true,
+    score: 0,
+    checks: [{ status: 'unknown' }],
+  });
+  expect(runs.decide).toHaveBeenCalledWith(
+    id,
+    { gateId: v.gate!.id, decision: 'accept' },
+    expect.any(String),
+    true,
+  );
+});
+
+test('unlimited delegation continues past 100 sessions but ends at its deadline', async () => {
+  const { id, v, d, db, config, runs } = fixture();
+  d.enable(id, { ...config, handoffOnly: true, maxSessions: null });
+  db.prepare('UPDATE session_delegations SET used=101 WHERE root=?').run(id);
+  d.exploreNext(id);
+  await d.tick();
+  expect(runs.decide).toHaveBeenCalledWith(id, {
+    gateId: v.gate!.id,
+    decision: 'accept',
+  });
+  db.prepare('UPDATE session_delegations SET accepted=0 WHERE root=?').run(id);
+  vi.useFakeTimers();
+  vi.setSystemTime(Date.parse(config.until) + 1);
+  await d.tick();
+  expect(runs.decide).toHaveBeenCalledWith(id, {
+    gateId: v.gate!.id,
+    decision: 'finish',
+  });
 });

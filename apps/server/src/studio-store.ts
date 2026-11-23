@@ -21,6 +21,7 @@ import {
 } from '@studio/contracts';
 
 export class StoreConflict extends Error {}
+export class RetrySlotBusy extends StoreConflict {}
 export class StoreNotFound extends Error {}
 
 export function openStudioStore(db: Database.Database) {
@@ -151,6 +152,7 @@ export function openStudioStore(db: Database.Database) {
       json_extract(r.record,'$.retry.quotaRetryAt') AS quotaRetryAt,
       CASE WHEN json_extract(r.record,'$.summary.isolatedGit') THEN json_extract(r.record,'$.summary.developmentTaskId') END AS isolatedTask,
       json_extract(r.record,'$.summary.master.runId') AS masterRunId,
+      json_extract(r.record,'$.summary.requestFiles.handoff.runId') AS handoffRunId,
       json_extract(r.record,'$.summary.previousSessionId') AS previousSessionId,
       (json_array_length(r.record,'$.results') > 1 OR json_type(r.record,'$.summary.origin') IS NOT NULL) AS comparable
     FROM runs r JOIN workflow_versions w ON w.id = r.workflow_id AND w.version = r.workflow_version
@@ -231,6 +233,8 @@ export function openStudioStore(db: Database.Database) {
   db.exec(`CREATE TABLE IF NOT EXISTS development_services(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE);
     CREATE TABLE IF NOT EXISTS git_bindings(service_id TEXT NOT NULL REFERENCES development_services(id),checkout_id TEXT NOT NULL,path TEXT NOT NULL,repo_id TEXT NOT NULL, PRIMARY KEY(service_id,checkout_id,path));
     CREATE TABLE IF NOT EXISTS development_worktrees(task TEXT PRIMARY KEY,directory TEXT NOT NULL,path TEXT NOT NULL,branch TEXT NOT NULL,base TEXT NOT NULL,head TEXT NOT NULL,dirty_hash TEXT,pending TEXT,ready INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE IF NOT EXISTS run_model_calls(id INTEGER PRIMARY KEY, run TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE, step TEXT NOT NULL, model TEXT NOT NULL, effort TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS run_model_calls_run ON run_model_calls(run);
     CREATE TABLE IF NOT EXISTS development_calls(id INTEGER PRIMARY KEY,run TEXT NOT NULL REFERENCES runs(id),step TEXT NOT NULL,pid INTEGER NOT NULL,session TEXT,observedAt TEXT NOT NULL);`);
   const gitQueue = openGitQueue(db);
   function bindings() {
@@ -243,8 +247,66 @@ export function openStudioStore(db: Database.Database) {
       'service' | 'serviceId' | 'checkoutId' | 'repositoryId' | 'path'
     >[];
   }
+  db.exec(
+    'CREATE TABLE IF NOT EXISTS qa_port_checks(run TEXT PRIMARY KEY REFERENCES runs(id), evidence TEXT NOT NULL, token TEXT NOT NULL, passed INTEGER NOT NULL, reason TEXT NOT NULL)',
+  );
+  db.exec(`CREATE TABLE IF NOT EXISTS review_edits (
+    run TEXT NOT NULL REFERENCES runs(id), gate TEXT PRIMARY KEY, file TEXT NOT NULL,
+    expected TEXT NOT NULL, text TEXT NOT NULL, at TEXT NOT NULL
+  ); CREATE INDEX IF NOT EXISTS review_edits_file ON review_edits(run,file);`);
   return {
     bindings,
+    portResult(run: string, evidence: string) {
+      return db
+        .prepare(
+          'SELECT token,passed,reason FROM qa_port_checks WHERE run=? AND evidence=?',
+        )
+        .get(run, evidence) as
+        { token: string; passed: number; reason: string } | undefined;
+    },
+    savePortResult(
+      run: string,
+      evidence: string,
+      token: string,
+      passed: boolean,
+      reason: string,
+    ) {
+      db.prepare('INSERT OR REPLACE INTO qa_port_checks VALUES(?,?,?,?,?)').run(
+        run,
+        evidence,
+        token,
+        Number(passed),
+        reason,
+      );
+    },
+    editedFiles(id: string) {
+      return db
+        .prepare('SELECT DISTINCT file FROM review_edits WHERE run=?')
+        .pluck()
+        .all(id) as string[];
+    },
+    reviewEdits(id: string, file: string) {
+      return db
+        .prepare(
+          'SELECT expected,text,at FROM review_edits WHERE run=? AND file=? ORDER BY rowid',
+        )
+        .all(id, file) as { expected: string; text: string; at: string }[];
+    },
+    slotLimit() {
+      return Number(
+        db
+          .prepare(
+            "SELECT value FROM app_metadata WHERE key='development_slots'",
+          )
+          .pluck()
+          .get(),
+      );
+    },
+    setSlotLimit(limit: number) {
+      db.prepare(
+        "INSERT INTO app_metadata(key,value) VALUES('development_slots',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+      ).run(String(limit));
+    },
     gitQueue,
     worktree(task: string) {
       return db
@@ -312,6 +374,18 @@ export function openStudioStore(db: Database.Database) {
         return { service, serviceId, ...location };
       },
     ).immediate,
+    recordModel(run: string, step: string, model: string, effort: string) {
+      db.prepare(
+        'INSERT INTO run_model_calls(run,step,model,effort) VALUES(?,?,?,?)',
+      ).run(run, step, model, effort);
+    },
+    modelCalls(run: string) {
+      return db
+        .prepare(
+          'SELECT step,model,effort FROM run_model_calls WHERE run=? ORDER BY id',
+        )
+        .all(run);
+    },
     startCall(run: string, step: string, pid: number) {
       return Number(
         db
@@ -601,11 +675,15 @@ export function openStudioStore(db: Database.Database) {
       (
         parentId: string,
         source: string,
-        finish: () => void,
+        finish: (childId: string) => void,
         newTask = false,
+        parentStatus: 'waiting' | 'completed' = 'waiting',
       ) => {
         const parent = run(parentId);
-        if (parent.summary.status !== 'waiting' || parent.summary.nextSessionId)
+        if (
+          parent.summary.status !== parentStatus ||
+          parent.summary.nextSessionId
+        )
           throw new StoreConflict();
         const { workflowId, workflowVersion, cliVersion } = parent.summary;
         const child = recordRun({
@@ -619,6 +697,7 @@ export function openStudioStore(db: Database.Database) {
               ? randomUUID()
               : parent.summary.developmentTaskId
             : undefined,
+          modelSettings: parent.summary.modelSettings,
           taskRequest: parent.summary.taskRequest,
           snapshotId: parent.summary.snapshotId,
           requestFiles: parent.summary.requestFiles,
@@ -631,7 +710,7 @@ export function openStudioStore(db: Database.Database) {
         db.prepare(
           "UPDATE runs SET record=json_set(record,'$.summary.nextSessionId',?) WHERE id=?",
         ).run(child.id, parentId);
-        finish();
+        finish(child.id);
         return child;
       },
     ).immediate,
@@ -661,18 +740,30 @@ export function openStudioStore(db: Database.Database) {
         .run(JSON.stringify(checkpoint), id);
       if (!result.changes) throw new StoreConflict();
     },
-    recordReviewDecision(
-      id: string,
-      receipt: ReviewReceipt,
-      restored: boolean,
-    ) {
-      const result = db
-        .prepare(
-          "UPDATE runs SET record=json_set(json_remove(record,'$.pausedReview'),'$.summary.lastReview',json(?)) WHERE id=? AND json_extract(record,'$.summary.status')='waiting' AND (?=0 OR json_extract(record,'$.pausedReview.gateId')=?)",
-        )
-        .run(JSON.stringify(receipt), id, Number(restored), receipt.gateId);
-      if (!result.changes) throw new StoreConflict();
-    },
+    recordReviewDecision: db.transaction(
+      (
+        id: string,
+        receipt: ReviewReceipt,
+        restored: boolean,
+        edit?: { file: string; expected: string; text: string },
+      ) => {
+        const result = db
+          .prepare(
+            "UPDATE runs SET record=json_set(json_remove(record,'$.pausedReview'),'$.summary.lastReview',json(?)) WHERE id=? AND json_extract(record,'$.summary.status')='waiting' AND (?=0 OR json_extract(record,'$.pausedReview.gateId')=?)",
+          )
+          .run(JSON.stringify(receipt), id, Number(restored), receipt.gateId);
+        if (!result.changes) throw new StoreConflict();
+        if (edit)
+          db.prepare('INSERT INTO review_edits VALUES(?,?,?,?,?,?)').run(
+            id,
+            receipt.gateId,
+            edit.file,
+            edit.expected,
+            edit.text,
+            receipt.at,
+          );
+      },
+    ).immediate,
     updateRun(
       id: string,
       patch: Pick<RunInput, 'status' | 'sessionId' | 'process' | 'results'> & {
