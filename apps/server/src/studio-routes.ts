@@ -82,7 +82,7 @@ export function registerStudioRoutes(
   skillDestination?: { root: string; port: number },
 ) {
   function developmentView(id: string) {
-    const view = runs.view(id);
+    const view = { ...runs.view(id), recovery: store.recoveryReport(id) };
     const tree =
       view.summary.developmentTaskId &&
       store.worktree(view.summary.developmentTaskId);

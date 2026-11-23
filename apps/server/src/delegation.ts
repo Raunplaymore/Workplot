@@ -328,6 +328,14 @@ export function createDelegation(
       lookup(id)?.current === id &&
       Date.now() < Date.parse(config.until) &&
       (config.maxSessions === null || row.used <= config.maxSessions);
+    if (v.summary.status === 'failed' && !v.quotaRetryAt) {
+      const recovery = store.recoveryReport(id);
+      if (
+        recovery?.source === id &&
+        ['접수', '복구 실행 중', '원본 재검사 중'].includes(recovery.state)
+      )
+        return;
+    }
     if (v.failureId && v.quotaRetryAt && v.summary.status === 'failed') {
       if (!allowed()) {
         end(row, '위임 범위가 끝나 한도 대기 중인 단계를 보존했습니다.');

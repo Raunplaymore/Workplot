@@ -514,6 +514,9 @@ export const portCheckSchema = z.strictObject({
   reason: z.string(),
 });
 export const runViewSchema = z.strictObject({
+  recovery: z
+    .strictObject({ source: z.uuid(), repair: z.string(), state: z.string() })
+    .optional(),
   modelCalls: z
     .array(
       z.object({ step: z.string(), model: z.string(), effort: z.string() }),

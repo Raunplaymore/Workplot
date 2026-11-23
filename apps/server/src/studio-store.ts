@@ -1,3 +1,4 @@
+import { prepareFailureMonitor } from './failure-monitor.js';
 import { openGitQueue } from './git-queue-store.js';
 import type { Reference } from './request-files.js';
 import { expandWorkflow } from './linked-workflow.js';
@@ -138,6 +139,7 @@ export function openStudioStore(db: Database.Database) {
     },
   );
 
+  prepareFailureMonitor(db);
   const list = db.prepare(`
     SELECT w.id, w.version, w.saved_at AS savedAt, json_extract(w.definition, '$.name') AS name
     FROM workflow_versions w JOIN (
@@ -645,6 +647,22 @@ export function openStudioStore(db: Database.Database) {
           ? 'INSERT OR IGNORE INTO workflow_favorites VALUES (?)'
           : 'DELETE FROM workflow_favorites WHERE workflow_id=?',
       ).run(id);
+    },
+    repairForFailure(source: string, failure: string, step: string) {
+      return db
+        .prepare(
+          'SELECT repair FROM failure_monitor WHERE source=? AND failure=? AND step=?',
+        )
+        .pluck()
+        .get(source, failure, step) as string | undefined;
+    },
+    recoveryReport(id: string) {
+      return db
+        .prepare(
+          'SELECT source,repair,state FROM failure_monitor WHERE source=? OR repair=? ORDER BY rowid DESC LIMIT 1',
+        )
+        .get(id, id) as
+        { source: string; repair: string; state: string } | undefined;
     },
     listRuns: () => runListSchema.parse(listRuns.all()),
     listWorkflows: () => workflowListSchema.parse(list.all()),

@@ -1,3 +1,4 @@
+import { createFailureMonitor } from './failure-monitor.js';
 import { createGitPromotions } from './git-promotion.js';
 import { createDelegation } from './delegation.js';
 import { createSessionHistory } from './session-history.js';
@@ -59,9 +60,12 @@ export async function buildApp(
     app.addHook('onListen', async () => runs.recoverIntegrations());
     const delegation = createDelegation(db, store, runs, generateProposal);
     app.addHook('onListen', async () => delegation.start());
+    const monitor = createFailureMonitor(db, store, runs, delegation);
+    app.addHook('onListen', async () => monitor.start());
     const scheduler = createScheduler(db, store, runs, dirname(databasePath));
     app.addHook('onListen', async () => scheduler.start());
     app.addHook('preClose', async () => {
+      await monitor.close();
       await delegation.close();
       await scheduler.close();
       await runs.close();

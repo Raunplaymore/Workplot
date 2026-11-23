@@ -363,6 +363,42 @@ export function createRunService(
     }
     return text;
   }
+  async function verifiedRepair(
+    id: string,
+    failure: string,
+    step: string,
+    task: string,
+    head: string,
+  ) {
+    const repairId = store.repairForFailure(id, failure, step);
+    if (!repairId) return;
+    const repair = store.run(repairId);
+    const tree = store.worktree(task);
+    if (
+      repair.summary.status !== 'completed' ||
+      repair.summary.developmentTaskId !== task ||
+      tree?.head !== head ||
+      tree.dirtyHash ||
+      tree.pending
+    )
+      return;
+    const file = 'verify-repair.md';
+    const index = repair.results.indexOf(file);
+    if (index < 0) return;
+    const report = await artifact(repairId, file);
+    if (
+      hash(report) !== repair.completedHashes?.[index] ||
+      report.split('\n')[0] !== '작업 브랜치 커밋 · ' + head
+    )
+      return;
+    return (
+      '검증 통과\n\n[복구 실행](#/runs/' +
+      repairId +
+      ')에서 현재 작업 브랜치 커밋 `' +
+      head +
+      '`의 후보 검사를 통과했습니다.'
+    );
+  }
   async function hostRetryEvidence(
     runId: string,
     failureId: string,
@@ -902,6 +938,19 @@ export function createRunService(
                 state.summary.sessionGit?.base,
               )
             : undefined;
+          const checkedRepair =
+            tree &&
+            step.tool === 'verified-commit' &&
+            resume?.retryCheckpoint &&
+            resume.stepId === step.id
+              ? await verifiedRepair(
+                  id,
+                  resume.retryCheckpoint.failureId,
+                  step.id,
+                  tree.task,
+                  tree.head,
+                )
+              : undefined;
           const hostQa =
             tree && resume?.retryCheckpoint && resume.stepId === step.id
               ? await hostRetryEvidence(
@@ -920,6 +969,7 @@ export function createRunService(
                     resumeStepId: step.id,
                     failureId: resume.retryCheckpoint.failureId,
                     previousFailure: resume.retryCheckpoint.failureNote ?? null,
+                    recoveryReport: store.recoveryReport(id),
                     ...(tree && {
                       instructions: hostQa
                         ? '현재 diff와 호스트 QA 실측을 대조해 구현·검증 결과를 기록한다. 일치하면 기존 변경을 유지하고 이미 끝난 검사를 반복하지 않는다. 검증하지 않은 항목을 구분한다.'
@@ -1070,8 +1120,9 @@ export function createRunService(
                 : '업무 목표와 완료 기준을 참고해 현재 단계만 수행하세요. 전달받은 문서는 입력 자료입니다. 파일·명령·웹 도구를 사용하지 마세요. Markdown 본문은 kind document, 꼭 필요한 확인 질문만 kind question으로 반환하세요.',
           });
           partialTree = gitWrite ? tree : undefined;
-          let response =
-            step.tool === 'workplot-ui' && !workspace
+          let response = checkedRepair
+            ? { kind: 'document' as const, text: checkedRepair }
+            : step.tool === 'workplot-ui' && !workspace
               ? await runUiWork(
                   JSON.stringify({
                     ...missionContext,
@@ -1197,7 +1248,19 @@ export function createRunService(
           partialTree = undefined;
           let commitNote = '';
           if (step.tool === 'verified-commit') {
-            if (!tree) commitNote = 'Git 작업 폴더 미지정 · 커밋 생략';
+            if (checkedRepair && tree && isolated) {
+              const confirmed = await worktrees.open(
+                tree.task,
+                isolated,
+                state.summary.sessionGit?.base,
+              );
+              if (
+                confirmed.head !== tree.head ||
+                store.worktree(tree.task)?.dirtyHash
+              )
+                throw new StoreConflict();
+              commitNote = '복구 실행에서 검증된 커밋 · ' + tree.head;
+            } else if (!tree) commitNote = 'Git 작업 폴더 미지정 · 커밋 생략';
             else if (
               response.text.trim().split(/\r?\n/, 1)[0] !== '검증 통과'
             ) {
@@ -1418,6 +1481,56 @@ export function createRunService(
       }
     },
     view,
+    async failureEvidence(id: string, step: string) {
+      const state = store.run(id);
+      const log =
+        state.retry && state.retry.stepId === step
+          ? await readRunFile(id, step + '.log', true).catch(() => '')
+          : '';
+      const last = state.results.at(-1);
+      const text = last ? await artifact(id, last).catch(() => '') : '';
+      return (log.slice(-4200) + '\n' + text.slice(0, 1400)).trim();
+    },
+    launchRepair(
+      id: string,
+      flow: string,
+      source: ReturnType<StudioStore['run']>,
+      text: string,
+      model: string,
+    ) {
+      const s = source.summary;
+      const isolated =
+        s.isolatedGit &&
+        !s.master &&
+        s.developmentTaskId &&
+        store.worktree(s.developmentTaskId)?.ready;
+      const version = store.workflow(flow, 1);
+      const summary = store.recordRun(
+        {
+          workflowId: flow,
+          workflowVersion: 1,
+          cliVersion: s.cliVersion,
+          status: 'queued',
+          sessionId: null,
+          process: null,
+          results: [],
+          material: { name: '실패 복구 · ' + s.id.slice(0, 8), source: text },
+          modelSettings: { model, effort: 'high' },
+          ...(isolated && {
+            isolatedGit: true,
+            developmentTaskId: s.developmentTaskId,
+            sessionGit: s.sessionGit,
+            requestFiles: {
+              workspace: s.requestFiles!.workspace,
+              gitTarget: s.requestFiles!.gitTarget,
+              references: [],
+            },
+          }),
+        },
+        id,
+      );
+      return launch(summary, version.definition);
+    },
     slotSettings: () => ({ ...capacity(), limit: slotLimit() }),
     hasRetrySlot,
     list: () =>

@@ -3453,6 +3453,20 @@ export function WorkflowStudio({
               <h2>
                 {rows?.find((row) => row.id === runId)?.name ?? '작업 흐름'}
               </h2>{' '}
+              {run?.recovery && (
+                <p>
+                  실패 복구 · {run.recovery.state}{' '}
+                  {run.recovery.repair === run.summary.id ? (
+                    <a href={'#/runs/' + run.recovery.source}>원본 실행</a>
+                  ) : (
+                    run.recovery.state !== '접수' && (
+                      <a href={'#/runs/' + run.recovery.repair}>
+                        Astra 복구 보고서
+                      </a>
+                    )
+                  )}
+                </p>
+              )}
               {run && <GitRunInfo run={run} />}
               {run?.summary.requestFiles && (
                 <details>
