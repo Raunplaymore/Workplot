@@ -1,7 +1,8 @@
-import { it, expect } from 'vitest';
+import { it, expect, vi } from 'vitest';
+import * as candidateChecks from '../src/git-candidate-check.js';
 import Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import {
   mkdtemp,
   mkdir,
@@ -95,6 +96,20 @@ it.runIf(process.platform === 'darwin')(
     );
     const repo = join(root, 'repo');
     const db = new Database(':memory:');
+    // The candidate suite already runs inside Seatbelt. Exercise checkpoint
+    // decisions against the detached tree here and the real verifier in host QA.
+    const check = vi.spyOn(candidateChecks, 'checkCandidate');
+    if (process.env.WORKPLOT_HOST_ISOLATION_QA !== '1')
+      check.mockImplementation(async (_common, _base, candidate, checkout) => {
+        expect(git(checkout, 'rev-parse', 'HEAD')).toBe(candidate);
+        const result = spawnSync(process.execPath, ['check.cjs'], {
+          cwd: checkout,
+          encoding: 'utf8',
+        });
+        if (result.error) throw result.error;
+        if (result.status !== 0) throw Error(result.stderr);
+        return result.stdout;
+      });
     try {
       await mkdir(repo);
       await writeFile(
@@ -103,7 +118,7 @@ it.runIf(process.platform === 'darwin')(
       );
       await writeFile(
         join(repo, 'check.cjs'),
-        "require('node:child_process').execFileSync('git', ['--version']); if (require('node:fs').readFileSync('value','utf8') === 'bad') process.exit(1)",
+        "require('node:child_process').execFileSync('git', ['--version']); if (require('node:fs').readFileSync('value','utf8') === 'bad') { console.error('rejected fixture value'); process.exit(1); }",
       );
       await writeFile(join(repo, 'value'), 'initial');
       git(repo, 'init', '-q', '-b', 'main');
@@ -120,7 +135,7 @@ it.runIf(process.platform === 'darwin')(
       await manager.rememberChanges(tree);
       await expect(
         manager.checkpoint(tree, run, 'verified', signal),
-      ).rejects.toThrow('npm run test');
+      ).rejects.toThrow('rejected fixture value');
       expect(git(tree.path, 'rev-parse', 'HEAD')).toBe(target.sha);
       await manager.open(task, target);
       await writeFile(join(tree.path, 'value'), 'good');
@@ -131,8 +146,10 @@ it.runIf(process.platform === 'darwin')(
       expect(
         await manager.checkpoint(same, run, 'verified', signal),
       ).toBeUndefined();
+      expect(check).toHaveBeenCalledTimes(2);
       expect(git(repo, 'rev-parse', 'HEAD')).toBe(target.sha);
     } finally {
+      check.mockRestore();
       db.close();
       await rm(root, { recursive: true, force: true });
     }

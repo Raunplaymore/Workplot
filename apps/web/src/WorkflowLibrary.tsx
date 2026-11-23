@@ -195,8 +195,12 @@ export function WorkflowLibrary({
   }
   const [query, setQuery] = useState('');
   const [choice, updateChoice] = useState(libraryChoice);
-  function setChoice(id: string) {
+  const [revealChoice, setRevealChoice] = useState('');
+  const libraryRef = useRef<HTMLElement>(null);
+  const summaryRef = useRef<HTMLDivElement>(null);
+  function setChoice(id: string, revealDetail = false) {
     updateChoice(id);
+    setRevealChoice(revealDetail ? id : '');
     location.hash = id ? '#/library/' + id : '#/library';
   }
   useEffect(() => {
@@ -231,8 +235,10 @@ export function WorkflowLibrary({
   for (const row of rows ?? [])
     if (!activity.has(row.workflowId))
       activity.set(row.workflowId, row.recordedAt);
-  const visible = (entries ?? [])
-    .filter((e) => e.location === currentFolder)
+  const folderEntries = (entries ?? []).filter(
+    (entry) => entry.location === currentFolder,
+  );
+  const visible = folderEntries
     .filter((e) =>
       (e.name + ' ' + e.goal)
         .toLocaleLowerCase()
@@ -343,8 +349,32 @@ export function WorkflowLibrary({
   }
   const version =
     record?.id === id && record?.version === selectedVersion ? record : null;
+  useEffect(() => {
+    if (!revealChoice) return;
+    if (revealChoice === choice && !version) return;
+    setRevealChoice('');
+    const library = libraryRef.current;
+    const summary = summaryRef.current;
+    if (
+      revealChoice !== choice ||
+      !library ||
+      !summary ||
+      !window.matchMedia('(max-width: 800px)').matches
+    )
+      return;
+    const view = library.getBoundingClientRect();
+    const bounds = summary.getBoundingClientRect();
+    if (bounds.top < view.top || bounds.bottom > view.bottom) {
+      summary.focus({ preventScroll: true });
+      summary.scrollIntoView({ block: 'start' });
+    }
+  }, [choice, revealChoice, version]);
   return (
-    <section className={styles.library} aria-label="워크플로 보관함">
+    <section
+      ref={libraryRef}
+      className={styles.library}
+      aria-label="워크플로 보관함"
+    >
       <div className={styles.list}>
         <label>
           목록{' '}
@@ -380,9 +410,11 @@ export function WorkflowLibrary({
           <p>목록을 불러오는 중…</p>
         ) : !visible.length ? (
           <p>
-            {entries.length
-              ? '검색 결과가 없습니다.'
-              : '저장한 워크플로가 없습니다.'}{' '}
+            {currentFolder === 'archived' && !folderEntries.length
+              ? '보관한 워크플로가 없습니다.'
+              : entries.length
+                ? '검색 결과가 없습니다.'
+                : '저장한 워크플로가 없습니다.'}{' '}
             {!entries.length && <a href="#/design">흐름 설계 열기</a>}
           </p>
         ) : (
@@ -432,7 +464,7 @@ export function WorkflowLibrary({
                   <div className={styles.itemInfo}>
                     <button
                       aria-pressed={item.id === id}
-                      onClick={() => setChoice(item.id)}
+                      onClick={() => setChoice(item.id, true)}
                     >
                       <strong>{item.name}</strong>
                     </button>
@@ -553,21 +585,23 @@ export function WorkflowLibrary({
         {error && <p role="alert">{error}</p>}
         {version && (
           <>
-            <header>
-              <div>
-                <small>
-                  {versionStatus(version.version, rows ? runs : null)}
-                </small>
-                <h2>{version.definition.name}</h2>
-              </div>
-              <button
-                onClick={() => edit(version.id)}
-                disabled={!canEdit || currentFolder === 'trash'}
-              >
-                흐름 편집
-              </button>
-            </header>
-            {version.definition.goal && <p>{version.definition.goal}</p>}
+            <div ref={summaryRef} tabIndex={-1}>
+              <header>
+                <div>
+                  <small>
+                    {versionStatus(version.version, rows ? runs : null)}
+                  </small>
+                  <h2>{version.definition.name}</h2>
+                </div>
+                <button
+                  onClick={() => edit(version.id)}
+                  disabled={!canEdit || currentFolder === 'trash'}
+                >
+                  흐름 편집
+                </button>
+              </header>
+              {version.definition.goal && <p>{version.definition.goal}</p>}
+            </div>
             <h3>작업 순서</h3>
             <p>
               {orderedSteps(version.definition)

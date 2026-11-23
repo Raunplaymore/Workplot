@@ -17,6 +17,7 @@
     "typecheck": "npm run build -w @studio/contracts && npm run typecheck --workspaces --if-present && tsc --noEmit",
     "test": "npm run build -w @studio/contracts && vitest run",
     "test:e2e": "npm run build && playwright test",
+    "qa:host-isolation": "npm run build -w @studio/contracts && WORKPLOT_HOST_ISOLATION_QA=1 vitest run apps/server/test/git-worktree.test.ts apps/server/test/run.test.ts -t 'commits a deferred change|QA port retry'",
     "qa": "node qa/run.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
