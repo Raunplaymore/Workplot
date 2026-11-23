@@ -186,6 +186,11 @@
   margin: 12px 0;
   padding: 14px 0;
 }
+.codexNotice {
+  margin: 12px 0;
+  padding: 14px 0;
+  font-size: var(--type-ui);
+}
 .runTable {
   margin-top: 12px;
   overflow: auto;
@@ -226,6 +231,10 @@
     align-items: flex-start;
     padding: 10px 6px;
     font-size: var(--type-caption);
+  }
+  .codexNotice {
+    flex-direction: column;
+    align-items: flex-start;
   }
   .runTable :is(td, th) {
     padding: 8px 4px;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { healthSchema, toolsSchema, type ToolStatus } from '@studio/contracts';
 import styles from './App.module.css';
 import { WorkflowStudio } from './WorkflowStudio';
@@ -7,6 +7,13 @@ export function App() {
   const [connection, setConnection] = useState('로컬 서버 확인 중');
   const [tools, setTools] = useState<ToolStatus[] | null>(null);
   const [toolsError, setToolsError] = useState(false);
+  const toolsPanel = useRef<HTMLDetailsElement>(null);
+  const toolsTitle = useRef<HTMLHeadingElement>(null);
+
+  function showTools() {
+    if (toolsPanel.current) toolsPanel.current.open = true;
+    toolsTitle.current?.focus({ preventScroll: true });
+  }
 
   useEffect(() => {
     const controller = new AbortController();
@@ -50,6 +57,7 @@ export function App() {
     <div className={styles.app}>
       <WorkflowStudio
         connected={connection === '로컬 서버 연결됨'}
+        onShowTools={showTools}
         codexAvailable={
           tools?.some(
             (tool) => tool.id === 'codex' && tool.status === 'detected',
@@ -58,10 +66,12 @@ export function App() {
       />
       <footer className={styles.footer}>
         <span role="status">{connection}</span>
-        <details className={styles.tools}>
+        <details className={styles.tools} ref={toolsPanel}>
           <summary>내 에이전트 도구</summary>
           <section aria-labelledby="tools-title">
-            <h2 id="tools-title">내 에이전트 도구</h2>
+            <h2 id="tools-title" ref={toolsTitle} tabIndex={-1}>
+              내 에이전트 도구
+            </h2>
             <p>
               설치를 먼저 확인하고, 실행할 때 Codex의 ChatGPT 로그인 상태를
               확인합니다.
