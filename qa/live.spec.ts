@@ -999,7 +999,9 @@ test('Q31 완료한 흐름의 AI 검토 지침을 바꾸고 새 승인 뒤 수�
   }
   const oldGate = await readReview(oldId);
   await button(page, '승인하고 계속').click();
-  const restart = page.getByText('단계 지침을 바꿔 다시 실행', { exact: true });
+  const restart = page.getByText('단계 지침 저장 또는 다시 실행', {
+    exact: true,
+  });
   await expect(restart).toBeVisible({ timeout: 150000 });
   const before = await snapshot(oldId);
   const oldCalls = await calls(oldId);

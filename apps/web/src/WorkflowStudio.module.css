@@ -23,6 +23,7 @@
 .workspace button.primary,
 .library > button,
 .files button,
+.rerunFields > button,
 .gate > button {
   min-height: 42px;
   padding: 7px 12px;
@@ -683,6 +684,9 @@
 .rerunFields > button {
   max-inline-size: 100%;
   white-space: normal;
+}
+.rerunFields p {
+  overflow-wrap: anywhere;
 }
 .sequence {
   padding-left: 22px;
