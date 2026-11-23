@@ -1,3 +1,8 @@
+import {
+  codexDeadline,
+  type CliItemEvent,
+  type DeadlineReason,
+} from './codex-deadline.js';
 import { commandCheck, type CommandCheck } from './timeout-history.js';
 import { quotaRetryTime } from './quota-classifier.js';
 import { execFile, spawn } from 'node:child_process';
@@ -37,6 +42,7 @@ export class RunnerError extends Error {
       | 'ui_browser',
     public readonly exitSignal?: string,
     public readonly quotaRetryAt?: number,
+    public readonly deadline?: DeadlineReason,
   ) {
     super(reason);
   }
@@ -290,7 +296,8 @@ export async function runCodexJson(
     let overflow = false;
     let force: NodeJS.Timeout | undefined;
     let limit: NodeJS.Timeout | undefined;
-    let timer: NodeJS.Timeout | undefined;
+    const writable = Boolean(workspace && !readOnlyWorkspace);
+    let deadline: ReturnType<typeof codexDeadline> | undefined;
     const signalGroup = (value: NodeJS.Signals | 0) => {
       if (!pid) return false;
       try {
@@ -300,7 +307,7 @@ export async function runCodexJson(
         return true; // A failed probe does not prove termination.
       }
     };
-    let timedOut = false;
+    let timedOut: DeadlineReason | undefined;
     let abort: () => void;
     const result = await new Promise<{
       code: number | null;
@@ -309,6 +316,7 @@ export async function runCodexJson(
       function terminate() {
         if (closing) return;
         closing = true;
+        deadline?.dispose();
         if (pid) signalGroup('SIGTERM');
         else if (child.connected) child.disconnect();
         force = setTimeout(() => signalGroup('SIGKILL'), 800);
@@ -319,13 +327,10 @@ export async function runCodexJson(
       }
       abort = terminate;
       signal.addEventListener('abort', abort, { once: true });
-      timer = setTimeout(
-        () => {
-          timedOut = true;
-          terminate();
-        },
-        uiWork || (workspace && !readOnlyWorkspace) ? 240_000 : 120_000,
-      );
+      deadline = codexDeadline(writable, uiWork, (reason) => {
+        timedOut = reason;
+        terminate();
+      });
       child.once('error', terminate);
       child.once('close', (code) => {
         if (signalGroup(0)) {
@@ -341,12 +346,21 @@ export async function runCodexJson(
           terminate();
         } else if (!overflow) {
           output += chunk;
-          if (context?.check) {
+          if (!closing && (writable || context?.check)) {
             const lines = (pendingLine + chunk).split('\n');
             pendingLine = lines.pop() ?? '';
             for (const line of lines) {
-              const check = commandCheck(line);
-              if (check) context.check(check);
+              let event: CliItemEvent | null;
+              try {
+                event = JSON.parse(line);
+              } catch {
+                continue;
+              }
+              deadline?.observe(event);
+              if (context?.check) {
+                const check = commandCheck(event);
+                if (check) context.check(check);
+              }
             }
           }
         }
@@ -365,12 +379,13 @@ export async function runCodexJson(
       if (abort) signal.removeEventListener('abort', abort);
       clearTimeout(force);
       clearTimeout(limit);
-      clearTimeout(timer);
+      deadline?.dispose();
     });
     if (observed) context?.record(observed.model, observed.effort);
     if (!result.confirmed) throw new RunnerError('termination');
     if (signal.aborted) throw new RunnerError('cli');
-    if (timedOut) throw new RunnerError('timeout');
+    if (timedOut)
+      throw new RunnerError('timeout', undefined, undefined, timedOut);
     if (overflow) throw new RunnerError('output');
     const quotaAt = exitSignal ? undefined : quotaRetryTime(output);
     if (quotaAt) throw new RunnerError('quota', undefined, quotaAt);

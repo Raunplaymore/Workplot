@@ -1486,7 +1486,11 @@ export function createRunService(
           : error instanceof RunnerError
             ? error.exitSignal
               ? `Codex 프로세스가 ${error.exitSignal} 신호로 종료됐습니다.`
-              : failureText[reason]
+              : error.deadline === 'idle'
+                ? '4분 동안 Codex의 명령 성공 또는 파일 변경 완료 기록이 없어 개발 작업을 중단했습니다.'
+                : error.deadline === 'maximum'
+                  ? 'Codex 개발 작업이 한 호출의 최대 실행 시간인 8분에 도달했습니다.'
+                  : failureText[reason]
             : error instanceof CommitCheckError
               ? error.summary
               : error instanceof AttachmentError

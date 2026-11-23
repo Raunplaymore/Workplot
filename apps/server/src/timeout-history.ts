@@ -1,3 +1,4 @@
+import type { CliItemEvent } from './codex-deadline.js';
 import type Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 
@@ -6,18 +7,14 @@ export type CommandCheck = {
   label: string;
   status: '진행 중' | '통과' | '실패' | '결과 미확인';
 };
-export function commandCheck(line: string): CommandCheck | undefined {
-  let event;
-  try {
-    event = JSON.parse(line);
-  } catch {
-    return;
-  }
+export function commandCheck(
+  event: CliItemEvent | null,
+): CommandCheck | undefined {
   const item = event?.item;
   if (
     item?.type !== 'command_execution' ||
     typeof item.command !== 'string' ||
-    !['item.started', 'item.completed'].includes(event.type)
+    (event?.type !== 'item.started' && event?.type !== 'item.completed')
   )
     return;
   // Store only a known check label and an opaque command identity. Arguments can contain user data.

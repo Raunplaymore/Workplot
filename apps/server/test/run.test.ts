@@ -1723,16 +1723,14 @@ test('a retry receives only observed check labels and reports repeated checks an
       ready: async () => '0.166.0',
       async write(prompt) {
         attempt++;
-        const check = commandCheck(
-          JSON.stringify({
-            type: 'item.completed',
-            item: {
-              type: 'command_execution',
-              command: 'npm run typecheck -- local-only-argument',
-              exit_code: 0,
-            },
-          }),
-        )!;
+        const check = commandCheck({
+          type: 'item.completed',
+          item: {
+            type: 'command_execution',
+            command: 'npm run typecheck -- local-only-argument',
+            exit_code: 0,
+          },
+        })!;
         codexCallContext.getStore()!.check!(check);
         if (attempt === 1) throw new RunnerError('timeout');
         const handoff = JSON.parse(prompt).retryHandoff;
