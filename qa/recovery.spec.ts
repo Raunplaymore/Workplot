@@ -555,7 +555,7 @@ for (const [code, title, step, target] of cases) {
           expect(accepted.status()).toBe(200);
           evidence.acceptedRetryStatus = accepted.status();
         }
-        const expected = step === 'draft' ? '사용자 확인 대기' : '완료';
+        const expected = step === 'draft' ? '승인 대기' : '완료';
         await page.getByRole('link', { name: '실행 현황' }).click();
         await expect(
           row.getByRole('cell', { name: expected, exact: true }),
