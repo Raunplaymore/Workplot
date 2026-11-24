@@ -149,9 +149,7 @@ export function ActiveSessionCard({
   return (
     <article className={styles.activeCard}>
       <header>
-        <h4>
-          <a href={'#/runs/' + id}>{row.name}</a>
-        </h4>
+        <h4>{row.name}</h4>
         <span>
           v{workflowVersion} · {history.length + 1}회차
         </span>
@@ -160,6 +158,7 @@ export function ActiveSessionCard({
         {status}
         {detail?.stage && ' · ' + detail.stage}
       </strong>
+      <a href={'#/runs/' + id}>{action} →</a>
       {detail?.task && <p>{detail.task}</p>}
       {latest && latest.text !== detail?.task && (
         <p>
@@ -197,7 +196,6 @@ export function ActiveSessionCard({
           </ul>
         </details>
       )}
-      <a href={'#/runs/' + id}>{action} →</a>
     </article>
   );
 }

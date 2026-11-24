@@ -365,7 +365,7 @@ try {
     await page
       .getByRole('heading', { name: '화면 개선', exact: true })
       .waitFor();
-    await page.getByRole('button', { name: '흐름 편집', exact: true }).click();
+    await page.getByRole('button', { name: /^저장 v\d+ 편집$/ }).click();
     const address = origin + '/#/design/' + linked.id;
     await page.waitForURL(address);
     await page.reload();

@@ -2172,9 +2172,7 @@ test('보관함에서 마지막 완료 버전과 저장 자료를 구분해 실�
   const library = page.getByRole('region', { name: '워크플로 보관함' });
   const detail = library.locator('article');
   await page.getByRole('searchbox').fill(flow.name);
-  await expect(
-    detail.getByText('저장 v1 · 실행 전', { exact: true }),
-  ).toBeVisible();
+  await expect(detail.getByText('실행 전', { exact: true })).toBeVisible();
   await expect(
     detail.getByRole('button', { name: '저장된 자료로 실행' }),
   ).toHaveCount(0);
@@ -2199,7 +2197,13 @@ test('보관함에서 마지막 완료 버전과 저장 자료를 구분해 실�
   await page.getByRole('link', { name: '내 워크플로', exact: true }).click();
   await page.getByRole('searchbox').fill(flow.name);
   const status = '저장 v2 · 마지막 완료 v1 · 최신 버전 실행 전';
-  await expect(library.getByText(status, { exact: true })).toHaveCount(2);
+  await expect(library.getByText(status, { exact: true })).toHaveCount(1);
+  await expect(
+    detail.getByRole('button', { name: '저장 v2 편집' }),
+  ).toBeVisible();
+  await expect(
+    detail.getByText('마지막 완료 v1 · 최신 버전 실행 전', { exact: true }),
+  ).toBeVisible();
   await expect(
     detail.getByRole('link', { name: /v1 결과 열기/ }),
   ).toHaveAttribute('href', new URL(first).hash);
@@ -2221,7 +2225,7 @@ test('보관함에서 마지막 완료 버전과 저장 자료를 구분해 실�
   await page.getByRole('link', { name: '내 워크플로', exact: true }).click();
   await page.getByRole('searchbox').fill(flow.name);
   await expect(
-    detail.getByText('저장 v2 · 마지막 완료 v2', { exact: true }),
+    detail.getByText('마지막 완료 v2', { exact: true }),
   ).toBeVisible();
   await expect(
     detail.getByRole('link', { name: /v2 결과 열기/ }),
@@ -2281,7 +2285,8 @@ test('보관함에서 마지막 완료 버전과 저장 자료를 구분해 실�
       });
       await expect(failure).toHaveAttribute('href', failureHash);
       await expect(section.locator('small')).toHaveText(
-        '저장 v2 · 최근 실행 실패 · 마지막 완료 v2',
+        (area === 'list' ? '저장 v2 · ' : '') +
+          '최근 실행 실패 · 마지막 완료 v2',
       );
       await expect(
         detail.getByRole('link', { name: /v2 결과 열기/ }),

@@ -2040,32 +2040,40 @@ export function WorkflowStudio({
                 <section aria-label="진행 중인 워크플롯">
                   <h3>진행 중인 워크플롯</h3>
                   <div className={styles.activeGrid}>
-                    {activeRows.map((row) => {
-                      const waiting =
-                        waitingRunLabels[
-                          (row.quotaRetryAt ? undefined : row.gateKind) ??
-                            'unspecified'
-                        ];
-                      return (
-                        <ActiveSessionCard
-                          key={row.id}
-                          row={row}
-                          history={earlierSessions(row)}
-                          status={
-                            row.quotaRetryAt
-                              ? '한도 대기'
-                              : row.status === 'waiting'
-                                ? waiting.status
-                                : runLabels[row.status]
-                          }
-                          action={
-                            row.status === 'waiting'
-                              ? waiting.action
-                              : '실행 상세 열기'
-                          }
-                        />
-                      );
-                    })}
+                    {activeRows
+                      .toSorted(
+                        (a, b) =>
+                          Number(b.status === 'waiting' && !b.quotaRetryAt) -
+                          Number(a.status === 'waiting' && !a.quotaRetryAt),
+                      )
+                      .map((row) => {
+                        const waiting =
+                          waitingRunLabels[
+                            (row.quotaRetryAt ? undefined : row.gateKind) ??
+                              'unspecified'
+                          ];
+                        return (
+                          <ActiveSessionCard
+                            key={row.id}
+                            row={row}
+                            history={earlierSessions(row)}
+                            status={
+                              row.quotaRetryAt
+                                ? '한도 대기'
+                                : row.status === 'waiting'
+                                  ? waiting.status
+                                  : runLabels[row.status]
+                            }
+                            action={
+                              row.status === 'waiting' && !row.quotaRetryAt
+                                ? row.gateKind === 'review'
+                                  ? '문서 검토 열기'
+                                  : waiting.action
+                                : '실행 상세 열기'
+                            }
+                          />
+                        );
+                      })}
                   </div>
                 </section>
               )}

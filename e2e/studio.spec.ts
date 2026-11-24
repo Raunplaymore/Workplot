@@ -289,7 +289,18 @@ for (const width of [390, 1280]) {
     let detailReads = 0;
     const responses = rows.map(({ row }) => row);
     await page.route('**/api/runs', (route) =>
-      route.fulfill({ json: responses }),
+      route.fulfill({
+        json: [
+          {
+            ...responses[0],
+            name: '실행 중인 작업',
+            status: 'running',
+            gateKind: undefined,
+            id: '00000000-0000-4000-8000-000000000009',
+          },
+          ...responses,
+        ],
+      }),
     );
     for (const { name, gateKind, ...summary } of responses) {
       await page.route(`**/api/runs/${summary.id}/view`, (route) => {
@@ -379,7 +390,10 @@ for (const width of [390, 1280]) {
     const cards = page
       .getByRole('region', { name: '진행 중인 워크플롯' })
       .getByRole('article');
-    await expect(cards).toHaveCount(3);
+    await expect(cards).toHaveCount(4);
+    await expect(cards.last().getByRole('heading')).toHaveText(
+      '실행 중인 작업',
+    );
     const cardFor = (name: string) =>
       cards.filter({ has: page.getByRole('heading', { name, exact: true }) });
     for (const {
@@ -388,11 +402,15 @@ for (const width of [390, 1280]) {
       action,
     } of rows) {
       const card = cardFor(name);
+      await expect(card.getByRole('link')).toHaveCount(1);
       await expect(
         card.getByText(expectedStatus + ' · 자료 확인', { exact: true }),
       ).toBeVisible();
       await expect(
-        card.getByRole('link', { name: action + ' →', exact: true }),
+        card.getByRole('link', {
+          name: (action === '검토 열기' ? '문서 검토 열기' : action) + ' →',
+          exact: true,
+        }),
       ).toBeVisible();
     }
     for (const {
@@ -400,7 +418,10 @@ for (const width of [390, 1280]) {
       action,
     } of rows) {
       await cardFor(name)
-        .getByRole('link', { name: action + ' →', exact: true })
+        .getByRole('link', {
+          name: (action === '검토 열기' ? '문서 검토 열기' : action) + ' →',
+          exact: true,
+        })
         .click();
       await expect(page).toHaveURL(new RegExp('#/runs/' + id + '$'));
       if (id === responses[0]!.id) {

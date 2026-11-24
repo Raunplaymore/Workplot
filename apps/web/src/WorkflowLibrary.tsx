@@ -25,22 +25,22 @@ import {
 import { localRequest } from './local-request';
 import styles from './WorkflowLibrary.module.css';
 
-function versionStatus(saved: number, runs: RunList | null) {
-  const label = '저장 v' + saved;
-  if (!runs) return label + ' · 실행 기록 확인 중';
-  if (!runs.length) return label + ' · 실행 전';
+function versionStatus(saved: number, runs: RunList | null, detail = false) {
+  const prefix = detail ? '' : '저장 v' + saved + ' · ';
+  if (!runs) return prefix + '실행 기록 확인 중';
+  if (!runs.length) return prefix + '실행 전';
   const last = runs.find((run) => run.status === 'completed');
   const completed = last
     ? '마지막 완료 v' + last.workflowVersion
     : '완료 기록 없음';
   const latest = runs.find((run) => run.workflowVersion === saved);
-  if (!latest) return [label, completed, '최신 버전 실행 전'].join(' · ');
-  if (latest.quotaRetryAt) return [label, '한도 대기', completed].join(' · ');
-  if (latest.status === 'completed') return label + ' · ' + completed;
+  if (!latest) return prefix + completed + ' · 최신 버전 실행 전';
+  if (latest.quotaRetryAt) return prefix + '한도 대기 · ' + completed;
+  if (latest.status === 'completed') return prefix + completed;
   if (latest.status === 'failed')
     return (
       <>
-        {label} ·{' '}
+        {prefix}
         <a
           className={styles.failureLink}
           href={'#/runs/' + latest.id + '/log'}
@@ -58,7 +58,7 @@ function versionStatus(saved: number, runs: RunList | null) {
     stopped: '최근 실행 중단',
     unknown: '종료 상태 미확인',
   }[latest.status];
-  return [label, status, completed].join(' · ');
+  return prefix + status + ' · ' + completed;
 }
 
 function libraryChoice() {
@@ -587,20 +587,18 @@ export function WorkflowLibrary({
           <>
             <div ref={summaryRef} tabIndex={-1}>
               <header>
-                <div>
-                  <small>
-                    {versionStatus(version.version, rows ? runs : null)}
-                  </small>
-                  <h2>{version.definition.name}</h2>
-                </div>
+                <h2>{version.definition.name}</h2>
+                {version.definition.goal && <p>{version.definition.goal}</p>}
                 <button
                   onClick={() => edit(version.id)}
                   disabled={!canEdit || currentFolder === 'trash'}
                 >
-                  흐름 편집
+                  저장 v{version.version} 편집
                 </button>
+                <small>
+                  {versionStatus(version.version, rows ? runs : null, true)}
+                </small>
               </header>
-              {version.definition.goal && <p>{version.definition.goal}</p>}
             </div>
             <h3>작업 순서</h3>
             <p>
@@ -610,6 +608,7 @@ export function WorkflowLibrary({
             </p>
             <button
               disabled={!canEdit || currentFolder === 'trash'}
+              className={styles.secondaryAction}
               onClick={() => editSettings(version.id)}
             >
               반복 설정 ·{' '}
@@ -674,6 +673,7 @@ export function WorkflowLibrary({
                     새 자료로 실행
                   </button>
                   <button
+                    className={styles.secondaryAction}
                     disabled={
                       developmentBusy ||
                       version.definition.steps.some(
