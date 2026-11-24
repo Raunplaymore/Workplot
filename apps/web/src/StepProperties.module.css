@@ -1,0 +1,33 @@
+.navigation {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-block: 12px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--wash);
+}
+.navigation button {
+  flex: 1 1 auto;
+  min-height: 40px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+.navigation button[aria-pressed='true'] {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
+  font-weight: 700;
+}
+.content:not([hidden]) {
+  display: grid;
+  gap: 12px;
+}
+.content[hidden] {
+  display: none;
+}

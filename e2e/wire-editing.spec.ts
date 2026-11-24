@@ -23,6 +23,7 @@ test('wire editing keeps order, nearby selection and zoom through insertion, mov
   expect(await position(added)).toBe('translate(240px, 90px)');
   expect(await position('review')).toBe('translate(480px, 90px)');
   expect(await viewport()).toBe(initial);
+  await button('단계 연결').click();
   await button('뒤로 이동').click();
   expect(await step.inputValue()).toBe(added);
   expect(await position(added)).toBe('translate(480px, 90px)');

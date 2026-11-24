@@ -91,6 +91,7 @@ test('edits a saved flow by keyboard and passes that version through review to t
     await expect(paths.getByLabel('초안 검토 → 수정본 작성')).toHaveText(
       '↓ 승인 후',
     );
+    await page.getByRole('button', { name: '단계 연결', exact: true }).click();
     await next.selectOption('revision');
     await expect(
       page.getByText('연결되지 않은 흐름', { exact: false }),
@@ -101,6 +102,7 @@ test('edits a saved flow by keyboard and passes that version through review to t
     await page.getByRole('button', { name: '흐름 저장', exact: true }).click();
     await expect(page.getByRole('alert')).toContainText('하나의 흐름');
     await editor.selectOption('revision');
+    await page.getByRole('button', { name: '단계 연결', exact: true }).click();
     await next.selectOption('review');
     await expect(editor.locator('option').last()).toHaveText('3. 초안 검토');
     await next.selectOption('draft');
@@ -119,6 +121,7 @@ test('edits a saved flow by keyboard and passes that version through review to t
       4,
     );
     await page.getByLabel('단계 제목').fill('임시 작업');
+    await page.getByRole('button', { name: '단계 연결', exact: true }).click();
     await page.getByRole('button', { name: '뒤로 이동' }).press('Enter');
     await expect(
       page.getByLabel('편집할 단계').locator('option').nth(2),
@@ -129,12 +132,14 @@ test('edits a saved flow by keyboard and passes that version through review to t
     await expect(
       page.getByLabel('편집할 단계').locator('option').nth(1),
     ).toHaveText('2. 임시 작업');
+    await page.getByRole('button', { name: '단계 연결', exact: true }).click();
     await page.getByRole('button', { name: '단계 삭제' }).press('Enter');
     await expect(page.getByLabel('편집할 단계').locator('option')).toHaveCount(
       3,
     );
     await page.getByLabel('편집할 단계').selectOption('draft');
     await page.getByLabel('작업 지침').fill('브라우저에서 편집한 지침');
+    await page.getByRole('button', { name: '도구와 권한', exact: true }).click();
     await page.getByLabel('담당 도구').selectOption('unassigned');
     await page
       .getByRole('button', { name: '흐름 저장', exact: true })
@@ -145,6 +150,7 @@ test('edits a saved flow by keyboard and passes that version through review to t
     await expect(
       page.getByRole('button', { name: '저장한 버전 실행' }),
     ).toBeDisabled();
+    await page.getByRole('button', { name: '도구와 권한', exact: true }).click();
     await page.getByLabel('담당 도구').selectOption('codex');
     await page.getByLabel('작업 스킬').selectOption('source-check');
     await page.getByText('업무 설계서', { exact: true }).click();
@@ -158,6 +164,7 @@ test('edits a saved flow by keyboard and passes that version through review to t
     const plan = page.getByRole('list', { name: '단계별 결과 전달' });
     await expect(plan.getByRole('listitem').nth(1)).toContainText('AI 검토');
     await steps.selectOption('revision');
+    await page.getByRole('button', { name: '단계 연결', exact: true }).click();
     await page.getByText('전달받을 문서', { exact: true }).click();
     await page
       .getByRole('checkbox', { name: '직전 작업 문서 자동 연결' })
@@ -172,6 +179,7 @@ test('edits a saved flow by keyboard and passes that version through review to t
       'AI 검토, 초안 작성',
     );
     await steps.selectOption({ label: '2. AI 검토' });
+    await page.getByRole('button', { name: '단계 연결', exact: true }).click();
     await page.getByRole('button', { name: '단계 삭제' }).press('Enter');
     await page
       .getByRole('button', { name: '흐름 저장', exact: true })

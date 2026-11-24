@@ -1,3 +1,4 @@
+import { StepProperties } from './StepProperties';
 import { ApprovalChanges } from './ApprovalChanges';
 import { ActiveSessionCard } from './ActiveSessionCard';
 import { GitRun, GitRunInfo } from './GitRun';
@@ -2723,442 +2724,472 @@ export function WorkflowStudio({
                       </label>
                     )}
                     {step && !flowSettings && (
-                      <>
-                        <label>
-                          단계 제목
-                          <input
-                            value={step.title}
-                            maxLength={100}
-                            onChange={(event) =>
-                              replaceStep({
-                                ...step,
-                                title: event.target.value,
-                              })
-                            }
-                          />
-                        </label>
-                        {step.kind === 'task' && !step.workflowRef && (
-                          <NodeInstructions
-                            key={canvasSession + ':' + step.id}
-                            title={step.title}
-                            context={JSON.stringify({
-                              workflow: draft.name,
-                              goal: draft.goal,
-                              doneWhen: draft.doneWhen,
-                              inputs: step.inputFrom?.map(titleFor),
-                              connections: draft.links
-                                .filter(
-                                  ({ from, to }) =>
-                                    from === step.id || to === step.id,
-                                )
-                                .map(({ from, to }) => [
-                                  titleFor(from),
-                                  titleFor(to),
-                                ]),
-                              nextRole: steps.find(
-                                (item) =>
-                                  item.id ===
-                                  draft.links.find(
-                                    (link) => link.from === step.id,
-                                  )?.to,
-                              )?.kind,
-                            })}
-                            value={step.instructions}
-                            change={(instructions) =>
-                              replaceStep({ ...step, instructions })
-                            }
-                            available={connected && codexAvailable}
-                          />
-                        )}
-                        <label>
-                          다음 단계 연결
-                          <select
-                            value={
-                              draft.links.find((link) => link.from === step.id)
-                                ?.to ?? ''
-                            }
-                            onChange={(event) =>
-                              wire(step.id, event.target.value)
-                            }
-                          >
-                            <option value="">연결 없음</option>
-                            {steps
-                              .filter((item) => item.id !== step.id)
-                              .map((item) => (
-                                <option key={item.id} value={item.id}>
-                                  {item.title || '제목 없음'}
-                                </option>
-                              ))}
-                          </select>
-                        </label>
-                        {step.kind === 'review' &&
-                          !draft.links.some(
-                            (link) => link.from === step.id,
-                          ) && (
+                      <StepProperties
+                        key={step.id}
+                        roleContent={
+                          <>
                             <label>
+                              단계 제목
                               <input
-                                type="checkbox"
-                                checked={!!step.startNextSession}
+                                value={step.title}
+                                maxLength={100}
                                 onChange={(event) =>
                                   replaceStep({
                                     ...step,
-                                    startNextSession: event.target.checked
-                                      ? true
-                                      : undefined,
+                                    title: event.target.value,
                                   })
                                 }
                               />
-                              승인한 인계 문서로 다음 세션 시작
                             </label>
-                          )}
-                        {step.kind === 'task' && (
+                            {step.kind === 'task' && !step.workflowRef && (
+                              <NodeInstructions
+                                key={canvasSession + ':' + step.id}
+                                title={step.title}
+                                context={JSON.stringify({
+                                  workflow: draft.name,
+                                  goal: draft.goal,
+                                  doneWhen: draft.doneWhen,
+                                  inputs: step.inputFrom?.map(titleFor),
+                                  connections: draft.links
+                                    .filter(
+                                      ({ from, to }) =>
+                                        from === step.id || to === step.id,
+                                    )
+                                    .map(({ from, to }) => [
+                                      titleFor(from),
+                                      titleFor(to),
+                                    ]),
+                                  nextRole: steps.find(
+                                    (item) =>
+                                      item.id ===
+                                      draft.links.find(
+                                        (link) => link.from === step.id,
+                                      )?.to,
+                                  )?.kind,
+                                })}
+                                value={step.instructions}
+                                change={(instructions) =>
+                                  replaceStep({ ...step, instructions })
+                                }
+                                available={connected && codexAvailable}
+                              />
+                            )}
+                            {step.kind === 'task' && (
+                              <>
+                                {saved && (
+                                  <section aria-label="실행 결과">
+                                    <strong>실행 결과</strong>
+                                    {documentButton(step)}
+                                  </section>
+                                )}
+                                {!saved && (
+                                  <p>
+                                    흐름을 저장하고 실행하면 이곳에서 결과
+                                    문서를 읽을 수 있습니다.
+                                  </p>
+                                )}
+                              </>
+                            )}
+                          </>
+                        }
+                        connections={
                           <>
-                            {saved && (
-                              <section aria-label="실행 결과">
-                                <strong>실행 결과</strong>
-                                {documentButton(step)}
-                              </section>
-                            )}
-                            {!saved && (
-                              <p>
-                                흐름을 저장하고 실행하면 이곳에서 결과 문서를
-                                읽을 수 있습니다.
-                              </p>
-                            )}
-                            <details className={styles.inputs}>
-                              <summary>전달받을 문서</summary>
-                              <label>
-                                <input
-                                  type="checkbox"
-                                  checked={selectedInputs === undefined}
-                                  onChange={(event) =>
-                                    replaceStep({
-                                      ...step,
-                                      inputFrom: event.target.checked
-                                        ? undefined
-                                        : (plan.steps[index]?.inputs ?? []),
-                                    })
-                                  }
-                                />
-                                직전 작업 문서 자동 연결
-                              </label>
-                              {selectedInputs !== undefined &&
-                                [
-                                  ...precedingTasks.map((item) => item.id),
-                                  ...invalidInputs,
-                                ].map((id) => (
-                                  <label key={id}>
-                                    <input
-                                      type="checkbox"
-                                      checked={selectedInputs.includes(id)}
-                                      disabled={
-                                        !selectedInputs.includes(id) &&
-                                        selectedInputs.length >= 4
-                                      }
-                                      onChange={(event) =>
-                                        replaceStep({
-                                          ...step,
-                                          inputFrom: event.target.checked
-                                            ? [...selectedInputs, id]
-                                            : selectedInputs.filter(
-                                                (source) => source !== id,
-                                              ),
-                                        })
-                                      }
-                                    />
-                                    {titleFor(id)}
-                                    {invalidInputs.includes(id)
-                                      ? ' · 연결할 수 없음'
-                                      : ''}
-                                  </label>
-                                ))}
-                            </details>
-                            {invalidInputs.length > 0 && (
-                              <p className={styles.error}>
-                                전달받을 문서에 앞서 실행되지 않는 단계가
-                                있습니다.
-                              </p>
-                            )}
                             <label>
-                              연결할 워크플롯
+                              다음 단계 연결
                               <select
-                                value={link ? link.id + '/' + link.version : ''}
-                                onChange={(e) => {
-                                  const [id, version] =
-                                    e.target.value.split('/');
-                                  const picked = list.find(
-                                    (row) => row.id === id,
-                                  );
-                                  if (!picked) {
-                                    replaceStep({
-                                      ...step,
-                                      workflowRef: undefined,
-                                    });
-                                    return;
-                                  }
-                                  replaceStep({
-                                    ...step,
-                                    workflowRef: {
-                                      id: picked.id,
-                                      version: Number(version),
-                                    },
-                                    title: picked.name,
-                                    instructions:
-                                      '연결한 워크플롯의 마지막 작업 문서를 반환합니다.',
-                                    agent: 'codex',
-                                    codexSkill: undefined,
-                                    tool: undefined,
-                                    skill: undefined,
-                                  });
-                                }}
+                                value={
+                                  draft.links.find(
+                                    (link) => link.from === step.id,
+                                  )?.to ?? ''
+                                }
+                                onChange={(event) =>
+                                  wire(step.id, event.target.value)
+                                }
                               >
                                 <option value="">연결 없음</option>
-                                {link &&
-                                  !list.some(
-                                    (row) =>
-                                      row.id === link.id &&
-                                      row.version === link.version,
-                                  ) && (
-                                    <option
-                                      value={link.id + '/' + link.version}
-                                    >
-                                      {linkedRecord?.definition.name ??
-                                        '연결된 흐름'}{' '}
-                                      · v{link.version}
-                                    </option>
-                                  )}
-                                {list
-                                  .filter((row) => row.id !== saved?.id)
-                                  .map((row) => (
-                                    <option
-                                      key={row.id}
-                                      value={row.id + '/' + row.version}
-                                    >
-                                      {row.name} · v{row.version}
+                                {steps
+                                  .filter((item) => item.id !== step.id)
+                                  .map((item) => (
+                                    <option key={item.id} value={item.id}>
+                                      {item.title || '제목 없음'}
                                     </option>
                                   ))}
                               </select>
                             </label>
-                            {link &&
-                              linkedRecord?.id === link.id &&
-                              linkedRecord.version === link.version && (
-                                <details key={link.id + link.version} open>
-                                  <summary>
-                                    {linkedRecord.definition.name} · v
-                                    {link.version}
-                                  </summary>
-                                  <ol>
-                                    {orderedSteps(linkedRecord.definition).map(
-                                      (s) => (
-                                        <li key={s.id}>{s.title}</li>
-                                      ),
-                                    )}
-                                  </ol>
-                                  {saved && (
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        openDocument({
-                                          workflow: saved.id,
-                                          step: step.id,
-                                          version: saved.version,
-                                        })
-                                      }
-                                    >
-                                      문서와 하위 지침 열기
-                                    </button>
-                                  )}
-                                </details>
-                              )}
-                            {!link && (
-                              <>
+                            {step.kind === 'review' &&
+                              !draft.links.some(
+                                (link) => link.from === step.id,
+                              ) && (
                                 <label>
-                                  담당 도구
-                                  <select
-                                    value={step.agent ?? 'codex'}
+                                  <input
+                                    type="checkbox"
+                                    checked={!!step.startNextSession}
                                     onChange={(event) =>
                                       replaceStep({
                                         ...step,
-                                        agent:
-                                          event.target.value === 'codex'
-                                            ? 'codex'
-                                            : 'unassigned',
+                                        startNextSession: event.target.checked
+                                          ? true
+                                          : undefined,
                                       })
                                     }
-                                  >
-                                    <option value="codex">
-                                      Codex
-                                      {codexAvailable ? '' : ' · 설치 미확인'}
-                                    </option>
-                                    <option value="unassigned">미지정</option>
-                                    <option disabled>
-                                      Claude Code · 실행 미연결
-                                    </option>
-                                  </select>
+                                  />
+                                  승인한 인계 문서로 다음 세션 시작
                                 </label>
-                                {step.codexSkill && (
-                                  <div>
-                                    실행 스킬 · ${step.codexSkill.title}{' '}
-                                    <button
-                                      type="button"
-                                      onClick={() =>
+                              )}
+                            {step.kind === 'task' && (
+                              <>
+                                <details className={styles.inputs}>
+                                  <summary>전달받을 문서</summary>
+                                  <label>
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedInputs === undefined}
+                                      onChange={(event) =>
                                         replaceStep({
                                           ...step,
-                                          codexSkill: undefined,
+                                          inputFrom: event.target.checked
+                                            ? undefined
+                                            : (plan.steps[index]?.inputs ?? []),
+                                        })
+                                      }
+                                    />
+                                    직전 작업 문서 자동 연결
+                                  </label>
+                                  {selectedInputs !== undefined &&
+                                    [
+                                      ...precedingTasks.map((item) => item.id),
+                                      ...invalidInputs,
+                                    ].map((id) => (
+                                      <label key={id}>
+                                        <input
+                                          type="checkbox"
+                                          checked={selectedInputs.includes(id)}
+                                          disabled={
+                                            !selectedInputs.includes(id) &&
+                                            selectedInputs.length >= 4
+                                          }
+                                          onChange={(event) =>
+                                            replaceStep({
+                                              ...step,
+                                              inputFrom: event.target.checked
+                                                ? [...selectedInputs, id]
+                                                : selectedInputs.filter(
+                                                    (source) => source !== id,
+                                                  ),
+                                            })
+                                          }
+                                        />
+                                        {titleFor(id)}
+                                        {invalidInputs.includes(id)
+                                          ? ' · 연결할 수 없음'
+                                          : ''}
+                                      </label>
+                                    ))}
+                                </details>
+                                {invalidInputs.length > 0 && (
+                                  <p className={styles.error}>
+                                    전달받을 문서에 앞서 실행되지 않는 단계가
+                                    있습니다.
+                                  </p>
+                                )}
+                                <label>
+                                  연결할 워크플롯
+                                  <select
+                                    value={
+                                      link ? link.id + '/' + link.version : ''
+                                    }
+                                    onChange={(e) => {
+                                      const [id, version] =
+                                        e.target.value.split('/');
+                                      const picked = list.find(
+                                        (row) => row.id === id,
+                                      );
+                                      if (!picked) {
+                                        replaceStep({
+                                          ...step,
+                                          workflowRef: undefined,
+                                        });
+                                        return;
+                                      }
+                                      replaceStep({
+                                        ...step,
+                                        workflowRef: {
+                                          id: picked.id,
+                                          version: Number(version),
+                                        },
+                                        title: picked.name,
+                                        instructions:
+                                          '연결한 워크플롯의 마지막 작업 문서를 반환합니다.',
+                                        agent: 'codex',
+                                        codexSkill: undefined,
+                                        tool: undefined,
+                                        skill: undefined,
+                                      });
+                                    }}
+                                  >
+                                    <option value="">연결 없음</option>
+                                    {link &&
+                                      !list.some(
+                                        (row) =>
+                                          row.id === link.id &&
+                                          row.version === link.version,
+                                      ) && (
+                                        <option
+                                          value={link.id + '/' + link.version}
+                                        >
+                                          {linkedRecord?.definition.name ??
+                                            '연결된 흐름'}{' '}
+                                          · v{link.version}
+                                        </option>
+                                      )}
+                                    {list
+                                      .filter((row) => row.id !== saved?.id)
+                                      .map((row) => (
+                                        <option
+                                          key={row.id}
+                                          value={row.id + '/' + row.version}
+                                        >
+                                          {row.name} · v{row.version}
+                                        </option>
+                                      ))}
+                                  </select>
+                                </label>
+                                {link &&
+                                  linkedRecord?.id === link.id &&
+                                  linkedRecord.version === link.version && (
+                                    <details key={link.id + link.version} open>
+                                      <summary>
+                                        {linkedRecord.definition.name} · v
+                                        {link.version}
+                                      </summary>
+                                      <ol>
+                                        {orderedSteps(
+                                          linkedRecord.definition,
+                                        ).map((s) => (
+                                          <li key={s.id}>{s.title}</li>
+                                        ))}
+                                      </ol>
+                                      {saved && (
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            openDocument({
+                                              workflow: saved.id,
+                                              step: step.id,
+                                              version: saved.version,
+                                            })
+                                          }
+                                        >
+                                          문서와 하위 지침 열기
+                                        </button>
+                                      )}
+                                    </details>
+                                  )}
+                              </>
+                            )}
+                            <div className={styles.buttons}>
+                              {button(
+                                '앞으로 이동',
+                                () => move(-1),
+                                !joined || index < 1,
+                              )}
+                              {button(
+                                '뒤로 이동',
+                                () => move(1),
+                                !joined || index >= steps.length - 1,
+                              )}
+                              {button(
+                                '단계 삭제',
+                                () => {
+                                  const next = removeWorkflowStep(steps, index);
+                                  const neighbor =
+                                    next[Math.min(index, next.length - 1)]!;
+                                  changeOrder(next);
+                                  inspect(neighbor.id);
+                                  reveal.current = neighbor.id;
+                                },
+                                !canDeleteStep,
+                              )}
+                            </div>
+                            {canDeleteStep && !busy && (
+                              <details className={styles.inputs}>
+                                <summary>삭제 영향</summary>
+                                {previousStep && nextStep && (
+                                  <p>
+                                    앞 단계 ‘{titleFor(previousStep.id)}’와 뒤
+                                    단계 ‘{titleFor(nextStep.id)}’가 서로
+                                    재연결됩니다.
+                                  </p>
+                                )}
+                                {!previousStep && nextStep && (
+                                  <p>
+                                    ‘{titleFor(nextStep.id)}’가 새 시작 단계가
+                                    됩니다.
+                                  </p>
+                                )}
+                                {previousStep && !nextStep && (
+                                  <p>
+                                    ‘{titleFor(previousStep.id)}’가 새 끝 단계가
+                                    됩니다.
+                                  </p>
+                                )}
+                                {step.kind === 'review' && (
+                                  <p>
+                                    이 단계의 사용자 승인 대기가 사라집니다.
+                                  </p>
+                                )}
+                                {affectedTasks.length > 0 && (
+                                  <>
+                                    <p>
+                                      삭제 후에는 저장하기 전에 아래 작업의
+                                      ‘전달받을 문서’에서 삭제된 단계 참조를
+                                      수정해야 합니다.
+                                    </p>
+                                    <ul>
+                                      {affectedTasks.map((item) => (
+                                        <li key={item.id}>
+                                          {titleFor(item.id)}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </>
+                                )}
+                              </details>
+                            )}
+                          </>
+                        }
+                        execution={
+                          step.kind === 'task' && !link ? (
+                            <>
+                              {!link && (
+                                <>
+                                  <label>
+                                    담당 도구
+                                    <select
+                                      value={step.agent ?? 'codex'}
+                                      onChange={(event) =>
+                                        replaceStep({
+                                          ...step,
+                                          agent:
+                                            event.target.value === 'codex'
+                                              ? 'codex'
+                                              : 'unassigned',
                                         })
                                       }
                                     >
-                                      연결 해제
-                                    </button>
-                                  </div>
-                                )}
-                                <label>
-                                  작업 스킬
-                                  <select
-                                    value={step.skill ?? 'none'}
-                                    onChange={(event) =>
-                                      replaceStep({
-                                        ...step,
-                                        skill:
-                                          event.target.value === 'source-check'
-                                            ? 'source-check'
-                                            : 'none',
-                                      })
-                                    }
-                                  >
-                                    <option value="none">없음</option>
-                                    <option value="source-check">
-                                      자료 사실 확인
-                                    </option>
-                                  </select>
-                                </label>
-                                <label>
-                                  Git 작업 폴더 권한
-                                  <select
-                                    value={step.workspaceAccess ?? ''}
-                                    onChange={(e) =>
-                                      replaceStep({
-                                        ...step,
-                                        workspaceAccess:
-                                          e.target.value === 'read-only'
-                                            ? 'read-only'
-                                            : e.target.value === 'write'
-                                              ? 'write'
-                                              : undefined,
-                                      })
-                                    }
-                                  >
-                                    <option value="">
-                                      자동 · 화면 구현 또는 단일 작업만 수정
-                                    </option>
-                                    <option value="read-only">읽기 전용</option>
-                                    <option value="write">
-                                      수정 및 체크포인트 저장
-                                    </option>
-                                  </select>
-                                </label>
-                                <label>
-                                  사용 도구
-                                  <select
-                                    value={step.tool ?? ''}
-                                    onChange={(event) =>
-                                      replaceStep({
-                                        ...step,
-                                        tool:
-                                          event.target.value ===
-                                          'market-calendar'
-                                            ? 'market-calendar'
-                                            : event.target.value ===
-                                                'workplot-ui'
-                                              ? 'workplot-ui'
-                                              : event.target.value ===
-                                                  'verified-commit'
-                                                ? 'verified-commit'
+                                      <option value="codex">
+                                        Codex
+                                        {codexAvailable ? '' : ' · 설치 미확인'}
+                                      </option>
+                                      <option value="unassigned">미지정</option>
+                                      <option disabled>
+                                        Claude Code · 실행 미연결
+                                      </option>
+                                    </select>
+                                  </label>
+                                  {step.codexSkill && (
+                                    <div>
+                                      실행 스킬 · ${step.codexSkill.title}{' '}
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          replaceStep({
+                                            ...step,
+                                            codexSkill: undefined,
+                                          })
+                                        }
+                                      >
+                                        연결 해제
+                                      </button>
+                                    </div>
+                                  )}
+                                  <label>
+                                    작업 스킬
+                                    <select
+                                      value={step.skill ?? 'none'}
+                                      onChange={(event) =>
+                                        replaceStep({
+                                          ...step,
+                                          skill:
+                                            event.target.value ===
+                                            'source-check'
+                                              ? 'source-check'
+                                              : 'none',
+                                        })
+                                      }
+                                    >
+                                      <option value="none">없음</option>
+                                      <option value="source-check">
+                                        자료 사실 확인
+                                      </option>
+                                    </select>
+                                  </label>
+                                  <label>
+                                    Git 작업 폴더 권한
+                                    <select
+                                      value={step.workspaceAccess ?? ''}
+                                      onChange={(e) =>
+                                        replaceStep({
+                                          ...step,
+                                          workspaceAccess:
+                                            e.target.value === 'read-only'
+                                              ? 'read-only'
+                                              : e.target.value === 'write'
+                                                ? 'write'
                                                 : undefined,
-                                      })
-                                    }
-                                  >
-                                    <option value="">없음</option>
-                                    <option value="workplot-ui">
-                                      Workplot 화면 구현·검증
-                                    </option>
-                                    <option value="verified-commit">
-                                      검증 후 Git 커밋
-                                    </option>
-                                    <option value="market-calendar">
-                                      공식 웹 조회 · 츠키지 달력
-                                    </option>
-                                  </select>
-                                </label>
-                              </>
-                            )}
-                          </>
-                        )}
-                        <div className={styles.buttons}>
-                          {button(
-                            '앞으로 이동',
-                            () => move(-1),
-                            !joined || index < 1,
-                          )}
-                          {button(
-                            '뒤로 이동',
-                            () => move(1),
-                            !joined || index >= steps.length - 1,
-                          )}
-                          {button(
-                            '단계 삭제',
-                            () => {
-                              const next = removeWorkflowStep(steps, index);
-                              const neighbor =
-                                next[Math.min(index, next.length - 1)]!;
-                              changeOrder(next);
-                              inspect(neighbor.id);
-                              reveal.current = neighbor.id;
-                            },
-                            !canDeleteStep,
-                          )}
-                        </div>
-                        {canDeleteStep && !busy && (
-                          <details className={styles.inputs}>
-                            <summary>삭제 영향</summary>
-                            {previousStep && nextStep && (
-                              <p>
-                                앞 단계 ‘{titleFor(previousStep.id)}’와 뒤 단계
-                                ‘{titleFor(nextStep.id)}’가 서로 재연결됩니다.
-                              </p>
-                            )}
-                            {!previousStep && nextStep && (
-                              <p>
-                                ‘{titleFor(nextStep.id)}’가 새 시작 단계가
-                                됩니다.
-                              </p>
-                            )}
-                            {previousStep && !nextStep && (
-                              <p>
-                                ‘{titleFor(previousStep.id)}’가 새 끝 단계가
-                                됩니다.
-                              </p>
-                            )}
-                            {step.kind === 'review' && (
-                              <p>이 단계의 사용자 승인 대기가 사라집니다.</p>
-                            )}
-                            {affectedTasks.length > 0 && (
-                              <>
-                                <p>
-                                  삭제 후에는 저장하기 전에 아래 작업의
-                                  ‘전달받을 문서’에서 삭제된 단계 참조를
-                                  수정해야 합니다.
-                                </p>
-                                <ul>
-                                  {affectedTasks.map((item) => (
-                                    <li key={item.id}>{titleFor(item.id)}</li>
-                                  ))}
-                                </ul>
-                              </>
-                            )}
-                          </details>
-                        )}
-                      </>
+                                        })
+                                      }
+                                    >
+                                      <option value="">
+                                        자동 · 화면 구현 또는 단일 작업만 수정
+                                      </option>
+                                      <option value="read-only">
+                                        읽기 전용
+                                      </option>
+                                      <option value="write">
+                                        수정 및 체크포인트 저장
+                                      </option>
+                                    </select>
+                                  </label>
+                                  <label>
+                                    사용 도구
+                                    <select
+                                      value={step.tool ?? ''}
+                                      onChange={(event) =>
+                                        replaceStep({
+                                          ...step,
+                                          tool:
+                                            event.target.value ===
+                                            'market-calendar'
+                                              ? 'market-calendar'
+                                              : event.target.value ===
+                                                  'workplot-ui'
+                                                ? 'workplot-ui'
+                                                : event.target.value ===
+                                                    'verified-commit'
+                                                  ? 'verified-commit'
+                                                  : undefined,
+                                        })
+                                      }
+                                    >
+                                      <option value="">없음</option>
+                                      <option value="workplot-ui">
+                                        Workplot 화면 구현·검증
+                                      </option>
+                                      <option value="verified-commit">
+                                        검증 후 Git 커밋
+                                      </option>
+                                      <option value="market-calendar">
+                                        공식 웹 조회 · 츠키지 달력
+                                      </option>
+                                    </select>
+                                  </label>
+                                </>
+                              )}
+                            </>
+                          ) : undefined
+                        }
+                      />
                     )}
                     {!flowSettings && step && (
                       <div className={styles.buttons}>
