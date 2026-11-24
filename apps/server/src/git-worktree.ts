@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join, relative, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { GitTarget } from '@studio/contracts';
@@ -301,7 +301,9 @@ export function manageWorktrees(store: StudioStore, root: string) {
         )
       ).trim();
       if (verify) {
-        const scratch = await mkdtemp(join(dirname(common), 'commit-check-'));
+        const scratch = await mkdtemp(
+          join(await realpath(tmpdir()), 'workplot-commit-check-'),
+        );
         const checkout = join(scratch, 'checkout');
         try {
           await git(common, 'worktree', 'add', '--detach', checkout, next);

@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { git } from './git-worktree.js';
 import { verifyGit } from './git-target.js';
@@ -133,11 +134,9 @@ export function createGitIntegration(store: StudioStore) {
             (/^[RC]/.test(status) ? ' → ' + records[i++] : ''),
         );
       }
-      const attempts = join(pool, 'checks');
-      await mkdir(attempts, { recursive: true, mode: 0o700 });
-      if ((await realpath(attempts)) !== attempts)
-        throw Error('검사 폴더가 이동했습니다.');
-      scratch = await mkdtemp(join(attempts, job.run + '-'));
+      scratch = await mkdtemp(
+        join(await realpath(tmpdir()), 'workplot-integration-check-'),
+      );
       stage = join(scratch, 'checkout');
       await git(common, 'worktree', 'add', '--detach', stage, candidate);
       const team = await checkTeamPolicy(
