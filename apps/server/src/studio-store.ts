@@ -1,3 +1,7 @@
+import {
+  applyRequestHandoff,
+  type PendingRequest,
+} from './session-request-handoff.js';
 import { openTimeoutHistory } from './timeout-history.js';
 import { prepareFailureMonitor } from './failure-monitor.js';
 import { openGitQueue } from './git-queue-store.js';
@@ -207,8 +211,42 @@ export function openStudioStore(db: Database.Database) {
       .pluck()
       .all(id) as string[];
   }
+  db.exec(`CREATE TABLE IF NOT EXISTS incoming_request_ledgers (
+    run TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE, ledger TEXT NOT NULL
+  ) STRICT;`);
+  const readLedger = db
+    .prepare('SELECT ledger FROM incoming_request_ledgers WHERE run=?')
+    .pluck();
+  const readNotes = db.prepare(
+    'SELECT id,text FROM session_requests WHERE run=? ORDER BY rowid',
+  );
+  function outgoingRequests(id: string): PendingRequest[] {
+    return (readNotes.all(id) as { id: string; text: string }[]).map(
+      (note) => ({
+        ...note,
+        evidence: '',
+        remaining: '',
+      }),
+    );
+  }
+  function pendingRequests(id: string): PendingRequest[] {
+    const history: PendingRequest[][] = [];
+    const seen = new Set<string>();
+    for (let current = id; !seen.has(current);) {
+      seen.add(current);
+      const snapshot = readLedger.get(current);
+      if (typeof snapshot === 'string') {
+        history.push(JSON.parse(snapshot) as PendingRequest[]);
+        break;
+      }
+      const previous = run(current).summary.previousSessionId;
+      if (!previous) break;
+      history.push(outgoingRequests(previous));
+      current = previous;
+    }
+    return history.reverse().flat();
+  }
   function requestView(id: string) {
-    const { previousSessionId } = run(id).summary;
     const round = db
       .prepare(
         `WITH RECURSIVE chain(id) AS (
@@ -221,7 +259,7 @@ export function openStudioStore(db: Database.Database) {
     return {
       runId: id,
       round,
-      incoming: previousSessionId ? requestsFor(previousSessionId) : [],
+      incoming: pendingRequests(id).map((note) => note.text),
       outgoing: requestsFor(id),
     };
   }
@@ -711,7 +749,7 @@ export function openStudioStore(db: Database.Database) {
       definition: WorkflowDefinition,
     ) => updateWorkflow.immediate(id, baseVersion, definition),
     recordRun,
-    requestsFor,
+    pendingRequests,
     requestView,
     addSessionRequest: db.transaction(
       (id: string, note: { id: string; text: string }) => {
@@ -774,6 +812,7 @@ export function openStudioStore(db: Database.Database) {
         finish: (childId: string) => void,
         newTask = false,
         parentStatus: 'waiting' | 'completed' = 'waiting',
+        approvedHandoff = source,
       ) => {
         const parent = run(parentId);
         if (
@@ -814,6 +853,16 @@ export function openStudioStore(db: Database.Database) {
         db.prepare(
           "UPDATE runs SET record=json_set(record,'$.summary.nextSessionId',?) WHERE id=?",
         ).run(child.id, parentId);
+        const pending = applyRequestHandoff(
+          pendingRequests(parentId),
+          approvedHandoff,
+        );
+        db.prepare(
+          'INSERT INTO incoming_request_ledgers(run,ledger) VALUES (?,?)',
+        ).run(
+          child.id,
+          JSON.stringify([...pending, ...outgoingRequests(parentId)]),
+        );
         finish(child.id);
         return child;
       },

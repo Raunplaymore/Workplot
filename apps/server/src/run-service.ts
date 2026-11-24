@@ -1,3 +1,4 @@
+import { requestContext as sessionRequestContext } from './session-request-handoff.js';
 import {
   previousAttempts,
   describeTimeouts,
@@ -799,9 +800,7 @@ export function createRunService(
         images.push(filename);
       }
       const taskRequest = state.summary.taskRequest;
-      const roundRequests = state.summary.previousSessionId
-        ? store.requestsFor(state.summary.previousSessionId)
-        : [];
+      const roundContext = sessionRequestContext(store.pendingRequests(id));
       const requestContext = taskRequest
         ? {
             taskRequest,
@@ -1294,12 +1293,7 @@ export function createRunService(
             ...retryContext,
             approval,
             ...requestContext,
-            ...(index === 0 &&
-              roundRequests.length && {
-                roundRequests,
-                roundRequestPolicy:
-                  '이번 회차를 위해 사용자가 남긴 참고 요청이다. 원래 목표와 인계문을 함께 검토하고 첫 결과 문서에 채택한 내용 또는 보류 이유를 간략히 적는다. 승인과 권한은 기존 규칙을 따른다.',
-              }),
+            ...roundContext,
             ...(references?.length && { readOnlyReferences: references }),
             task: step.title,
             workflow: plan,
@@ -1376,12 +1370,7 @@ export function createRunService(
                     ...retryContext,
                     approval,
                     ...requestContext,
-                    ...(index === 0 &&
-                      roundRequests.length && {
-                        roundRequests,
-                        roundRequestPolicy:
-                          '이번 회차 참고 요청을 검토해 결과에 채택 내용이나 보류 이유를 기록한다.',
-                      }),
+                    ...roundContext,
                     ...(references?.length && {
                       readOnlyReferences: references,
                     }),
@@ -1402,6 +1391,7 @@ export function createRunService(
                         : store.masterSources(parent.runId),
                     }),
                     discoveryMission:
+                      !roundContext.roundRequests?.length &&
                       !taskRequest &&
                       state.summary.previousSessionId &&
                       material?.source.startsWith(discoveryBrief + '\n')
@@ -1615,6 +1605,8 @@ export function createRunService(
               : previous.text.trim(),
           finish,
           execution.redirected,
+          'waiting',
+          previous.text,
         );
         launch(child, definition);
       } else {

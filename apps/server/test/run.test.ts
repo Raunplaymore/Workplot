@@ -1848,3 +1848,104 @@ test('approving a linked result versions its owning child and pins the new child
     },
   );
 });
+
+test('approved handoffs carry original requests, evidence and remaining work to every writing step', async () => {
+  const note = {
+    id: randomUUID(),
+    text: '단계 속성을 계층적으로 탐색하게 해 주세요',
+  };
+  const other = { id: randomUUID(), text: '역할 지침을 바로 찾게 해 주세요' };
+  const prompts: {
+    currentStepId: string;
+    requestLedger?: {
+      id: string;
+      text: string;
+      evidence: string;
+      remaining: string;
+    }[];
+  }[] = [];
+  let verdict = '';
+  await withStudio(
+    {
+      ready: async () => '0.166.0',
+      write: async (raw) => {
+        const prompt = JSON.parse(raw);
+        prompts.push(prompt);
+        return {
+          kind: 'document',
+          text:
+            prompt.currentStepId === 'handoff' ? '인계\n' + verdict : '계획',
+        };
+      },
+    },
+    async ({ inject }) => {
+      const workflow = (
+        await inject('POST', '/workflows', {
+          ...definition,
+          steps: [
+            definition.steps[0],
+            { ...definition.steps[0], id: 'handoff' },
+            { ...definition.steps[1], startNextSession: true },
+          ],
+          links: [
+            { from: 'draft', to: 'handoff' },
+            { from: 'handoff', to: 'review' },
+          ],
+        })
+      ).json() as { id: string; version: number };
+      let id: string = randomUUID();
+      await inject('POST', '/runs', {
+        id,
+        workflowId: workflow.id,
+        workflowVersion: workflow.version,
+      });
+      const advance = async () => {
+        const view = await until(inject, id, 'waiting');
+        await inject('POST', '/runs/' + id + '/decision', {
+          gateId: view.gate!.id,
+          decision: 'accept',
+        });
+        id = (await until(inject, id, 'completed')).summary.nextSessionId!;
+        await until(inject, id, 'waiting');
+      };
+      await until(inject, id, 'waiting');
+      for (const n of [note, other])
+        await inject('POST', '/runs/' + id + '/session-requests', n);
+      const report = {
+        id: note.id,
+        status: 'open',
+        evidence: '옵션 네 묶음 확인',
+        remaining: '지침을 찾는 경로 확인',
+      };
+      verdict = '요청 판정 ' + JSON.stringify(report);
+      await advance();
+      expect(
+        prompts.slice(-2).map((p) => p.requestLedger?.map((n) => n.text)),
+      ).toEqual([
+        [note.text, other.text],
+        [note.text, other.text],
+      ]);
+      verdict =
+        '요청 판정 ' +
+        JSON.stringify({
+          ...report,
+          status: 'done',
+          remaining: '',
+          evidence: '실제 지침 탐색 경로 확인',
+        });
+      await advance();
+      for (const p of prompts.slice(-2))
+        expect(p.requestLedger?.[0]).toEqual({
+          ...note,
+          evidence: report.evidence,
+          remaining: report.remaining,
+        });
+      await advance();
+      for (const p of prompts.slice(-2))
+        expect(p.requestLedger?.map((n) => n.id)).toEqual([other.id]);
+      expect(
+        (await inject('GET', '/runs/' + id + '/session-requests')).json(),
+      ).toMatchObject({ incoming: [other.text] });
+    },
+  );
+});
