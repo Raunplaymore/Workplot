@@ -31,10 +31,7 @@
       "kind": "task",
       "instructions": "현재 점검과 다음 세션 제안을 종합해 작업 범위, 시작 시나리오, 구체적 합격 기준 및 한계를 1200자 안으로 작성한다. 종료 권고면 종료 사유만 작성한다. 다음 개발을 시작하거나 승인을 대신하지 않는다.",
       "agent": "codex",
-      "inputFrom": [
-        "check",
-        "propose"
-      ],
+      "inputFrom": ["check", "propose"],
       "position": {
         "x": 490,
         "y": 90
