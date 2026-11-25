@@ -137,7 +137,9 @@ test('edits a saved flow by keyboard and passes that version through review to t
     await expect(
       page.getByLabel('편집할 단계').locator('option').nth(1),
     ).toHaveText('2. 임시 작업');
-    await page.getByRole('button', { name: '단계 연결', exact: true }).click();
+    await expect(
+      page.getByRole('button', { name: '단계 연결', exact: true }),
+    ).toHaveAttribute('aria-expanded', 'true');
     await page.getByRole('button', { name: '단계 삭제' }).press('Enter');
     await expect(page.getByLabel('편집할 단계').locator('option')).toHaveCount(
       3,
@@ -157,9 +159,12 @@ test('edits a saved flow by keyboard and passes that version through review to t
     await expect(
       page.getByRole('button', { name: '저장한 버전 실행' }),
     ).toBeDisabled();
-    await page
-      .getByRole('button', { name: '도구와 권한', exact: true })
-      .click();
+    const toolsPanel = page.getByRole('button', {
+      name: '도구와 권한',
+      exact: true,
+    });
+    if ((await toolsPanel.getAttribute('aria-expanded')) === 'false')
+      await toolsPanel.click();
     await page.getByLabel('담당 도구').selectOption('codex');
     await page.getByLabel('작업 스킬').selectOption('source-check');
     await page.getByText('업무 설계서', { exact: true }).click();
@@ -300,6 +305,10 @@ test('edits a saved flow by keyboard and passes that version through review to t
     ).toContainText('완료');
     await page.setViewportSize({ width: 1440, height: 960 });
     await page.getByRole('button', { name: '저장 흐름 편집' }).click();
+    await expect(
+      page.getByRole('heading', { name: '다음 실행의 GPT 설정' }),
+    ).toBeVisible();
+    await page.getByRole('button', { name: '단계 속성', exact: true }).click();
     await expect(page.getByLabel('작업 지침')).toHaveValue(
       '브라우저에서 편집한 지침',
     );
@@ -335,8 +344,15 @@ test('edits a saved flow by keyboard and passes that version through review to t
       .selectOption({ label: '브라우저 검증 흐름 · v4' });
     await page.getByRole('button', { name: '흐름 열기', exact: true }).click();
     await expect(editor.locator('option').last()).toHaveText('4. 초안 검토');
-    await page.getByText('AI 실행 설정', { exact: true }).click();
-    await page.getByLabel('모델', { exact: true }).fill('gpt-6.2-sol');
+    await page
+      .getByRole('button', { name: 'GPT 실행 설정', exact: true })
+      .click();
+    const model = page.getByLabel('모델', { exact: true });
+    await expect(model).toHaveValue('');
+    await model.selectOption('custom');
+    await page.getByLabel('모델 ID', { exact: true }).fill('gpt-6.1-sol');
+    await model.selectOption({ label: 'Sol (gpt-6.2-sol)' });
+    await expect(page.getByLabel('모델 ID', { exact: true })).toHaveCount(0);
     await page.getByLabel('추론 강도').selectOption('medium');
     await page.getByRole('button', { name: '저장한 버전 실행' }).click();
     await page.getByText('AI 실행 설정과 호출 기록', { exact: true }).click();

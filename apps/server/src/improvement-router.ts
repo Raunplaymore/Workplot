@@ -16,6 +16,7 @@ export async function routeImprovements(
   write: (
     prompt: string,
     signal: AbortSignal,
+    phase: 'select' | 'review',
   ) => Promise<{ kind: 'question' | 'document'; text: string }>,
 ) {
   const inputs = JSON.parse(context);
@@ -24,9 +25,10 @@ export async function routeImprovements(
       inputs,
       roles,
       instructions:
-        '현재 계획에 필요한 경로를 선택한다. 화면은 screen, 기능은 feature다. 둘 다 필요하면 둘 다, 필요 없으면 빈 배열로 답한다. 한쪽의 결과가 다른 쪽의 입력이면 routes를 실행 순서대로 적고 sequential을 true로 설정한다. text에는 JSON 객체만 쓴다. 형식은 {"reason":"선택 근거","routes":["screen"]}이다.',
+        '전달된 계획만 읽고 경로를 선택한다. 파일 탐색과 화면 검사, 선택한 경로의 검토는 다음 호출이 담당한다. 화면은 screen, 기능은 feature다. 둘 다 필요하면 둘 다, 필요 없으면 빈 배열로 답한다. 한쪽의 결과가 다른 쪽의 입력이면 routes를 실행 순서대로 적고 sequential을 true로 설정한다. text에는 JSON 객체만 쓴다. 형식은 {"reason":"선택 근거","routes":["screen"]}이다.',
     }),
     signal,
+    'select',
   );
   signal.throwIfAborted();
   if (result.kind !== 'document') throw new RunnerError('output');
@@ -49,6 +51,7 @@ export async function routeImprovements(
           '선택된 역할에 해당하는 개선안과 검증 방법을 다음 구현 단계에 전달한다.',
       }),
       branchSignal,
+      'review',
     );
     if (response.kind !== 'document' || !response.text.trim())
       throw new RunnerError('output');

@@ -9,7 +9,7 @@ afterEach(async () => {
   for (const f of cleanups.splice(0)) await f();
   vi.useRealTimers();
 });
-function fixture() {
+function fixture(instructions = '검사') {
   const db = new Database(':memory:'),
     store = openStudioStore(db);
   const position = { x: 0, y: 0 },
@@ -22,7 +22,7 @@ function fixture() {
           position,
           kind: 'task',
           tool: 'workplot-ui',
-          instructions: '검사',
+          instructions,
         },
         {
           id: 'gate',
@@ -556,4 +556,22 @@ test('a workspace write block ends delegation without accepting or retrying', as
   expect(d.status(id)).toMatchObject({ enabled: false, used: 0 });
   expect(runs.retry).not.toHaveBeenCalled();
   expect(runs.decide).not.toHaveBeenCalled();
+});
+
+test.each([
+  ['[END_LOOP]', 'finish'],
+  ['[CONTINUE_LOOP]', 'accept'],
+  ['미결정', undefined],
+])('honors the final task selection %s', async (marker, decision) => {
+  const { id, v, runs, d, config } = fixture('[END_LOOP] / [CONTINUE_LOOP]');
+  runs.reviewedArtifact.mockResolvedValue('인계 결과\n' + marker);
+  d.enable(id, { ...config, handoffOnly: true });
+  await d.tick();
+  if (decision)
+    expect(runs.decide).toHaveBeenCalledWith(id, {
+      gateId: v.gate!.id,
+      decision,
+    });
+  else expect(runs.decide).not.toHaveBeenCalled();
+  expect(d.status(id).enabled).toBe(decision === 'accept');
 });

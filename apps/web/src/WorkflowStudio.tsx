@@ -298,23 +298,40 @@ export function WorkflowStudio({
   const requestedStart = useRef<{ id: string; key: string } | null>(null);
   const [error, setError] = useState('');
   const [handoffFlow, setHandoffFlow] = useState('');
-  const [model, setModel] = useState('');
+  const [modelChoice, setModelChoice] = useState('');
+  const [customModel, setCustomModel] = useState('');
   const [effort, setEffort] = useState<ModelSettings['effort']>();
-  const modelControl = (
-    <details>
-      <summary>AI 실행 설정</summary>
+  const modelFields = (
+    <>
       <label>
         모델{' '}
-        <input
-          value={model}
-          placeholder="자동"
-          maxLength={96}
-          onChange={(e) => setModel(e.target.value)}
-        />
-      </label>{' '}
+        <select
+          aria-label="모델"
+          value={modelChoice}
+          onChange={(e) => setModelChoice(e.target.value)}
+        >
+          <option value="">자동</option>
+          <option value="gpt-6.2-sol">Sol (gpt-6.2-sol)</option>
+          <option value="gpt-6.2-astra">Astra (gpt-6.2-astra)</option>
+          <option value="gpt-6.1-terra">Terra (gpt-6.1-terra)</option>
+          <option value="custom">직접 입력</option>
+        </select>
+      </label>
+      {modelChoice === 'custom' && (
+        <label>
+          모델 ID
+          <input
+            value={customModel}
+            placeholder="예: gpt-6.2-sol"
+            maxLength={96}
+            onChange={(e) => setCustomModel(e.target.value)}
+          />
+        </label>
+      )}
       <label>
         추론 강도{' '}
         <select
+          aria-label="추론 강도"
           value={effort ?? ''}
           onChange={(e) =>
             setEffort(effortLevels.find((v) => v === e.target.value))
@@ -326,6 +343,12 @@ export function WorkflowStudio({
           ))}
         </select>
       </label>
+    </>
+  );
+  const modelControl = (
+    <details>
+      <summary>AI 실행 설정</summary>
+      {modelFields}
     </details>
   );
   const [starting, setStarting] = useState(false);
@@ -1068,10 +1091,11 @@ export function WorkflowStudio({
           return;
         }
       }
+      const model = modelChoice === 'custom' ? customModel.trim() : modelChoice;
+      if (modelChoice === 'custom' && !model)
+        throw Error('실행할 모델 ID를 입력하세요.');
       const modelSettings =
-        model.trim() || effort
-          ? { model: model.trim() || undefined, effort }
-          : undefined;
+        model || effort ? { model: model || undefined, effort } : undefined;
       if (
         modelSettings?.model &&
         !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$/.test(modelSettings.model)
@@ -1791,7 +1815,22 @@ export function WorkflowStudio({
                       draft.projectFolder.branch
                     : '프로젝트 폴더 연결'}
                 </button>
-                {saved && modelControl}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProperties(true);
+                    setFlowSettings(true);
+                    requestAnimationFrame(() =>
+                      stepPanel.current
+                        ?.querySelector<HTMLSelectElement>(
+                          'select[aria-label="모델"]',
+                        )
+                        ?.focus(),
+                    );
+                  }}
+                >
+                  GPT 실행 설정
+                </button>
                 {saved && slotInfo}
                 {button('되돌리기', undo, busy || history.length === 0)}
                 {button(
@@ -2786,6 +2825,10 @@ export function WorkflowStudio({
                     </legend>
                     {flowSettings && (
                       <>
+                        <section aria-label="다음 실행의 GPT 설정">
+                          <h3>다음 실행의 GPT 설정</h3>
+                          {modelFields}
+                        </section>
                         <section aria-label="프로젝트 폴더">
                           <strong>프로젝트 폴더</strong>
                           <p>
@@ -4163,7 +4206,21 @@ export function WorkflowStudio({
                 <div className={styles.buttons}>
                   {button(
                     '저장 흐름 편집',
-                    () => openWorkflow(run.summary.workflowId),
+                    () => {
+                      const previous = run.summary.modelSettings;
+                      const id = previous?.model ?? '';
+                      const custom =
+                        !!id &&
+                        ![
+                          'gpt-6.2-sol',
+                          'gpt-6.2-astra',
+                          'gpt-6.1-terra',
+                        ].includes(id);
+                      setModelChoice(custom ? 'custom' : id);
+                      setCustomModel(custom ? id : '');
+                      setEffort(previous?.effort);
+                      openWorkflow(run.summary.workflowId, undefined, true);
+                    },
                     busy || dirty || !connected,
                   )}
                   {dirty && (

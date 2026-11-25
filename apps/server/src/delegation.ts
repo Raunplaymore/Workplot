@@ -406,13 +406,37 @@ export function createDelegation(
       else finish('종료 시각에 도달했습니다.');
       return;
     }
+    const file = v.results.at(-1);
+    const handoffStep = store
+      .executionDefinition(v.summary.workflowId, v.summary.workflowVersion)
+      .steps.find((s) => s.kind === 'task' && s.id + '.md' === file);
+    const selectsTask =
+      handoffStep?.kind === 'task' &&
+      handoffStep.instructions.includes('[END_LOOP]') &&
+      handoffStep.instructions.includes('[CONTINUE_LOOP]');
+    let handoff: string | undefined;
+    if (selectsTask && file) {
+      handoff = (await runs.reviewedArtifact(id, gateId, file)).trim();
+      if (!allowed() || runs.view(id).gate?.id !== gateId) return;
+      const decision = handoff.split(/\r?\n/).at(-1)?.trim();
+      if (decision === '[END_LOOP]') {
+        finish('새로 검증할 과제가 없어 루프를 마쳤습니다.');
+        return;
+      }
+      if (decision !== '[CONTINUE_LOOP]') {
+        end(row, '인계 문서에 다음 회차 선택 결과가 없어 검토를 기다립니다.');
+        return;
+      }
+    }
     if (config.handoffOnly) {
       if (config.maxSessions !== null && row.used >= config.maxSessions) {
         finish('추가 세션 횟수를 모두 사용했습니다.');
         return;
       }
-      const file = v.results.at(-1);
-      if (!file || !(await runs.reviewedArtifact(id, gateId, file)).trim()) {
+      if (
+        !file ||
+        !(handoff ?? (await runs.reviewedArtifact(id, gateId, file))).trim()
+      ) {
         end(row, '다음 회차 인계 문서를 확인할 수 없습니다.');
         return;
       }

@@ -57,7 +57,6 @@ export function NodeInstructions({
   }
   return (
     <section aria-label="노드 역할 편집">
-      <h3>이 단계의 역할과 지침</h3>
       <label>
         역할 지침
         <textarea

@@ -12,8 +12,9 @@ it.each([[], ['feature'], ['screen'], ['screen', 'feature']])(
       roles,
       '{}',
       new AbortController().signal,
-      async (prompt) => {
+      async (prompt, _signal, phase) => {
         const { selectedRole } = JSON.parse(prompt);
+        expect(phase).toBe(selectedRole ? 'review' : 'select');
         if (!selectedRole)
           return doc(JSON.stringify({ reason: '계획 근거', routes }));
         started.push(selectedRole);

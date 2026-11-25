@@ -1389,15 +1389,17 @@ export function createRunService(
                 step.improvementRoutes,
                 prompt,
                 signal,
-                (input, branchSignal) =>
+                (input, branchSignal, phase) =>
                   runner.write(
                     input,
                     branchSignal,
                     observer(),
                     undefined,
                     true,
-                    images,
-                    tree?.path ?? routeWorkspace,
+                    phase === 'review' ? images : undefined,
+                    phase === 'review'
+                      ? (tree?.path ?? routeWorkspace)
+                      : undefined,
                     true,
                   ),
               )

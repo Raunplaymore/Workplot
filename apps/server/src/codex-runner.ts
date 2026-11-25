@@ -342,10 +342,14 @@ export async function runCodexJson(
       }
       abort = terminate;
       signal.addEventListener('abort', abort, { once: true });
-      deadline = codexDeadline(writable, uiWork, (reason) => {
-        timedOut = reason;
-        terminate();
-      });
+      deadline = codexDeadline(
+        writable,
+        uiWork || Boolean(workspace && readOnlyWorkspace),
+        (reason) => {
+          timedOut = reason;
+          terminate();
+        },
+      );
       child.once('error', terminate);
       child.once('close', (code) => {
         if (signalGroup(0)) {

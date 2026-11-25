@@ -1,4 +1,5 @@
-import { useState, type ReactNode } from 'react';
+import { useId, useState, type ReactNode } from 'react';
+import { ChevronDown, GitBranch, NotebookPen, ShieldCheck } from 'lucide-react';
 import styles from './StepProperties.module.css';
 
 export function StepProperties({
@@ -11,42 +12,66 @@ export function StepProperties({
   execution?: ReactNode;
 }) {
   const sections = [
-    { title: '역할과 지침', content: roleContent },
-    { title: '단계 연결', content: connections },
-    ...(execution ? [{ title: '도구와 권한', content: execution }] : []),
+    {
+      id: 'role',
+      title: '역할과 지침',
+      icon: NotebookPen,
+      content: roleContent,
+    },
+    {
+      id: 'connections',
+      title: '단계 연결',
+      icon: GitBranch,
+      content: connections,
+    },
+    ...(execution
+      ? [
+          {
+            id: 'tools',
+            title: '도구와 권한',
+            icon: ShieldCheck,
+            content: execution,
+          },
+        ]
+      : []),
   ];
-  const [selection, select] = useState('역할과 지침');
-  const active = sections.some((s) => s.title === selection)
-    ? selection
-    : sections[0]!.title;
+  const prefix = useId();
+  const [active, setActive] = useState<string | null>('role');
   return (
-    <>
-      <div
-        className={styles.navigation}
-        role="group"
-        aria-label="단계 속성 항목"
-      >
-        {sections.map((s) => (
-          <button
-            key={s.title}
-            type="button"
-            aria-pressed={active === s.title}
-            onClick={() => select(s.title)}
+    <div className={styles.panels} role="group" aria-label="단계 속성 항목">
+      {sections.map(({ id, title, icon: Icon, content }) => {
+        const open = active === id;
+        const panelId = prefix + '-' + id;
+        return (
+          <section
+            key={id}
+            className={styles.panel}
+            data-open={open}
+            aria-labelledby={panelId + '-title'}
           >
-            {s.title}
-          </button>
-        ))}
-      </div>
-      {sections.map((s) => (
-        <section
-          key={s.title}
-          className={styles.content}
-          aria-label={s.title}
-          hidden={active !== s.title}
-        >
-          {s.content}
-        </section>
-      ))}
-    </>
+            <h3 className={styles.heading}>
+              <button
+                id={panelId + '-title'}
+                type="button"
+                aria-expanded={open}
+                aria-controls={panelId}
+                onClick={() => setActive(open ? null : id)}
+              >
+                <Icon size={17} aria-hidden="true" />
+                <span>{title}</span>
+                <ChevronDown
+                  className={styles.chevron}
+                  size={16}
+                  aria-hidden="true"
+                />
+              </button>
+            </h3>
+            <div id={panelId} className={styles.content} hidden={!open}>
+              {content}
+            </div>
+          </section>
+        );
+      })}
+    </div>
   );
 }
