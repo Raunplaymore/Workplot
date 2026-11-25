@@ -1,3 +1,4 @@
+import { prepareThreeStepDraft } from './three-step-draft.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -78,6 +79,7 @@ test('edits a saved flow by keyboard and passes that version through review to t
       });
     });
     await page.setViewportSize({ width: 390, height: 844 });
+    await prepareThreeStepDraft(page);
     await page.goto('/');
     await page.getByRole('link', { name: '흐름 설계' }).click();
     const reviewStep = page.getByRole('button', { name: '2. 초안 검토' });
@@ -92,6 +94,9 @@ test('edits a saved flow by keyboard and passes that version through review to t
       '↓ 승인 후',
     );
     await page.getByRole('button', { name: '단계 연결', exact: true }).click();
+    await expect(
+      page.getByRole('status', { name: '선행 문서 연결' }),
+    ).toHaveText(/자동 연결.*연결된 선행 문서 없음/);
     await next.selectOption('revision');
     await expect(
       page.getByText('연결되지 않은 흐름', { exact: false }),
@@ -139,7 +144,9 @@ test('edits a saved flow by keyboard and passes that version through review to t
     );
     await page.getByLabel('편집할 단계').selectOption('draft');
     await page.getByLabel('작업 지침').fill('브라우저에서 편집한 지침');
-    await page.getByRole('button', { name: '도구와 권한', exact: true }).click();
+    await page
+      .getByRole('button', { name: '도구와 권한', exact: true })
+      .click();
     await page.getByLabel('담당 도구').selectOption('unassigned');
     await page
       .getByRole('button', { name: '흐름 저장', exact: true })
@@ -150,7 +157,9 @@ test('edits a saved flow by keyboard and passes that version through review to t
     await expect(
       page.getByRole('button', { name: '저장한 버전 실행' }),
     ).toBeDisabled();
-    await page.getByRole('button', { name: '도구와 권한', exact: true }).click();
+    await page
+      .getByRole('button', { name: '도구와 권한', exact: true })
+      .click();
     await page.getByLabel('담당 도구').selectOption('codex');
     await page.getByLabel('작업 스킬').selectOption('source-check');
     await page.getByText('업무 설계서', { exact: true }).click();
@@ -178,14 +187,23 @@ test('edits a saved flow by keyboard and passes that version through review to t
     await expect(plan.getByRole('listitem').last()).toContainText(
       'AI 검토, 초안 작성',
     );
+    await expect(
+      page.getByRole('status', { name: '선행 문서 연결' }),
+    ).toContainText('직접 선택');
+    await expect(
+      page.getByRole('status', { name: '선행 문서 연결' }),
+    ).toContainText('초안 작성');
     await steps.selectOption({ label: '2. AI 검토' });
     await page.getByRole('button', { name: '단계 연결', exact: true }).click();
     await page.getByRole('button', { name: '단계 삭제' }).press('Enter');
     await page
       .getByRole('button', { name: '흐름 저장', exact: true })
       .press('Enter');
-    await expect(page.getByRole('alert')).toContainText(
-      '전달받을 문서를 확인하세요',
+    await expect(
+      page.getByText('저장된 버전 2', { exact: true }),
+    ).toBeVisible();
+    await expect(plan.getByRole('listitem').last()).not.toContainText(
+      'AI 검토',
     );
     await page
       .getByRole('button', { name: '되돌리기', exact: true })
@@ -194,13 +212,13 @@ test('edits a saved flow by keyboard and passes that version through review to t
       .getByRole('button', { name: '흐름 저장', exact: true })
       .press('Enter');
     await expect(
-      page.getByText('저장된 버전 2', { exact: true }),
+      page.getByText('저장된 버전 3', { exact: true }),
     ).toBeVisible();
     await page.reload();
     await page.getByRole('button', { name: '흐름 목록' }).click();
     await page
       .getByLabel('저장한 흐름')
-      .selectOption({ label: '브라우저 검증 흐름 · v2' });
+      .selectOption({ label: '브라우저 검증 흐름 · v3' });
     await page.getByRole('button', { name: '흐름 열기' }).press('Enter');
     await expect(page.getByLabel('작업 지침')).toHaveValue(
       '브라우저에서 편집한 지침',
@@ -257,7 +275,7 @@ test('edits a saved flow by keyboard and passes that version through review to t
     await expect(approve).toBeEnabled();
     await approve.tap();
     await expect(
-      page.getByText('버전 2 · 완료', { exact: true }),
+      page.getByText('버전 3 · 완료', { exact: true }),
     ).toBeVisible();
     expect(prompts).toHaveLength(3);
     expect(JSON.parse(prompts[2]!)).toMatchObject({
@@ -308,13 +326,13 @@ test('edits a saved flow by keyboard and passes that version through review to t
     await expect(editor.locator('option').last()).toHaveText('4. 초안 검토');
     await page.getByRole('button', { name: '흐름 저장', exact: true }).click();
     await expect(
-      page.getByText('저장된 버전 3', { exact: true }),
+      page.getByText('저장된 버전 4', { exact: true }),
     ).toBeVisible();
     await page.reload();
     await page.getByRole('button', { name: '흐름 목록' }).click();
     await page
       .getByLabel('저장한 흐름')
-      .selectOption({ label: '브라우저 검증 흐름 · v3' });
+      .selectOption({ label: '브라우저 검증 흐름 · v4' });
     await page.getByRole('button', { name: '흐름 열기', exact: true }).click();
     await expect(editor.locator('option').last()).toHaveText('4. 초안 검토');
     await page.getByText('AI 실행 설정', { exact: true }).click();
@@ -331,7 +349,7 @@ test('edits a saved flow by keyboard and passes that version through review to t
     ).toEqual(['draft', aiId, 'revision']);
     await page.getByRole('button', { name: '작업 중단' }).click();
     await expect(
-      page.getByText('버전 3 · 중단됨', { exact: false }),
+      page.getByText('버전 4 · 중단됨', { exact: false }),
     ).toBeVisible();
   } finally {
     await app.close();

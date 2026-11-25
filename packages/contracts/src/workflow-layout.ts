@@ -53,6 +53,15 @@ export function insertWorkflowStep(
   ];
 }
 
+export function clearMissingDocumentInputs(steps: Step[]): Step[] {
+  const ids = new Set(steps.map((step) => step.id));
+  return steps.map((step) => {
+    if (step.kind !== 'task' || !step.inputFrom?.some((id) => !ids.has(id)))
+      return step;
+    return { ...step, inputFrom: step.inputFrom.filter((id) => ids.has(id)) };
+  });
+}
+
 export function removeWorkflowStep(steps: Step[], index: number): Step[] {
   const tail = steps.slice(index + 1);
   let previous = steps[index]!.position.x;
@@ -63,5 +72,5 @@ export function removeWorkflowStep(steps: Step[], index: number): Step[] {
       previous = node.position.x;
     }
   }
-  return [...steps.slice(0, index), ...tail];
+  return clearMissingDocumentInputs([...steps.slice(0, index), ...tail]);
 }

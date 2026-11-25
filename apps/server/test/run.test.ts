@@ -1849,6 +1849,105 @@ test('approving a linked result versions its owning child and pins the new child
   );
 });
 
+test('routes the preceding plan and delivers selected reports to the next stage', async () => {
+  const router = {
+    id: 'router',
+    kind: 'task' as const,
+    title: '경로 선택',
+    agent: 'codex' as const,
+    instructions: '개선안 선택',
+    position: { x: 1, y: 0 },
+    improvementRoutes: { screen: '화면', feature: '기능' },
+  };
+  let joined = '';
+  await withStudio(
+    {
+      ready: async () => '0.166.0',
+      async write(prompt) {
+        const data = JSON.parse(prompt);
+        let text = '상태 글자 대비 개선';
+        if (data.roles) {
+          expect(data.inputs.priorDocument).toBe(text + '\n');
+          text = JSON.stringify({ reason: '가독성', routes: ['screen'] });
+        } else if (data.selectedRole) text = '대비 조정 제안';
+        else if (data.currentStepId === 'revision') joined = data.priorDocument;
+        return { kind: 'document', text };
+      },
+    },
+    async ({ inject }) => {
+      const saved = await inject('POST', '/workflows', {
+        ...definition,
+        steps: [definition.steps[0], router, definition.steps[2]],
+        links: [
+          { from: 'draft', to: 'router' },
+          { from: 'router', to: 'revision' },
+        ],
+      });
+      expect(saved.statusCode).toBe(201);
+      const id = randomUUID();
+      const { id: workflowId, version: workflowVersion } = saved.json() as {
+        id: string;
+        version: number;
+      };
+      expect(
+        (await inject('POST', '/runs', { id, workflowId, workflowVersion }))
+          .statusCode,
+      ).toBe(200);
+      await until(inject, id, 'completed');
+      expect(joined).toContain('대비 조정 제안');
+      expect(joined).toContain('기능 개선 · 건너뜀');
+    },
+  );
+});
+
+test('a workspace write block preserves earlier results and survives restart', async () => {
+  await withStudio(
+    {
+      ready: async () => '0.166.0',
+      async write(prompt) {
+        if (JSON.parse(prompt).currentStepId === 'revision')
+          throw new RunnerError('workspace_blocked');
+        return { kind: 'document', text: '계획 완료' };
+      },
+    },
+    async ({ inject, restart }) => {
+      const workflow = (
+        await inject('POST', '/workflows', {
+          ...definition,
+          steps: [
+            definition.steps[0],
+            definition.steps[2],
+            { ...definition.steps[1], startNextSession: true },
+          ],
+          links: [
+            { from: 'draft', to: 'revision' },
+            { from: 'revision', to: 'review' },
+          ],
+        })
+      ).json() as { id: string; version: number };
+      const id = randomUUID();
+      await inject('POST', '/runs', {
+        id,
+        workflowId: workflow.id,
+        workflowVersion: workflow.version,
+      });
+      const failed = await until(inject, id, 'failed');
+      expect(failed).toMatchObject({
+        workspaceBlocked: true,
+        stepId: 'revision',
+        results: ['draft.md'],
+        gate: null,
+      });
+      expect(failed.summary.nextSessionId).toBeUndefined();
+      await restart();
+      expect(await until(inject, id, 'failed')).toMatchObject({
+        workspaceBlocked: true,
+        note: failed.note,
+        stepId: 'revision',
+      });
+    },
+  );
+});
 test('approved handoffs carry original requests, evidence and remaining work to every writing step', async () => {
   const note = {
     id: randomUUID(),

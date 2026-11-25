@@ -1,7 +1,7 @@
 import { StepProperties } from './StepProperties';
 import { ApprovalChanges } from './ApprovalChanges';
 import { ActiveSessionCard } from './ActiveSessionCard';
-import { GitRun, GitRunInfo } from './GitRun';
+import { projectFolder, GitRun, GitRunInfo } from './GitRun';
 import { NodeInstructions } from './NodeInstructions';
 import { LinkedInstructions } from './LinkedInstructions';
 import { documentSourceLabel, type DocumentSource } from './document-source';
@@ -71,6 +71,7 @@ import {
   type RunMaterial,
   type RequestFiles,
   requiredInputFields,
+  writableStep,
   workflowDefinitionSchema,
   workflowIdSchema,
   workflowListSchema,
@@ -88,40 +89,6 @@ import { WorkflowProposal } from './WorkflowProposal';
 import styles from './WorkflowStudio.module.css';
 
 type Step = WorkflowDefinition['steps'][number];
-const defaultDefinition: WorkflowDefinition = {
-  name: '매장 소개 문서',
-  input: '가상 자료: 픽셀서점, 샘플로 10, 10:00–18:00, 독립출판물 판매.',
-  steps: [
-    {
-      id: 'draft',
-      title: '초안 작성',
-      kind: 'task',
-      instructions:
-        '자료에 근거해 한국어 매장 소개 초안을 마크다운으로 쓰세요.',
-      agent: 'codex',
-      skill: 'source-check',
-      position: { x: 0, y: 90 },
-    },
-    {
-      id: 'review',
-      title: '초안 검토',
-      kind: 'review',
-      position: { x: 240, y: 90 },
-    },
-    {
-      id: 'revision',
-      title: '수정본 작성',
-      kind: 'task',
-      instructions: '초안의 사실을 보존하고 제목과 한 문단으로 정리하세요.',
-      agent: 'codex',
-      position: { x: 480, y: 90 },
-    },
-  ],
-  links: [
-    { from: 'draft', to: 'review' },
-    { from: 'review', to: 'revision' },
-  ],
-};
 const blank: WorkflowDefinition = {
   name: '새 작업 흐름',
   input: '',
@@ -129,7 +96,7 @@ const blank: WorkflowDefinition = {
     {
       id: 'draft',
       kind: 'task',
-      title: '초안 작성',
+      title: 'AI 작업',
       instructions: '',
       agent: 'codex',
       position: { x: 0, y: 90 },
@@ -165,7 +132,7 @@ function message(error: unknown) {
 
 function instructionPreview(instructions: string) {
   const text = instructions.trim().replace(/\s+/g, ' ');
-  if (!text) return '작업 지침 없음';
+  if (!text) return '이 노드가 할 일을 지침에 적어 주세요.';
   const firstSentence = text.split(/(?<=[.!?。！？])\s/, 1)[0]!;
   return firstSentence.length > 80
     ? firstSentence.slice(0, 80).trimEnd() + '…'
@@ -244,7 +211,14 @@ export function WorkflowStudio({
   connected: boolean;
   onShowTools: () => void;
 }) {
-  const [initial] = useState(() => readEditorRecovery(designTarget()));
+  const [initial] = useState(() =>
+    designTarget() ? null : readEditorRecovery(),
+  );
+  const [olderDraft, setOlderDraft] = useState<{
+    id: string;
+    version: number;
+    draft: WorkflowDefinition;
+  } | null>(null);
   const [restored, setRestored] = useState(Boolean(initial));
   const [storageFailed, setStorageFailed] = useState(false);
   const [surface, setSurface] = useState(screen);
@@ -296,10 +270,10 @@ export function WorkflowStudio({
   } | null>(null);
   const [shelf, setShelf] = useState<'save' | 'browse' | null>(null);
   const [draft, setDraft] = useState<WorkflowDefinition>(
-    initial?.draft ?? defaultDefinition,
+    initial?.draft ?? blank,
   );
   const [baseline, setBaseline] = useState<WorkflowDefinition>(
-    initial?.baseline ?? defaultDefinition,
+    initial?.baseline ?? blank,
   );
   const [saved, setSaved] = useState<WorkflowVersion | null>(
     initial?.saved ?? null,
@@ -382,6 +356,28 @@ export function WorkflowStudio({
   }>();
   const [previewedGate, setPreviewedGate] = useState('');
   const [nodeSizes, setNodeSizes] = useState<Record<string, Dimensions>>({});
+  const mouseNodeDrag = useRef(false);
+  useEffect(() => {
+    // React Flow ends mouse drags on window.mouseup. Recover if the release
+    // happened outside the window, before D3 processes another mouse move.
+    function finish() {
+      if (!mouseNodeDrag.current) return;
+      mouseNodeDrag.current = false;
+      window.dispatchEvent(
+        new MouseEvent('mouseup', { view: window, button: 0 }),
+      );
+    }
+    function checkButtons(event: MouseEvent) {
+      if ((event.buttons & 1) === 0) finish();
+    }
+    window.addEventListener('mousemove', checkButtons, true);
+    window.addEventListener('blur', finish);
+    return () => {
+      window.removeEventListener('mousemove', checkButtons, true);
+      window.removeEventListener('blur', finish);
+      finish();
+    };
+  }, [surface, canvasSession]);
   const [dragging, setDragging] = useState<{
     id: string;
     position: XYPosition;
@@ -619,10 +615,15 @@ export function WorkflowStudio({
     .slice(0, index)
     .filter((item) => item.kind === 'task');
   const selectedInputs = step?.kind === 'task' ? step.inputFrom : undefined;
+  const plannedInputs =
+    plan.steps.find((item) => item.id === step?.id)?.inputs ?? [];
   const invalidInputs =
     selectedInputs?.filter(
       (id) => !precedingTasks.some((item) => item.id === id),
     ) ?? [];
+  const connectedInputs = plannedInputs.filter(
+    (id) => !invalidInputs.includes(id),
+  );
   const titleFor = (id: string) => {
     const item = steps.find((step) => step.id === id);
     return item ? item.title.trim() || '제목 없음' : '삭제된 단계';
@@ -782,14 +783,6 @@ export function WorkflowStudio({
       return;
     }
     const recovered = readEditorRecovery(target);
-    if (recovered?.saved) {
-      reset(recovered.baseline, recovered.saved);
-      setDraft(recovered.draft);
-      select(recovered.selected);
-      setFlowSettings(recovered.flowSettings);
-      setRestored(true);
-      return;
-    }
     const controller = new AbortController();
     setRouteProblem('');
     localRequest('/workflows/' + target, 'GET', undefined, controller.signal)
@@ -797,6 +790,30 @@ export function WorkflowStudio({
       .then((raw) => {
         if (controller.signal.aborted || designTarget() !== target) return;
         const record = workflowVersionSchema.parse(raw);
+        if (recovered?.saved?.version === record.version) {
+          reset(recovered.baseline, record);
+          setDraft(recovered.draft);
+          select(recovered.selected);
+          setFlowSettings(recovered.flowSettings);
+          setRestored(true);
+          return;
+        }
+        const key = recoveryKey(target) + '.previous';
+        if (recovered?.saved) {
+          // Persist before reset clears the active recovery key.
+          sessionStorage.setItem(
+            key + '.' + recovered.saved.version,
+            JSON.stringify(recovered),
+          );
+          sessionStorage.setItem(key, String(recovered.saved.version));
+        }
+        const version = Number(sessionStorage.getItem(key));
+        const archived = version && sessionStorage.getItem(key + '.' + version);
+        setOlderDraft(
+          archived
+            ? { id: record.id, version, draft: JSON.parse(archived).draft }
+            : null,
+        );
         reset(record.definition, record);
       })
       .catch((e) => {
@@ -856,18 +873,20 @@ export function WorkflowStudio({
     reveal.current = current.id;
     changeOrder(next);
   }
-  function add(kind: Step['kind'] | 'ai-review', after = step?.id) {
+  function add(kind: Step['kind'] | 'ai-review' | 'router', after = step?.id) {
     const index = steps.findIndex((s) => s.id === after),
       anchor = steps[index];
     if (!anchor || !joined || busy || steps.length >= 32) return;
     const entry = {
       id: 'step-' + crypto.randomUUID(),
       title:
-        kind === 'ai-review'
-          ? 'AI 검토'
-          : kind === 'task'
-            ? '새 작업'
-            : '사용자 검토',
+        kind === 'router'
+          ? '개선 경로 선택'
+          : kind === 'ai-review'
+            ? 'AI 검토'
+            : kind === 'task'
+              ? '새 작업'
+              : '사용자 검토',
       position: anchor.position,
     };
     const created: Step =
@@ -876,14 +895,45 @@ export function WorkflowStudio({
         : {
             ...entry,
             kind: 'task',
+            ...(kind === 'router' && {
+              workspaceAccess: 'read-only' as const,
+              improvementRoutes: {
+                screen:
+                  '화면 구성이나 조작이 불편한 경우, 개선할 화면과 확인 방법을 제안한다.',
+                feature:
+                  '기능이 없거나 동작이 잘못된 경우, 필요한 변경과 검사 방법을 제안한다.',
+              },
+            }),
             instructions:
-              kind === 'ai-review'
-                ? '원본 자료, 업무 완료 기준, 앞 단계 결과를 비교하세요. 빠지거나 틀린 항목과 수정할 내용을 검토 의견으로 반환하세요.'
-                : '',
+              kind === 'router'
+                ? '앞 단계의 계획을 읽고 필요한 개선 경로를 선택한다. 선택한 경로의 개선안을 다음 단계에 전달한다.'
+                : kind === 'ai-review'
+                  ? '첫 회차에는 작업 요청과 완료 기준을 원본 자료 및 선행 결과와 대조하세요. 후속 회차에는 인계된 요청의 달성 근거와 남은 질문도 확인하세요. 첫 단계나 직접 빈 선택처럼 정의에 맞는 빈 입력은 전달 누락에서 제외하세요. 오류와 미확인 항목을 구분해 검토 의견에 기록하세요.'
+                  : '',
             agent: 'codex',
           };
     reveal.current = entry.id;
-    changeOrder(insertWorkflowStep(steps, index, created));
+    const inserted = insertWorkflowStep(steps, index, created);
+    const consumer = inserted
+      .slice(index + 2)
+      .find((item) => item.kind === 'task');
+    if (kind === 'router' && consumer?.kind === 'task' && consumer.inputFrom) {
+      const prior = steps
+        .slice(0, index + 1)
+        .findLast((item) => item.kind === 'task');
+      const sources = consumer.inputFrom.filter((id) => id !== prior?.id);
+      if (sources.length >= 4) {
+        setError(
+          '다음 단계가 이미 문서 4개를 받습니다. 전달할 문서를 조정한 뒤 분기를 추가하세요.',
+        );
+        return;
+      }
+      inserted[inserted.indexOf(consumer)] = {
+        ...consumer,
+        inputFrom: [...sources, entry.id],
+      };
+    }
+    changeOrder(inserted);
     inspect(entry.id);
   }
   const sessionGate = steps.find(
@@ -951,7 +1001,9 @@ export function WorkflowStudio({
           const item = draft.steps[Number(connection.path[1])];
           if (item) inspect(item.id);
           throw new Error(
-            '전달받을 문서를 확인하세요. 앞서 실행되는 작업의 결과만 연결할 수 있습니다.',
+            '‘' +
+              (item?.title || '작업') +
+              '’ 단계의 전달받을 문서를 확인하세요. 앞서 실행되는 작업의 결과만 연결할 수 있습니다.',
           );
         }
         throw new Error('흐름 이름과 각 작업 단계의 제목·지침을 입력하세요.');
@@ -973,6 +1025,7 @@ export function WorkflowStudio({
       await updateList();
     });
   }
+  const [connectingProject, setConnectingProject] = useState(false);
   const [gitPrep, setGitPrep] = useState<{
     version: WorkflowVersion;
     material?: RunMaterial;
@@ -996,6 +1049,14 @@ export function WorkflowStudio({
   ) {
     if (!version) return;
     perform(async () => {
+      if (
+        version.definition.projectFolder &&
+        !requestFiles?.workspace &&
+        !requestFiles?.gitTarget
+      ) {
+        prepareGit(version, taskRequest, requestFiles, material);
+        return;
+      }
       if (requestFiles?.workspace && !requestFiles.gitTarget) {
         const { location } = await (
           await localRequest('/git/inspect', 'POST', {
@@ -1242,6 +1303,15 @@ export function WorkflowStudio({
               ' · 화면 작업본'}
           </small>
           <strong>{item.title || '제목 없음'}</strong>
+          {item.kind === 'task' && item.improvementRoutes && (
+            <div
+              className={styles.routerPaths}
+              aria-label="선택 가능한 개선 경로"
+            >
+              <span>↗ 화면 개선</span>
+              <span>↘ 기능 개선</span>
+            </div>
+          )}
           {item.kind === 'task' && (
             <small
               title={item.instructions.trim() || undefined}
@@ -1452,7 +1522,7 @@ export function WorkflowStudio({
     if (checkingRun || busy) return '현재 요청을 처리하고 있습니다.';
     return '';
   }
-  const startHint = startDisabledReason();
+  const startHint = startDisabledReason(!!saved?.definition.projectFolder);
   const actionIcons = {
     되돌리기: Undo2,
     '변경 취소': RotateCcw,
@@ -1658,6 +1728,29 @@ export function WorkflowStudio({
                   {dirty && ' · 미저장 변경 있음'}
                   {dirty && restored && ' · 이 탭의 편집 내용 복원됨'}
                 </span>
+                {olderDraft &&
+                  olderDraft.id === saved?.id &&
+                  olderDraft.version < saved.version && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const url = URL.createObjectURL(
+                          new Blob(
+                            [JSON.stringify(olderDraft.draft, null, 2)],
+                            { type: 'application/json' },
+                          ),
+                        );
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.download =
+                          'workplot-v' + olderDraft.version + '-draft.json';
+                        link.click();
+                        setTimeout(() => URL.revokeObjectURL(url), 1000);
+                      }}
+                    >
+                      v{olderDraft.version} 미저장 초안 내려받기
+                    </button>
+                  )}
                 {storageFailed && (
                   <span role="alert">
                     {' '}
@@ -1682,6 +1775,22 @@ export function WorkflowStudio({
                     개발 작업 실행
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFlowSettings(true);
+                    setProperties(true);
+                    setConnectingProject(true);
+                  }}
+                >
+                  {draft.projectFolder
+                    ? draft.projectFolder.service +
+                      ' · ' +
+                      draft.projectFolder.folder +
+                      ' · ' +
+                      draft.projectFolder.branch
+                    : '프로젝트 폴더 연결'}
+                </button>
                 {saved && modelControl}
                 {saved && slotInfo}
                 {button('되돌리기', undo, busy || history.length === 0)}
@@ -1691,7 +1800,7 @@ export function WorkflowStudio({
                   busy || !dirty,
                 )}
                 <button
-                  className={styles.primary}
+                  className={!saved || dirty ? styles.primary : undefined}
                   type="button"
                   onClick={save}
                   disabled={!connected || busy || (!!saved && !dirty)}
@@ -1706,7 +1815,7 @@ export function WorkflowStudio({
                   aria-describedby={startHint ? 'run-start-hint' : undefined}
                 >
                   <button
-                    className={styles.primary}
+                    className={saved && !dirty ? styles.primary : undefined}
                     type="button"
                     onClick={() => start()}
                     disabled={!!startHint}
@@ -1840,17 +1949,27 @@ export function WorkflowStudio({
             }
             base={null}
             close={() => setProposalMode(null)}
-            propose={async (request, signal, clarifications) =>
+            propose={async (
+              request,
+              signal,
+              clarifications,
+              _skill,
+              previous,
+            ) =>
               (
                 await localRequest(
                   '/workflow-proposals',
                   'POST',
                   {
                     request,
-                    mode: 'create',
-                    ...(proposalMode === 'guided' && {
-                      reviewBeforeRevision: true,
-                    }),
+                    ...(previous
+                      ? { definition: previous }
+                      : {
+                          mode: 'create',
+                          ...(proposalMode === 'guided' && {
+                            reviewBeforeRevision: true,
+                          }),
+                        }),
                     ...(clarifications.length && { clarifications }),
                   },
                   signal,
@@ -1864,9 +1983,30 @@ export function WorkflowStudio({
                 setDraft(next);
                 select(orderedSteps(next)[0]!.id);
                 setError('');
-              } else change(next);
+              } else change({ ...next, projectFolder: draft.projectFolder });
               setProposalMode(null);
             }}
+          />
+        )}
+        {surface === 'design' && connectingProject && (
+          <GitRun
+            configuring
+            project={draft.projectFolder}
+            folder=""
+            request=""
+            flow={draft.name}
+            busy={busy}
+            error={error}
+            onClose={() => setConnectingProject(false)}
+            onStart={(target) =>
+              void perform(async () => {
+                change({
+                  ...draft,
+                  projectFolder: await projectFolder(target),
+                });
+                setConnectingProject(false);
+              })
+            }
           />
         )}
         {gitPrep && (
@@ -1874,6 +2014,7 @@ export function WorkflowStudio({
             flow={
               gitPrep.version.definition.name + ' · v' + gitPrep.version.version
             }
+            project={gitPrep.version.definition.projectFolder}
             folder={gitPrep.files?.workspace ?? ''}
             request={gitPrep.request ?? ''}
             error={error}
@@ -2188,6 +2329,11 @@ export function WorkflowStudio({
                             <span
                               className={styles.badge}
                               data-state={row.status}
+                              data-approval={
+                                row.status === 'waiting' &&
+                                row.gateKind === 'review' &&
+                                !row.quotaRetryAt
+                              }
                             >
                               {row.quotaRetryAt
                                 ? '한도 대기'
@@ -2282,7 +2428,7 @@ export function WorkflowStudio({
               data-panel={properties}
               aria-label="와이어 편집기"
             >
-              <div className={styles.canvas}>
+              <div id="workflow-wire-canvas" className={styles.canvas}>
                 <div className={styles.canvasTitle}>
                   <div>
                     <small>흐름 설계</small>
@@ -2308,24 +2454,25 @@ export function WorkflowStudio({
                       close={() => setWireMenu(null)}
                       label="와이어 작업"
                       items={[
-                        ...(['ai-review', 'task', 'review'] as const).map(
-                          (kind) => ({
-                            label:
-                              '사이에 ' +
-                              {
-                                'ai-review': 'AI 검토',
-                                task: '작업',
-                                review: '사용자 검토',
-                              }[kind] +
-                              ' 추가',
-                            disabled: busy || !joined || steps.length >= 32,
-                            action: () =>
-                              add(
-                                kind,
-                                edges.find((e) => e.id === wireMenu.id)?.source,
-                              ),
-                          }),
-                        ),
+                        ...(
+                          ['router', 'ai-review', 'task', 'review'] as const
+                        ).map((kind) => ({
+                          label:
+                            '사이에 ' +
+                            {
+                              router: '화면·기능 개선 분기',
+                              'ai-review': 'AI 검토',
+                              task: '작업',
+                              review: '사용자 검토',
+                            }[kind] +
+                            ' 추가',
+                          disabled: busy || !joined || steps.length >= 32,
+                          action: () =>
+                            add(
+                              kind,
+                              edges.find((e) => e.id === wireMenu.id)?.source,
+                            ),
+                        })),
                         {
                           label: '연결 끊기',
                           divider: true,
@@ -2443,7 +2590,8 @@ export function WorkflowStudio({
                       setProperties(true);
                       setFlowSettings(true);
                     }}
-                    onNodeDragStart={(_event, node) => {
+                    onNodeDragStart={(event, node) => {
+                      mouseNodeDrag.current = event instanceof MouseEvent;
                       select(node.id);
                       setFlowSettings(false);
                       setSelectedWire('');
@@ -2452,6 +2600,7 @@ export function WorkflowStudio({
                       setDragging({ id: node.id, position: node.position })
                     }
                     onNodeDragStop={(_event, node) => {
+                      mouseNodeDrag.current = false;
                       setDragging(null);
                       const item = steps.find(({ id }) => id === node.id);
                       if (
@@ -2463,7 +2612,7 @@ export function WorkflowStudio({
                     }}
                     nodesDraggable={!busy}
                   >
-                    <Background color="#acbcb0" gap={24} />
+                    <Background color="var(--border)" gap={24} />
                     <Controls showInteractive={false} />
                   </ReactFlow>
                 </div>
@@ -2581,14 +2730,20 @@ export function WorkflowStudio({
                     !workflowDefinitionSchema.safeParse(draft).success
                   }
                   close={() => setEditSession((n) => n + 1)}
-                  propose={async (request, signal, clarifications, skill) =>
+                  propose={async (
+                    request,
+                    signal,
+                    clarifications,
+                    skill,
+                    previous,
+                  ) =>
                     (
                       await localRequest(
                         '/workflow-proposals',
                         'POST',
                         {
                           request,
-                          definition: draft,
+                          definition: previous ?? draft,
                           ...(skill && { designSkill: skill }),
                           ...(clarifications.length && { clarifications }),
                         },
@@ -2602,6 +2757,7 @@ export function WorkflowStudio({
                   }}
                 />
               </div>
+              {properties && <RunDivider editor />}
               {properties && (
                 <aside ref={stepPanel} className={styles.inspector}>
                   <div className={styles.switches}>
@@ -2630,6 +2786,34 @@ export function WorkflowStudio({
                     </legend>
                     {flowSettings && (
                       <>
+                        <section aria-label="프로젝트 폴더">
+                          <strong>프로젝트 폴더</strong>
+                          <p>
+                            {draft.projectFolder
+                              ? draft.projectFolder.service +
+                                ' · ' +
+                                draft.projectFolder.folder +
+                                ' · 연결 당시 ' +
+                                draft.projectFolder.branch
+                              : '개발 작업에 사용할 기본 Git 폴더를 선택하세요.'}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => setConnectingProject(true)}
+                          >
+                            {draft.projectFolder ? '폴더 변경' : '폴더 연결'}
+                          </button>
+                          {draft.projectFolder && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                change({ ...draft, projectFolder: undefined })
+                              }
+                            >
+                              연결 해제
+                            </button>
+                          )}
+                        </section>
                         <section aria-label="세션 반복">
                           <strong>세션 반복</strong>
                           <p>
@@ -2676,7 +2860,7 @@ export function WorkflowStudio({
                           <input
                             key={JSON.stringify(requiredInputFields(draft))}
                             defaultValue={requiredInputFields(draft).join(', ')}
-                            placeholder="예: 매장명, 주소, 영업시간"
+                            placeholder="이번 업무에 필요한 항목을 입력하세요"
                             onBlur={(e) => {
                               const fields = [
                                 ...new Set(
@@ -2774,6 +2958,33 @@ export function WorkflowStudio({
                                 available={connected && codexAvailable}
                               />
                             )}
+                            {step.kind === 'task' && step.improvementRoutes && (
+                              <fieldset>
+                                <legend>개선 경로 선택 조건과 역할</legend>
+                                {(['screen', 'feature'] as const).map(
+                                  (route) => (
+                                    <label key={route}>
+                                      {route === 'screen'
+                                        ? '화면 개선'
+                                        : '기능 개선'}
+                                      <textarea
+                                        value={step.improvementRoutes![route]}
+                                        maxLength={2000}
+                                        onChange={(e) =>
+                                          replaceStep({
+                                            ...step,
+                                            improvementRoutes: {
+                                              ...step.improvementRoutes!,
+                                              [route]: e.target.value,
+                                            },
+                                          })
+                                        }
+                                      />
+                                    </label>
+                                  ),
+                                )}
+                              </fieldset>
+                            )}
                             {step.kind === 'task' && (
                               <>
                                 {saved && (
@@ -2838,6 +3049,17 @@ export function WorkflowStudio({
                               )}
                             {step.kind === 'task' && (
                               <>
+                                <p role="status" aria-label="선행 문서 연결">
+                                  <strong>
+                                    {selectedInputs === undefined
+                                      ? '자동 연결'
+                                      : '직접 선택'}
+                                  </strong>
+                                  {' · '}
+                                  {connectedInputs.length
+                                    ? connectedInputs.map(titleFor).join(' → ')
+                                    : '연결된 선행 문서 없음'}
+                                </p>
                                 <details className={styles.inputs}>
                                   <summary>전달받을 문서</summary>
                                   <label>
@@ -2849,7 +3071,7 @@ export function WorkflowStudio({
                                           ...step,
                                           inputFrom: event.target.checked
                                             ? undefined
-                                            : (plan.steps[index]?.inputs ?? []),
+                                            : plannedInputs,
                                         })
                                       }
                                     />
@@ -2917,6 +3139,7 @@ export function WorkflowStudio({
                                           id: picked.id,
                                           version: Number(version),
                                         },
+                                        improvementRoutes: undefined,
                                         title: picked.name,
                                         instructions:
                                           '연결한 워크플롯의 마지막 작업 문서를 반환합니다.',
@@ -3041,9 +3264,8 @@ export function WorkflowStudio({
                                 {affectedTasks.length > 0 && (
                                   <>
                                     <p>
-                                      삭제 후에는 저장하기 전에 아래 작업의
-                                      ‘전달받을 문서’에서 삭제된 단계 참조를
-                                      수정해야 합니다.
+                                      아래 작업의 ‘전달받을 문서’에서 이 단계의
+                                      결과가 빠집니다.
                                     </p>
                                     <ul>
                                       {affectedTasks.map((item) => (
@@ -3061,6 +3283,74 @@ export function WorkflowStudio({
                         execution={
                           step.kind === 'task' && !link ? (
                             <>
+                              {step.kind === 'task' &&
+                                !link &&
+                                !step.improvementRoutes &&
+                                step.tool !== 'verified-commit' &&
+                                step.tool !== 'market-calendar' && (
+                                  <section aria-label="개발 실행 권한">
+                                    <label>
+                                      Git 작업 폴더 권한
+                                      <select
+                                        value={step.workspaceAccess ?? ''}
+                                        onChange={(e) =>
+                                          replaceStep({
+                                            ...step,
+                                            workspaceAccess:
+                                              e.target.value === 'read-only'
+                                                ? 'read-only'
+                                                : e.target.value === 'write'
+                                                  ? 'write'
+                                                  : undefined,
+                                          })
+                                        }
+                                      >
+                                        <option value="">자동</option>
+                                        <option value="read-only">
+                                          읽기 전용
+                                        </option>
+                                        <option value="write">
+                                          파일 수정 허용
+                                        </option>
+                                      </select>
+                                    </label>
+                                    <p>
+                                      Git 개발 실행 시 ·{' '}
+                                      {writableStep(step, steps)
+                                        ? '파일 수정 허용'
+                                        : '읽기 전용'}
+                                    </p>
+                                    {step.workspaceAccess === 'write' && (
+                                      <p>
+                                        변경할 파일과 검증 방법을 지침에
+                                        적으세요. Git 반영이 필요하면 커밋할
+                                        브랜치와 푸시 여부도 명시하세요.
+                                      </p>
+                                    )}
+                                    {!writableStep(step, steps) &&
+                                      /개발|구현|코드 수정|커밋|git 반영/i.test(
+                                        step.title + ' ' + step.instructions,
+                                      ) && (
+                                        <>
+                                          <p>
+                                            이 단계에서 실제 파일을 수정해야
+                                            한다면 쓰기를 허용하세요.
+                                          </p>
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              replaceStep({
+                                                ...step,
+                                                workspaceAccess: 'write',
+                                              })
+                                            }
+                                          >
+                                            이 노드에 파일 수정 허용
+                                          </button>
+                                        </>
+                                      )}
+                                  </section>
+                                )}
                               {!link && (
                                 <>
                                   <label>
@@ -3124,33 +3414,7 @@ export function WorkflowStudio({
                                       </option>
                                     </select>
                                   </label>
-                                  <label>
-                                    Git 작업 폴더 권한
-                                    <select
-                                      value={step.workspaceAccess ?? ''}
-                                      onChange={(e) =>
-                                        replaceStep({
-                                          ...step,
-                                          workspaceAccess:
-                                            e.target.value === 'read-only'
-                                              ? 'read-only'
-                                              : e.target.value === 'write'
-                                                ? 'write'
-                                                : undefined,
-                                        })
-                                      }
-                                    >
-                                      <option value="">
-                                        자동 · 화면 구현 또는 단일 작업만 수정
-                                      </option>
-                                      <option value="read-only">
-                                        읽기 전용
-                                      </option>
-                                      <option value="write">
-                                        수정 및 체크포인트 저장
-                                      </option>
-                                    </select>
-                                  </label>
+
                                   <label>
                                     사용 도구
                                     <select
@@ -3580,6 +3844,23 @@ export function WorkflowStudio({
                 )}
                 {run?.note ? ` · ${run.note}` : ''}
               </p>
+              {run?.workspaceBlocked && run.stepId && (
+                <div>
+                  <p>
+                    권한을 확인하고 흐름을 저장한 뒤, 저장한 버전으로 개발
+                    작업을 시작하세요.
+                  </p>
+                  {button(
+                    '노드 권한 수정',
+                    () =>
+                      openWorkflow(
+                        run.summary.workflowId,
+                        run.stepId ?? undefined,
+                      ),
+                    busy || dirty || !connected,
+                  )}
+                </div>
+              )}
               {run && (run.timedOut || run.hasTimeoutHistory) && (
                 <TimeoutHistory
                   key={run.summary.id}
@@ -3642,7 +3923,10 @@ export function WorkflowStudio({
                 </p>
               )}
               {run?.gate && (
-                <div className={styles.gate}>
+                <div
+                  className={styles.gate}
+                  data-approval={run.gate.kind === 'review'}
+                >
                   <strong ref={reviewPrompt} tabIndex={-1}>
                     {run.gate.kind === 'review'
                       ? run.gate.startNextSession

@@ -5,7 +5,7 @@
   padding: 16px;
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: #f8faf6;
+  background: light-dark(#f8faf6, var(--surface));
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -46,7 +46,7 @@
   padding: 10px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: white;
+  background: light-dark(white, var(--surface));
   color: var(--text);
 }
 .actions {
@@ -60,15 +60,15 @@
   border-radius: 6px;
   padding: 6px 12px;
   border: 1px solid var(--border);
-  color: white;
-  background: #285541;
+  color: light-dark(white, var(--on-accent));
+  background: light-dark(#285541, var(--focus));
 }
 .card .actions button:disabled {
   color: var(--muted);
-  background: #e9eee8;
+  background: light-dark(#e9eee8, var(--wash));
 }
 .notes {
-  border-inline-start: 3px solid #88a995;
+  border-inline-start: 3px solid light-dark(#88a995, var(--focus));
   padding-inline-start: 10px;
 }
 .history summary {

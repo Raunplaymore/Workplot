@@ -33,6 +33,16 @@ export const workflowDefinitionSchema = z
   .strictObject({
     name: z.string().trim().min(1).max(100),
     input: z.string().max(8_000).optional(),
+    projectFolder: z
+      .strictObject({
+        serviceId: z.uuid(),
+        checkoutId: z.string().regex(/^[a-f0-9]{64}$/),
+        folderKey: z.string().regex(/^[a-f0-9]{64}$/),
+        service: z.string().min(1).max(100),
+        folder: z.string().min(1).max(4096),
+        branch: z.string().min(1).max(1024),
+      })
+      .optional(),
     inputFields: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
     goal: z.string().trim().max(1_000).optional(),
     doneWhen: z.string().trim().max(2_000).optional(),
@@ -44,6 +54,12 @@ export const workflowDefinitionSchema = z
             kind: z.literal('task'),
             workflowRef: z
               .strictObject({ id: workflowIdSchema, version: versionSchema })
+              .optional(),
+            improvementRoutes: z
+              .strictObject({
+                screen: z.string().trim().min(1).max(2000),
+                feature: z.string().trim().min(1).max(2000),
+              })
               .optional(),
             templateDocuments: nodeDocumentsSchema.optional(),
             instructions: z.string().trim().min(1).max(8_000),
@@ -410,6 +426,7 @@ export type RunInput = z.infer<typeof runInputSchema>;
 export const runRetrySchema = z.strictObject({ failureId: z.uuid() });
 const retryCheckpointSchema = runRetrySchema.extend({
   failureNote: z.string().max(400).optional(),
+  workspaceBlocked: z.literal(true).optional(),
   timedOut: z.literal(true).optional(),
   quotaRetryAt: z.number().int().positive().optional(),
   answerContext: z.string().optional(),
@@ -573,6 +590,7 @@ export const runViewSchema = z.strictObject({
     })
     .optional(),
   failureId: z.uuid().optional(),
+  workspaceBlocked: z.literal(true).optional(),
   timedOut: z.literal(true).optional(),
   quotaRetryAt: z.number().int().positive().optional(),
   summary: runSummarySchema,
@@ -613,3 +631,22 @@ export const sessionRequestView = z.strictObject({
   incoming: z.array(z.string()),
   outgoing: z.array(z.string()),
 });
+
+export function writableStep(
+  step: WorkflowDefinition['steps'][number],
+  steps: WorkflowDefinition['steps'],
+) {
+  return (
+    step.kind === 'task' &&
+    !step.improvementRoutes &&
+    step.tool !== 'market-calendar' &&
+    step.tool !== 'verified-commit' &&
+    (step.workspaceAccess
+      ? step.workspaceAccess === 'write'
+      : step.tool === 'workplot-ui' ||
+        steps.filter((s) => s.kind === 'task').length === 1)
+  );
+}
+
+export const workspaceBlockedNote =
+  '개발 차단 · 작업 폴더에 필요한 변경을 쓸 수 없습니다. 노드 권한과 연결한 폴더를 확인하세요.';

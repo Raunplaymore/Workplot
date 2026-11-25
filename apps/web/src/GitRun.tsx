@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   gitTargetSchema,
   type GitTarget,
+  type WorkflowDefinition,
   type RunView,
 } from '@studio/contracts';
 import { localRequest } from './local-request';
@@ -15,8 +16,48 @@ function label(t: GitTarget) {
     .filter(Boolean)
     .join(' › ');
 }
+type ProjectFolder = NonNullable<WorkflowDefinition['projectFolder']>;
+async function folderKey(path: string) {
+  const bytes = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(path),
+  );
+  return Array.from(new Uint8Array(bytes), (byte) =>
+    byte.toString(16).padStart(2, '0'),
+  ).join('');
+}
+export async function projectFolder(target: GitTarget): Promise<ProjectFolder> {
+  return {
+    service: target.service,
+    serviceId: target.serviceId,
+    checkoutId: target.checkoutId,
+    folderKey: await folderKey(target.path),
+    folder: target.path.split('/').filter(Boolean).at(-1) || '/',
+    branch: target.branch,
+  };
+}
+async function inspectBinding(binding: Binding) {
+  const { location } = await (
+    await localRequest('/git/inspect', 'POST', { path: binding.path })
+  ).json();
+  if (
+    !location ||
+    location.checkoutId !== binding.checkoutId ||
+    location.repositoryId !== binding.repositoryId
+  )
+    throw Error(
+      '등록 시점과 다른 저장소입니다. 현재 폴더를 확인하고 새 대상으로 등록하세요.',
+    );
+  return gitTargetSchema.parse({
+    ...location,
+    service: binding.service,
+    serviceId: binding.serviceId,
+  });
+}
 export function GitRun({
   folder,
+  project,
+  configuring = false,
   request,
   flow,
   onStart,
@@ -25,6 +66,8 @@ export function GitRun({
   error,
 }: {
   folder: string;
+  project?: ProjectFolder;
+  configuring?: boolean;
   request: string;
   flow: string;
   onStart: (target: GitTarget, text: string) => void;
@@ -40,21 +83,45 @@ export function GitRun({
     [preview, setPreview] = useState<GitTarget>(),
     [pending, setPending] = useState(false),
     [issue, setIssue] = useState('');
+  const title = configuring ? '기본 프로젝트 폴더 연결' : '개발 작업 실행';
   useEffect(() => {
     dialog.current?.showModal();
     let active = true;
+    setPending(true);
     localRequest('/git/targets')
       .then((r) => r.json())
-      .then((b: Binding[]) => {
-        if (active) setBindings(b);
+      .then(async (b: Binding[]) => {
+        if (!active) return;
+        setBindings(b);
+        if (!project || folder) return;
+        for (const binding of b) {
+          if (
+            binding.serviceId !== project.serviceId ||
+            binding.checkoutId !== project.checkoutId ||
+            (await folderKey(binding.path)) !== project.folderKey
+          )
+            continue;
+          if (!active) return;
+          setName(binding.service);
+          setPath(binding.path);
+          const target = await inspectBinding(binding);
+          if (active) setPreview(target);
+          return;
+        }
+        throw Error(
+          '기본 프로젝트 폴더를 찾을 수 없습니다. 실행 대상을 다시 선택하세요.',
+        );
       })
       .catch((e) => {
         if (active) setIssue(e.message);
+      })
+      .finally(() => {
+        if (active) setPending(false);
       });
     return () => {
       active = false;
     };
-  }, []);
+  }, [project, folder]);
   async function action(work: () => Promise<void>) {
     setIssue('');
     setPending(true);
@@ -70,38 +137,21 @@ export function GitRun({
     setPreview(undefined);
     setName(binding.service);
     setPath(binding.path);
-    const { location } = await (
-      await localRequest('/git/inspect', 'POST', { path: binding.path })
-    ).json();
-    if (
-      !location ||
-      location.checkoutId !== binding.checkoutId ||
-      location.repositoryId !== binding.repositoryId
-    )
-      throw Error(
-        '등록 시점과 다른 저장소입니다. 현재 폴더를 확인하고 새 대상으로 등록하세요.',
-      );
-    setPreview(
-      gitTargetSchema.parse({
-        ...location,
-        service: binding.service,
-        serviceId: binding.serviceId,
-      }),
-    );
+    setPreview(await inspectBinding(binding));
   }
   const locked = busy || pending;
   return (
     <dialog
       ref={dialog}
       className={styles.dialog}
-      aria-label="개발 작업 실행"
+      aria-label={title}
       onCancel={(e) => {
         e.preventDefault();
         if (!locked) onClose();
       }}
     >
       <small>{flow}</small>
-      <h2>개발 작업 실행</h2>
+      <h2>{title}</h2>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -218,15 +268,17 @@ export function GitRun({
               </p>
             </div>
           )}
-          <label>
-            이번 작업 요청
-            <textarea
-              rows={2}
-              maxLength={2000}
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-            />
-          </label>
+          {!configuring && (
+            <label>
+              이번 작업 요청
+              <textarea
+                rows={2}
+                maxLength={2000}
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+              />
+            </label>
+          )}
         </fieldset>
         {(issue || error) && <p role="alert">{issue || error}</p>}
         <footer>
@@ -234,7 +286,7 @@ export function GitRun({
             취소
           </button>
           <button className={styles.primary} disabled={!preview || locked}>
-            이 대상으로 실행
+            {configuring ? '이 폴더 연결' : '이 대상으로 실행'}
           </button>
         </footer>
       </form>

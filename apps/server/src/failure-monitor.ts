@@ -140,6 +140,10 @@ export function createFailureMonitor(
       else change('원본 상태 변경');
       return;
     }
+    if (retry?.workspaceBlocked) {
+      change('작업 폴더 권한 확인 필요');
+      return;
+    }
     if (row.state === '접수') {
       if (!runs.hasRetrySlot(source.summary)) return;
       const evidence = await runs.failureEvidence(row.source, row.step);

@@ -1,9 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import styles from './WorkflowStudio.module.css';
 
-const storageKey = 'workplot.runDetailFraction';
-const defaultShare = 0.32;
-function preference() {
+function preference(storageKey: string, defaultShare: number) {
   try {
     const n = Number(localStorage.getItem(storageKey));
     if (n > 0 && n < 1) return n;
@@ -13,14 +11,20 @@ function preference() {
   return defaultShare;
 }
 
-export function RunDivider() {
+export function RunDivider({ editor = false }: { editor?: boolean } = {}) {
+  const defaultShare = editor ? 0.4 : 0.32;
+  const storageKey = editor
+    ? 'workplot.designPanelFraction'
+    : 'workplot.runDetailFraction';
   const divider = useRef<HTMLDivElement>(null);
   const drag = useRef<{ pointer: number; offset: number } | null>(null);
-  const [share, setShare] = useState(preference);
+  const [share, setShare] = useState(() =>
+    preference(storageKey, defaultShare),
+  );
   const [width, setWidth] = useState(0);
   const minLeft = 300,
     gap = 12;
-  const maxLeft = Math.max(minLeft, width - gap - 260);
+  const maxLeft = Math.max(minLeft, width - gap - (editor ? 320 : 260));
   const clamp = (n: number) => Math.min(maxLeft, Math.max(minLeft, n));
   const left = clamp(Math.round(width * (1 - share)) - gap);
   useLayoutEffect(() => {
@@ -35,8 +39,11 @@ export function RunDivider() {
   useLayoutEffect(() => {
     const root = divider.current?.parentElement;
     if (width && root)
-      root.style.setProperty('--run-detail-width', width - left - gap + 'px');
-  }, [width, left]);
+      root.style.setProperty(
+        editor ? '--design-panel-width' : '--run-detail-width',
+        width - left - gap + 'px',
+      );
+  }, [width, left, editor]);
   function change(leftWidth: number) {
     if (!width) return;
     const fraction = (width - gap - clamp(leftWidth)) / width;
@@ -59,12 +66,16 @@ export function RunDivider() {
       role="separator"
       tabIndex={0}
       aria-orientation="vertical"
-      aria-label="문서와 실행 상세 사이 너비 조절"
-      aria-controls="run-documents"
+      aria-label={
+        editor
+          ? '와이어와 속성 패널 사이 너비 조절'
+          : '문서와 실행 상세 사이 너비 조절'
+      }
+      aria-controls={editor ? 'workflow-wire-canvas' : 'run-documents'}
       aria-valuemin={minLeft}
       aria-valuemax={maxLeft}
       aria-valuenow={left}
-      aria-valuetext={`문서 ${left}px`}
+      aria-valuetext={`${editor ? '와이어' : '문서'} ${left}px`}
       className={styles.runDivider}
       title="드래그 또는 ← → 키로 너비 조절 · 두 번 클릭해 초기화"
       onPointerDown={(e) => {

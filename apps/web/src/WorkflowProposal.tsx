@@ -2,6 +2,7 @@ import { WorkflowComposer } from './WorkflowComposer';
 import { useEffect, useRef, useState } from 'react';
 import {
   matchResultSchema,
+  requiredInputFields,
   type WorkflowMatch,
   type DesignSkill,
   type DesignSkillRef,
@@ -31,6 +32,7 @@ export function WorkflowProposal({
     signal: AbortSignal,
     turns: ClarificationTurn[],
     skill?: DesignSkillRef,
+    previous?: WorkflowDefinition,
   ) => Promise<unknown>;
   apply: (definition: WorkflowDefinition) => void;
   close: () => void;
@@ -54,6 +56,10 @@ export function WorkflowProposal({
   useEffect(() => {
     if (question && !busy) answerField.current?.focus();
   }, [question, busy]);
+  const [revising, setRevising] = useState(false);
+  const [revision, setRevision] = useState('');
+  const [sentRevisions, setSentRevisions] = useState<string[]>([]);
+  const [revisionTurns, setRevisionTurns] = useState<ClarificationTurn[]>([]);
   const [notice, setNotice] = useState('');
   useEffect(() => {
     if (previewOpen) dialog.current?.showModal();
@@ -93,18 +99,22 @@ export function WorkflowProposal({
       if (!controller.signal.aborted) setBusy(false);
     }
   }
-  async function generate(instruction = request, designNew = false) {
+  async function generate(
+    instruction = revising ? revision : request,
+    designNew = false,
+  ) {
     if (active.current || !instruction.trim() || (question && !answer.trim()))
       return;
+    const priorTurns = revising ? revisionTurns : turns;
     const context = question
-      ? [...turns, { question, answer: answer.trim() }]
-      : turns;
+      ? [...priorTurns, { question, answer: answer.trim() }]
+      : priorTurns;
     const controller = new AbortController();
     active.current = controller;
     setBusy(true);
     setNotice('');
     try {
-      if (reuse && !context.length && !designNew) {
+      if (!revising && reuse && !context.length && !designNew) {
         setNoMatch(false);
         setSearching(true);
         const response = await localRequest(
@@ -128,14 +138,24 @@ export function WorkflowProposal({
           controller.signal,
           context,
           skill ? { id: skill.id, digest: skill.digest } : undefined,
+          revising ? (candidate ?? undefined) : undefined,
         ),
       );
       if (controller.signal.aborted) return;
       setMatch(null);
-      setTurns(context);
+      if (revising) setRevisionTurns(context);
+      else setTurns(context);
       setAnswer('');
       setQuestion(result.kind === 'question' ? result.text : '');
-      if (result.kind === 'proposal') setCandidate(result.definition);
+      if (result.kind === 'proposal') {
+        setCandidate(result.definition);
+        if (revising) {
+          setSentRevisions([...sentRevisions, instruction]);
+          setRevising(false);
+          setRevision('');
+          setRevisionTurns([]);
+        }
+      }
     } catch (error) {
       if (!controller.signal.aborted)
         setNotice(
@@ -170,12 +190,41 @@ export function WorkflowProposal({
   const steps = candidate ? workflowPlan(candidate).steps : original;
   const changes: { title: string; text: string }[] = [];
   if (base && candidate) {
+    for (const old of original) {
+      if (!steps.some((step) => step.id === old.id)) {
+        changes.push({
+          title: '삭제 · ' + old.title,
+          text:
+            old.kind === 'review'
+              ? '이 단계의 사용자 승인이 흐름에서 빠집니다.'
+              : '이 단계와 이 단계가 전달하던 결과 문서 연결이 흐름에서 빠집니다.',
+        });
+      }
+    }
     if (candidate.goal && base.goal !== candidate.goal)
       changes.push({ title: '업무 목표', text: candidate.goal });
     if (candidate.doneWhen && base.doneWhen !== candidate.doneWhen)
       changes.push({ title: '완료 기준', text: candidate.doneWhen });
     for (const s of candidate.steps) {
       const old = base.steps.find((o) => o.id === s.id);
+      if (
+        s.kind === 'task' &&
+        s.improvementRoutes &&
+        (old?.kind !== 'task' ||
+          JSON.stringify(old.improvementRoutes) !==
+            JSON.stringify(s.improvementRoutes))
+      ) {
+        changes.push(
+          {
+            title: s.title + ' · 화면 개선 경로',
+            text: s.improvementRoutes.screen,
+          },
+          {
+            title: s.title + ' · 기능 개선 경로',
+            text: s.improvementRoutes.feature,
+          },
+        );
+      }
       if (
         s.kind === 'task' &&
         s.codexSkill &&
@@ -241,22 +290,36 @@ export function WorkflowProposal({
           찾고, 없으면 새 흐름을 설계합니다.
         </p>
       )}
-      <label>
-        {base ? '변경 요청' : '업무 목표'}
-        <textarea
-          value={request}
-          disabled={busy || !!candidate || !!question || !!match}
-          maxLength={base ? 2000 : 1000}
-          rows={2}
-          autoFocus
-          placeholder={
-            base
-              ? '어떤 단계를 추가하고 어떤 문서를 전달할까요?'
-              : '어떤 결과를 만들고 언제 직접 확인하고 싶으세요?'
-          }
-          onChange={(e) => setRequest(e.target.value)}
-        />
-      </label>
+      {candidate ? (
+        <section className={styles.userRequest} aria-label="내 요청">
+          <h3>내 요청</h3>
+          <p>{request}</p>
+          {sentRevisions.map((text, i) => (
+            <p key={i}>
+              <strong>수정 요청 {i + 1}</strong>
+              <br />
+              {text}
+            </p>
+          ))}
+        </section>
+      ) : (
+        <label>
+          {base ? '변경 요청' : '업무 목표'}
+          <textarea
+            value={request}
+            disabled={busy || !!candidate || !!question || !!match}
+            maxLength={base ? 2000 : 1000}
+            rows={2}
+            autoFocus
+            placeholder={
+              base
+                ? '어떤 단계를 추가하고 어떤 문서를 전달할까요?'
+                : '어떤 결과를 만들고 언제 직접 확인하고 싶으세요?'
+            }
+            onChange={(e) => setRequest(e.target.value)}
+          />
+        </label>
+      )}
       {noMatch && <p>목표에 맞는 저장 흐름이 없어 새 흐름을 설계합니다.</p>}
       {match && (
         <section aria-label="추천 흐름" className={styles.clarification}>
@@ -267,10 +330,35 @@ export function WorkflowProposal({
       )}
       {turns.map((turn, index) => (
         <div key={index} className={styles.clarification}>
-          <strong>{turn.question}</strong>
+          <strong>AI 질문</strong>
+          <p>{turn.question}</p>
+          <strong>내 답변</strong>
           <p>{turn.answer}</p>
         </div>
       ))}
+      {revising && (
+        <label>
+          수정 요청 내용
+          <textarea
+            autoFocus
+            rows={2}
+            maxLength={2000}
+            value={revision}
+            disabled={busy || !!question}
+            placeholder="이 제안에서 바꿀 내용을 적어 주세요"
+            onChange={(e) => setRevision(e.target.value)}
+          />
+        </label>
+      )}
+      {revising &&
+        revisionTurns.map((turn, i) => (
+          <div key={i} className={styles.clarification}>
+            <strong>AI 질문</strong>
+            <p>{turn.question}</p>
+            <strong>내 답변</strong>
+            <p>{turn.answer}</p>
+          </div>
+        ))}
       {question && (
         <div className={styles.clarification}>
           <p id="workflow-clarification">
@@ -290,113 +378,136 @@ export function WorkflowProposal({
           </label>
         </div>
       )}
-      {steps.length > 0 && (
-        <>
-          <div className={styles.wireKey}>
-            <span>실행 순서</span>
-            <span>전달 문서</span>
-          </div>
-          <div className={styles.proposalScroll} aria-label="변경안 와이어">
-            <div
-              style={{
-                width: steps.length * stride - gap + 16,
-                height,
-                position: 'relative',
-              }}
-            >
-              <svg width="100%" height={height} aria-hidden="true">
-                <defs>
-                  <marker
-                    id="proposal-arrow"
-                    markerWidth="7"
-                    markerHeight="7"
-                    refX="6"
-                    refY="3"
-                    orient="auto"
-                  >
-                    <path d="M0 0 L6 3 L0 6" fill="none" stroke="#3c5148" />
-                  </marker>
-                </defs>
-                {steps.slice(1).map((s, i) => (
-                  <path
-                    key={s.id}
-                    stroke="#3c5148"
-                    strokeWidth="2"
-                    markerEnd="url(#proposal-arrow)"
-                    d={`M ${8 + i * stride + width} ${top + nodeHeight / 2} h ${gap - 3}`}
-                  />
-                ))}
-                {transfers.map(({ from, to }) => (
-                  <path
-                    key={from + '-' + to}
-                    stroke="#207b82"
-                    strokeDasharray="5 4"
-                    fill="none"
-                    d={`M ${8 + from * stride + width * 0.65} ${bottom} V ${lane(from, to)} H ${8 + to * stride + width * 0.35} V ${bottom}`}
-                  />
-                ))}
-              </svg>
-              {steps.map((s, i) => {
-                const task = (candidate ?? base)?.steps.find(
-                  (step) => step.id === s.id,
-                );
-                const bound =
-                  task?.kind === 'task' ? task.codexSkill : undefined;
-                const added = !!base && !original.some((o) => o.id === s.id);
-                return (
-                  <div
-                    className={styles.proposedNode}
-                    key={s.id}
-                    data-added={added}
-                    style={{
-                      top,
-                      left: 8 + i * stride,
-                      width,
-                      height: nodeHeight,
-                    }}
-                  >
-                    <small>
-                      {added ? '추가 · ' : ''}
-                      {s.kind === 'review' ? '사용자 승인' : 'Codex 작업'}
-                    </small>
-                    <strong>{s.title}</strong>
-                    {bound && (
-                      <small title={bound.title} className={styles.boundSkill}>
-                        ${bound.title}
-                      </small>
-                    )}
-                  </div>
-                );
-              })}
+      <section aria-label={candidate ? 'AI 변경 제안' : '현재 흐름'}>
+        {candidate && <h3>AI 변경 제안</h3>}
+        {candidate && base && (
+          <ul className={styles.changeSummary}>
+            {steps
+              .filter((s) => !original.some((o) => o.id === s.id))
+              .map((s) => (
+                <li key={s.id}>단계 추가 · {s.title}</li>
+              ))}
+          </ul>
+        )}
+        {steps.length > 0 && (
+          <>
+            <div className={styles.wireKey}>
+              <span>실행 순서</span>
+              <span>전달 문서</span>
             </div>
-          </div>
-        </>
-      )}
-      {candidate && (
-        <ul aria-label="문서 연결 변경">
-          {steps
-            .filter(
-              (s) =>
-                s.kind === 'task' &&
-                JSON.stringify(s.inputs) !==
-                  JSON.stringify(original.find((o) => o.id === s.id)?.inputs),
-            )
-            .map((s) => (
-              <li key={s.id}>
-                <strong>{s.title}</strong> ←{' '}
-                {s.inputs
-                  .map((id) => steps.find((o) => o.id === id)?.title)
-                  .join(' + ') || '원본 자료'}
-              </li>
-            ))}
-        </ul>
-      )}
-      {changes.map(({ title, text }, i) => (
-        <div key={i} className={styles.changedInstruction}>
-          <strong>{title}</strong>
-          <p>{text}</p>
-        </div>
-      ))}
+            <div className={styles.proposalScroll} aria-label="변경안 와이어">
+              <div
+                style={{
+                  width: steps.length * stride - gap + 16,
+                  height,
+                  position: 'relative',
+                }}
+              >
+                <svg width="100%" height={height} aria-hidden="true">
+                  <defs>
+                    <marker
+                      id="proposal-arrow"
+                      markerWidth="7"
+                      markerHeight="7"
+                      refX="6"
+                      refY="3"
+                      orient="auto"
+                    >
+                      <path
+                        d="M0 0 L6 3 L0 6"
+                        fill="none"
+                        stroke="light-dark(#3c5148, var(--wire))"
+                      />
+                    </marker>
+                  </defs>
+                  {steps.slice(1).map((s, i) => (
+                    <path
+                      key={s.id}
+                      stroke="light-dark(#3c5148, var(--wire))"
+                      strokeWidth="2"
+                      markerEnd="url(#proposal-arrow)"
+                      d={`M ${8 + i * stride + width} ${top + nodeHeight / 2} h ${gap - 3}`}
+                    />
+                  ))}
+                  {transfers.map(({ from, to }) => (
+                    <path
+                      key={from + '-' + to}
+                      stroke="var(--document-wire)"
+                      strokeDasharray="5 4"
+                      fill="none"
+                      d={`M ${8 + from * stride + width * 0.65} ${bottom} V ${lane(from, to)} H ${8 + to * stride + width * 0.35} V ${bottom}`}
+                    />
+                  ))}
+                </svg>
+                {steps.map((s, i) => {
+                  const task = (candidate ?? base)?.steps.find(
+                    (step) => step.id === s.id,
+                  );
+                  const bound =
+                    task?.kind === 'task' ? task.codexSkill : undefined;
+                  const added = !!base && !original.some((o) => o.id === s.id);
+                  return (
+                    <div
+                      className={styles.proposedNode}
+                      key={s.id}
+                      data-added={added}
+                      style={{
+                        top,
+                        left: 8 + i * stride,
+                        width,
+                        height: nodeHeight,
+                      }}
+                    >
+                      <small>
+                        {added ? '추가 · ' : ''}
+                        {s.kind === 'review'
+                          ? '사용자 승인'
+                          : task?.kind === 'task' && task.improvementRoutes
+                            ? '개선 분기'
+                            : 'Codex 작업'}
+                      </small>
+                      <strong>{s.title}</strong>
+                      {bound && (
+                        <small
+                          title={bound.title}
+                          className={styles.boundSkill}
+                        >
+                          ${bound.title}
+                        </small>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </>
+        )}
+        {candidate && (
+          <ul aria-label="문서 연결 변경">
+            {steps
+              .filter(
+                (s) =>
+                  s.kind === 'task' &&
+                  JSON.stringify(s.inputs) !==
+                    JSON.stringify(original.find((o) => o.id === s.id)?.inputs),
+              )
+              .map((s) => (
+                <li key={s.id}>
+                  <strong>{s.title}</strong> ←{' '}
+                  {s.inputs
+                    .map((id) => steps.find((o) => o.id === id)?.title)
+                    .join(' + ') || '원본 자료'}
+                </li>
+              ))}
+          </ul>
+        )}
+        {changes.map(({ title, text }, i) => (
+          <details key={i} className={styles.changedInstruction}>
+            <summary>{title}</summary>
+            <p>{text}</p>
+          </details>
+        ))}
+      </section>
       {guidedSave && candidate && (
         <fieldset>
           <legend>문서에 사용할 원본 자료</legend>
@@ -408,20 +519,22 @@ export function WorkflowProposal({
               onChange={(e) => setSource(e.target.value)}
               maxLength={8000}
               rows={3}
-              placeholder="매장 이름, 주소, 영업시간 등 실제 정보를 입력하세요."
+              placeholder="이번 업무에 사용할 원본 자료를 입력하세요."
             />
           </label>
-          <button
-            type="button"
-            disabled={busy || !!source.trim()}
-            onClick={() =>
-              setSource(
-                '가상 매장 모퉁이서점. 주소는 느티로 12, 영업시간은 10:00–18:00, 취급 품목은 독립출판물입니다.',
-              )
-            }
-          >
-            가상 매장 자료로 연습
-          </button>
+          {requiredInputFields(candidate).includes('매장명') && (
+            <button
+              type="button"
+              disabled={busy || !!source.trim()}
+              onClick={() =>
+                setSource(
+                  '가상 매장 모퉁이서점. 주소는 느티로 12, 영업시간은 10:00–18:00, 취급 품목은 독립출판물입니다.',
+                )
+              }
+            >
+              가상 매장 자료로 연습
+            </button>
+          )}
         </fieldset>
       )}
       <p role="status">
@@ -455,16 +568,52 @@ export function WorkflowProposal({
               새 흐름 설계
             </button>
           </>
+        ) : revising ? (
+          <>
+            <button
+              className={styles.primary}
+              disabled={
+                busy || !revision.trim() || (!!question && !answer.trim())
+              }
+              onClick={() => void generate()}
+            >
+              {question ? '답변 보내기' : '다시 요청하기'}
+            </button>
+            <button
+              disabled={busy}
+              onClick={() => {
+                setRevising(false);
+                setRevision('');
+                setRevisionTurns([]);
+                setQuestion('');
+                setAnswer('');
+                setNotice('');
+              }}
+            >
+              수정 요청 취소
+            </button>
+          </>
         ) : candidate ? (
-          <button
-            className={styles.primary}
-            disabled={busy || (!!guidedSave && !source.trim())}
-            onClick={() =>
-              guidedSave ? void saveCandidate() : apply(candidate)
-            }
-          >
-            {guidedSave ? '흐름 저장' : base ? '변경안 적용' : '새 흐름 적용'}
-          </button>
+          <>
+            <button
+              disabled={busy}
+              onClick={() => {
+                setNotice('');
+                setRevising(true);
+              }}
+            >
+              수정 요청
+            </button>
+            <button
+              className={styles.primary}
+              disabled={busy || (!!guidedSave && !source.trim())}
+              onClick={() =>
+                guidedSave ? void saveCandidate() : apply(candidate)
+              }
+            >
+              {guidedSave ? '흐름 저장' : base ? '변경안 적용' : '새 흐름 적용'}
+            </button>
+          </>
         ) : (
           <button
             className={styles.primary}

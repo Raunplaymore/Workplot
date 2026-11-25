@@ -1,4 +1,7 @@
-import { editorRecoverySchema } from '@studio/contracts';
+import {
+  clearMissingDocumentInputs,
+  editorRecoverySchema,
+} from '@studio/contracts';
 
 export const editorRecoveryKey = 'workplot.editor-draft.v1';
 
@@ -14,9 +17,10 @@ export function readEditorRecovery(id?: string | null) {
     const value = JSON.parse(raw);
     const result = editorRecoverySchema.safeParse(value);
     // Preserve whitespace in partially typed instructions and titles.
-    return result.success && (!id || result.data.saved?.id === id)
-      ? (value as typeof result.data)
-      : null;
+    if (!result.success || (id && result.data.saved?.id !== id)) return null;
+    const recovered = value as typeof result.data;
+    recovered.draft.steps = clearMissingDocumentInputs(recovered.draft.steps);
+    return recovered;
   } catch {
     return null;
   }

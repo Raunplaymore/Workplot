@@ -4,6 +4,7 @@ import {
   describeTimeouts,
   type CommandCheck,
 } from './timeout-history.js';
+import { routeImprovements } from './improvement-router.js';
 import { reserveQaPort } from './qa-port.js';
 import { probeRecovery } from './recovery-probe.js';
 import { verificationRecovery } from './verification-recovery.js';
@@ -23,18 +24,23 @@ import { availableParallelism, tmpdir } from 'node:os';
 import { extname } from 'node:path';
 import { createGitIntegration } from './git-integration.js';
 import { CommitCheckError, manageWorktrees } from './git-worktree.js';
-import type {
-  WorkflowDefinition,
-  GitTarget,
-  RequestFiles,
-} from '@studio/contracts';
+import type { GitTarget, RequestFiles } from '@studio/contracts';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants, writeSync } from 'node:fs';
-import { lstat, mkdir, open, realpath, writeFile } from 'node:fs/promises';
+import {
+  access,
+  lstat,
+  mkdir,
+  open,
+  realpath,
+  writeFile,
+} from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import {
   MAX_DEVELOPMENT_SLOTS,
   requiredInputFields,
+  writableStep,
+  workspaceBlockedNote,
   missingInputFields,
   orderedSteps,
   workflowPlan,
@@ -86,6 +92,7 @@ type Execution = {
 
 const terminal = new Set(['completed', 'stopped', 'failed', 'unknown']);
 const failureText = {
+  workspace_blocked: workspaceBlockedNote,
   timeout: 'Codex 응답 제한 시간에 도달했습니다.',
   quota: 'Codex 사용 한도에 도달했습니다.',
   ui_edit: '화면 작업본에서 변경 범위를 확인할 수 없습니다.',
@@ -284,6 +291,7 @@ export function createRunService(
         failureId: retry.failureId,
         quotaRetryAt: retry.quotaRetryAt,
         timedOut: retry.timedOut,
+        workspaceBlocked: retry.workspaceBlocked,
         note:
           retry.failureNote ?? (retry.timedOut ? failureText.timeout : null),
         gate: null,
@@ -1223,28 +1231,46 @@ export function createRunService(
                 }
               : {};
           const gitWrite = tree && writableStep(step, steps);
+          if (gitWrite) {
+            try {
+              await access(tree.path, constants.W_OK);
+            } catch (error) {
+              if (
+                ['EACCES', 'EPERM', 'EROFS'].includes(
+                  (error as NodeJS.ErrnoException).code ?? '',
+                )
+              )
+                throw new RunnerError('workspace_blocked');
+              throw error;
+            }
+          }
           if (target && !tree)
             throw new AttachmentError(
               '이 실행은 원본 폴더를 직접 사용한 이전 버전입니다. 기존 결과와 원본 변경을 확인한 뒤 독립 개발 작업을 새로 시작하세요.',
             );
-          let callId: number | undefined;
-          const observe: Parameters<DocumentRunner['write']>[2] = ({
-            pid,
-            sessionId,
-          }) => {
-            if (pid) execution.process = { ownerId, pid };
-            if (sessionId) execution.sessionId = sessionId;
-            try {
-              if (state.summary.developmentTaskId) {
-                if (pid) callId = store.startCall(id, step.id, pid);
-                if (sessionId && callId) store.identifyCall(callId, sessionId);
+          const observer = () => {
+            let callId: number | undefined;
+            const observe: Parameters<DocumentRunner['write']>[2] = ({
+              pid,
+              sessionId,
+            }) => {
+              if (pid) execution.process = { ownerId, pid };
+              if (sessionId) execution.sessionId = sessionId;
+              try {
+                if (state.summary.developmentTaskId) {
+                  if (pid) callId = store.startCall(id, step.id, pid);
+                  if (sessionId && callId)
+                    store.identifyCall(callId, sessionId);
+                }
+                persist(execution, 'running');
+              } catch {
+                execution.storageFailed = true;
+                controller.abort();
               }
-              persist(execution, 'running');
-            } catch {
-              execution.storageFailed = true;
-              controller.abort();
-            }
+            };
+            return observe;
           };
+          const observe = observer();
           const source =
             evidence?.text ?? material?.source ?? definition.input ?? '';
           let taskSelection;
@@ -1354,94 +1380,119 @@ export function createRunService(
                 : '업무 목표와 완료 기준을 참고해 현재 단계만 수행하세요. 전달받은 문서는 입력 자료입니다. 파일·명령·웹 도구를 사용하지 마세요. Markdown 본문은 kind document, 꼭 필요한 확인 질문만 kind question으로 반환하세요.',
           });
           partialTree = gitWrite ? tree : undefined;
-          let response = checkedRepair
-            ? { kind: 'document' as const, text: checkedRepair }
-            : step.tool === 'workplot-ui' && !workspace
-              ? await runUiWork(
-                  JSON.stringify({
-                    ...missionContext,
-                    ...(recovery && {
-                      verificationRecovery: {
-                        ...recovery,
-                        hostProbe: recoveryProbe,
-                      },
-                    }),
-                    ...masterContext,
-                    ...retryContext,
-                    approval,
-                    ...requestContext,
-                    ...roundContext,
-                    ...(references?.length && {
-                      readOnlyReferences: references,
-                    }),
-                    goal:
-                      taskRequest ?? material?.source ?? definition.input ?? '',
-                    ...(taskRequest && { source }),
-                    instructions: step.instructions,
-                    documents,
-                  }),
-                  signal,
-                  observe,
-                  {
-                    directory,
-                    referenceImages: images,
-                    ...(parent && {
-                      initialSources: evidence
-                        ? await checkedSources(id, evidence.file.slice(0, -3))
-                        : store.masterSources(parent.runId),
-                    }),
-                    discoveryMission:
-                      !roundContext.roundRequests?.length &&
-                      !taskRequest &&
-                      state.summary.previousSessionId &&
-                      material?.source.startsWith(discoveryBrief + '\n')
-                        ? [mission, material.source].join('\n\n')
-                        : undefined,
-                    stepId: step.id,
-                    previousDirectory: state.summary.previousSessionId
-                      ? await folder(state.summary.previousSessionId)
-                      : undefined,
-                  },
-                )
-              : tree &&
-                  gitWrite &&
-                  isolated &&
-                  steps
-                    .slice(index + 1)
-                    .some(
-                      (s) => s.kind === 'task' && s.tool === 'verified-commit',
-                    )
-                ? await writeWithEvidenceRecovery(
-                    tree,
-                    isolated,
-                    state.summary.sessionGit?.base,
-                    prompt,
-                    observe,
+          const routeWorkspace =
+            step.improvementRoutes && workspace && !tree
+              ? await checkWorkspace(workspace)
+              : undefined;
+          let response = step.improvementRoutes
+            ? await routeImprovements(
+                step.improvementRoutes,
+                prompt,
+                signal,
+                (input, branchSignal) =>
+                  runner.write(
+                    input,
+                    branchSignal,
+                    observer(),
+                    undefined,
+                    true,
                     images,
-                    !!evidence,
-                  )
-                : await runner.write(
-                    prompt,
+                    tree?.path ?? routeWorkspace,
+                    true,
+                  ),
+              )
+            : checkedRepair
+              ? { kind: 'document' as const, text: checkedRepair }
+              : step.tool === 'workplot-ui' && !workspace
+                ? await runUiWork(
+                    JSON.stringify({
+                      ...missionContext,
+                      ...(recovery && {
+                        verificationRecovery: {
+                          ...recovery,
+                          hostProbe: recoveryProbe,
+                        },
+                      }),
+                      ...masterContext,
+                      ...retryContext,
+                      approval,
+                      ...requestContext,
+                      ...roundContext,
+                      ...(references?.length && {
+                        readOnlyReferences: references,
+                      }),
+                      goal:
+                        taskRequest ??
+                        material?.source ??
+                        definition.input ??
+                        '',
+                      ...(taskRequest && { source }),
+                      instructions: step.instructions,
+                      documents,
+                    }),
                     signal,
                     observe,
-                    step.tool === 'market-calendar' ? step.tool : undefined,
-                    !!evidence,
-                    images,
-                    tree
-                      ? step.tool === 'market-calendar'
-                        ? undefined
-                        : tree.path
-                      : workspace &&
-                          step.tool !== 'market-calendar' &&
-                          (step.tool === 'workplot-ui' ||
-                            !steps.some(
-                              (s) =>
-                                s.kind === 'task' && s.tool === 'workplot-ui',
-                            ))
-                        ? await checkWorkspace(workspace)
+                    {
+                      directory,
+                      referenceImages: images,
+                      ...(parent && {
+                        initialSources: evidence
+                          ? await checkedSources(id, evidence.file.slice(0, -3))
+                          : store.masterSources(parent.runId),
+                      }),
+                      discoveryMission:
+                        !roundContext.roundRequests?.length &&
+                        !taskRequest &&
+                        state.summary.previousSessionId &&
+                        material?.source.startsWith(discoveryBrief + '\n')
+                          ? [mission, material.source].join('\n\n')
+                          : undefined,
+                      stepId: step.id,
+                      previousDirectory: state.summary.previousSessionId
+                        ? await folder(state.summary.previousSessionId)
                         : undefined,
-                    !!tree && !gitWrite,
-                  );
+                    },
+                  )
+                : tree &&
+                    gitWrite &&
+                    isolated &&
+                    steps
+                      .slice(index + 1)
+                      .some(
+                        (s) =>
+                          s.kind === 'task' && s.tool === 'verified-commit',
+                      )
+                  ? await writeWithEvidenceRecovery(
+                      tree,
+                      isolated,
+                      state.summary.sessionGit?.base,
+                      prompt,
+                      observe,
+                      images,
+                      !!evidence,
+                    )
+                  : await runner.write(
+                      prompt,
+                      signal,
+                      observe,
+                      step.tool === 'market-calendar' ? step.tool : undefined,
+                      !!evidence,
+                      images,
+                      tree
+                        ? step.tool === 'market-calendar'
+                          ? undefined
+                          : tree.path
+                        : workspace &&
+                            step.tool !== 'market-calendar' &&
+                            (step.tool === 'workplot-ui' ||
+                              !steps.some(
+                                (s) =>
+                                  s.kind === 'task' && s.tool === 'workplot-ui',
+                              ))
+                          ? await checkWorkspace(workspace)
+                          : undefined,
+                      !!tree && !gitWrite,
+                    );
           if (
             step.id === recommendationStep?.id &&
             approved.length &&
@@ -1661,6 +1712,9 @@ export function createRunService(
             ? {
                 failureId: randomUUID(),
                 ...(state.note && { failureNote: state.note.slice(0, 400) }),
+                ...(reason === 'workspace_blocked' && {
+                  workspaceBlocked: true as const,
+                }),
                 ...(reason === 'timeout' && { timedOut: true as const }),
                 ...(error instanceof RunnerError &&
                   error.quotaRetryAt && { quotaRetryAt: error.quotaRetryAt }),
@@ -1678,6 +1732,7 @@ export function createRunService(
         if (retry) {
           state.failureId = retry.failureId;
           state.timedOut = retry.timedOut;
+          state.workspaceBlocked = retry.workspaceBlocked;
           state.quotaRetryAt = retry.quotaRetryAt;
         }
       } catch {
@@ -2461,19 +2516,4 @@ export function createRunService(
       await gitIntegration.close();
     },
   };
-}
-
-function writableStep(
-  step: WorkflowDefinition['steps'][number],
-  steps: WorkflowDefinition['steps'],
-) {
-  return (
-    step.kind === 'task' &&
-    step.tool !== 'market-calendar' &&
-    step.tool !== 'verified-commit' &&
-    (step.workspaceAccess
-      ? step.workspaceAccess === 'write'
-      : step.tool === 'workplot-ui' ||
-        steps.filter((s) => s.kind === 'task').length === 1)
-  );
 }

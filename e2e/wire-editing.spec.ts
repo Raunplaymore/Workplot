@@ -1,8 +1,10 @@
+import { prepareThreeStepDraft } from './three-step-draft.js';
 import { expect, test, type Locator } from '@playwright/test';
 
 test('wire editing keeps order, nearby selection and zoom through insertion, movement, deletion and undo', async ({
   page,
 }, info) => {
+  await prepareThreeStepDraft(page);
   await page.goto('/#/design');
   const graph = page.getByLabel('작업 흐름 노드');
   const step = page.getByLabel('편집할 단계');
@@ -53,6 +55,7 @@ test('wire editing keeps order, nearby selection and zoom through insertion, mov
 test('wire endpoints follow a dragged node and support reconnect, cancel, cycle rejection and undo', async ({
   page,
 }, info) => {
+  await prepareThreeStepDraft(page);
   await page.goto('/#/design');
   const graph = page.getByLabel('작업 흐름 노드');
   const edge = (id: string) =>
@@ -116,6 +119,7 @@ test('wire endpoints follow a dragged node and support reconnect, cancel, cycle 
 test('selected task instructions can be refined and applied without changing another task', async ({
   page,
 }) => {
+  await prepareThreeStepDraft(page);
   await page.goto('/#/design');
   const graph = page.getByLabel('작업 흐름 노드');
   await expect(
@@ -143,4 +147,170 @@ test('selected task instructions can be refined and applied without changing ano
   ).toContainText('출처를 확인하고');
   await graph.locator('.react-flow__node[data-id="revision"] strong').click();
   await expect(editor).not.toHaveValue('출처를 확인하고 초안을 작성한다.');
+});
+
+test('wire menu inserts an editable improvement router between two stages', async ({
+  page,
+}) => {
+  await prepareThreeStepDraft(page);
+  await page.goto('/#/design');
+  const edge = page.locator(
+    '.react-flow__edge[data-id="draft:review"] .react-flow__edge-interaction',
+  );
+  await expect(edge).toBeAttached();
+  const point = await edge.evaluate((el) => {
+    const path = el as SVGPathElement;
+    const middle = path.getPointAtLength(path.getTotalLength() / 2);
+    const screen = middle.matrixTransform(path.getScreenCTM()!);
+    return { x: screen.x, y: screen.y };
+  });
+  await page.mouse.click(point.x, point.y, { button: 'right' });
+  await page
+    .getByRole('menuitem', { name: '사이에 화면·기능 개선 분기 추가' })
+    .click();
+  const criteria = page.getByRole('group', {
+    name: '개선 경로 선택 조건과 역할',
+  });
+  await criteria.getByLabel('화면 개선').fill('화면의 글자를 읽기 어려울 때');
+  await expect(criteria.getByLabel('화면 개선')).toHaveValue(
+    '화면의 글자를 읽기 어려울 때',
+  );
+  const id = await page.getByLabel('편집할 단계').inputValue();
+  for (const link of ['draft:' + id, id + ':review'])
+    await expect(
+      page.locator('.react-flow__edge[data-id="' + link + '"]'),
+    ).toBeAttached();
+});
+
+test('an added AI review stays put after a missed mouse release', async ({
+  page,
+}) => {
+  await page.goto('/#/design');
+  await page.getByLabel('추가할 단계 유형').selectOption('ai-review');
+  await page.getByRole('button', { name: '추가', exact: true }).click();
+  const id = await page.getByLabel('편집할 단계').inputValue();
+  const node = page.locator('.react-flow__node[data-id="' + id + '"]');
+  const position = () =>
+    node.evaluate((el) => (el as HTMLElement).style.transform);
+  await expect(node).toContainText('AI 검토');
+  const title = await node.locator('strong').boundingBox();
+  const x = title!.x + 10,
+    y = title!.y + 5;
+  const initial = await position();
+  await page.mouse.move(x, y);
+  expect(await position()).toBe(initial);
+  // Model a release outside the window: the drag library gets no mouseup.
+  await page.evaluate(() =>
+    window.addEventListener('mouseup', (e) => e.stopImmediatePropagation(), {
+      capture: true,
+      once: true,
+    }),
+  );
+  await page.mouse.down();
+  await page.mouse.move(x + 20, y + 10, { steps: 8 });
+  await expect.poll(position).not.toBe(initial);
+  await page.mouse.up();
+  const dropped = await position();
+  await page.mouse.move(x + 100, y + 20, { steps: 8 });
+  await expect.poll(position).toBe(dropped);
+});
+
+test('a recovered edit with a deleted document source saves on the first click', async ({
+  page,
+}) => {
+  await page.goto('/#/design');
+  const id = await page.evaluate(async () => {
+    await fetch('/api/session', {
+      method: 'POST',
+      headers: { 'X-Studio-Client': 'browser' },
+    });
+    const task = (id: string, x: number) => ({
+      id,
+      title: id,
+      kind: 'task',
+      agent: 'codex',
+      instructions: '검토한다',
+      position: { x, y: 0 },
+    });
+    const definition = {
+      name: '문서 연결 복원 검사',
+      steps: [
+        task('first', 0),
+        task('second', 240),
+        { ...task('last', 480), inputFrom: ['first', 'second'] },
+      ],
+      links: [
+        { from: 'first', to: 'second' },
+        { from: 'second', to: 'last' },
+      ],
+    };
+    const res = await fetch('/api/workflows', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(definition),
+    });
+    if (!res.ok) throw Error('fixture ' + res.status);
+    const saved = await res.json();
+    const draft = {
+      ...definition,
+      steps: definition.steps.slice(1),
+      links: definition.links.slice(1),
+    };
+    sessionStorage.setItem(
+      'workplot.editor-draft.v1.' + saved.id,
+      JSON.stringify({
+        saved,
+        baseline: saved.definition,
+        draft,
+        selected: 'second',
+        flowSettings: false,
+      }),
+    );
+    return saved.id as string;
+  });
+  await page.goto('/#/design/' + id);
+  await page.reload();
+  await page.getByRole('button', { name: '흐름 저장', exact: true }).click();
+  await expect(page.getByText('저장된 버전 2', { exact: true })).toBeVisible();
+  const saved = await page.evaluate(
+    async (id) => (await fetch('/api/workflows/' + id)).json(),
+    id,
+  );
+  expect(saved.definition.steps.map((s: { id: string }) => s.id)).toEqual([
+    'second',
+    'last',
+  ]);
+  expect(saved.definition.steps[1].inputFrom).toEqual(['second']);
+});
+
+test('a new flow starts with one AI task and an empty instruction field', async ({
+  page,
+}) => {
+  await page.goto('/#/design');
+  const nodes = page.locator('.react-flow__node');
+  await expect(nodes).toHaveCount(1);
+  await expect(nodes).toContainText('AI 작업');
+  const field = page.getByRole('textbox', { name: '작업 지침', exact: true });
+  await expect(field).toHaveValue('');
+  await expect(field).toHaveAttribute('placeholder', /어떤 결과/);
+  await field.fill('작업 기록에서 남은 일을 정리하세요.');
+  await expect(nodes).toContainText('작업 기록에서 남은 일');
+});
+
+test('a multi-task Git node shows its effective permission before granting write access', async ({
+  page,
+}) => {
+  await prepareThreeStepDraft(page);
+  await page.goto('/#/design');
+  await page.getByLabel('단계 제목').fill('개발 및 Git 반영');
+  await page.getByRole('button', { name: '도구와 권한', exact: true }).click();
+  const panel = page.getByRole('region', { name: '개발 실행 권한' });
+  await expect(panel).toContainText('Git 개발 실행 시 · 읽기 전용');
+  await panel.getByRole('button', { name: '이 노드에 파일 수정 허용' }).click();
+  await expect(panel.getByRole('combobox')).toHaveValue('write');
+  await page.getByRole('button', { name: '흐름 저장', exact: true }).click();
+  await expect(page).toHaveURL(/#\/design\/[a-f0-9-]+/);
+  await page.reload();
+  await page.getByRole('button', { name: '도구와 권한', exact: true }).click();
+  await expect(panel).toContainText('Git 개발 실행 시 · 파일 수정 허용');
 });

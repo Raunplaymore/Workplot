@@ -109,7 +109,8 @@ test('the built workspace connects to the local server without pretending to run
     page.getByRole('status').filter({ hasText: '로컬 서버' }),
   ).toHaveText('로컬 서버 연결됨');
   await page.getByRole('link', { name: '흐름 설계' }).click();
-  await expect(page.locator('.react-flow__node')).toHaveCount(3);
+  await expect(page.locator('.react-flow__node')).toHaveCount(1);
+  await expect(page.locator('.react-flow__node')).toContainText('AI 작업');
   await expect(
     page.getByRole('button', { name: '작업 실행 · 연결 준비 중' }),
   ).toBeDisabled();

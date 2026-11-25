@@ -1,10 +1,19 @@
 :root {
+  color-scheme: light dark;
+  --on-accent: white;
+  --success: #28533d;
+  --selection: #e3edde;
+  --attention-bg: #fff5d8;
+  --danger-bg: #fff1e9;
+  --wire: #5c7974;
+  --document-wire: #207b82;
   --surface: #fffef8;
   --text: #26382f;
   --muted: #536359;
   --border: #acbcb0;
   --wash: #edf1ea;
   --focus: #365e46;
+  --selected-outline: var(--focus);
   --danger: #9e3e36;
   --attention: #855c17;
   --page: #f5f5ef;
@@ -70,7 +79,7 @@ button:disabled {
   font-size: var(--type-node-title);
 }
 .react-flow__node.selected {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--selected-outline);
 }
 .react-flow__node small,
 .react-flow__node strong {
@@ -102,4 +111,43 @@ button:disabled {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: #18171c;
+    --surface: #232127;
+    --wash: #302d35;
+    --text: #f2eef3;
+    --muted: #bdb6c3;
+    --border: #696371;
+    --focus: #e4e1df;
+    --selected-outline: #c6adff;
+    --selection: #403e42;
+    --on-accent: #242326;
+    --attention: #ffd28c;
+    --attention-bg: #483921;
+    --danger: #ffada5;
+    --danger-bg: #492e31;
+    --success: #a2d7bb;
+    --wire: #a29baa;
+    --document-wire: #8dc9cd;
+  }
+  .react-flow {
+    --xy-controls-button-background-color: var(--wash);
+    --xy-controls-button-background-color-hover: var(--selection);
+    --xy-controls-button-color: var(--text);
+    --xy-controls-button-border-color: var(--border);
+    --xy-edge-stroke-default: var(--wire);
+  }
+  .react-flow__node {
+    background: var(--wash);
+  }
+  .react-flow__edge-path {
+    stroke: var(--wire);
+  }
+  .react-flow__handle {
+    background: var(--wire);
+    border-color: var(--wash);
+  }
 }

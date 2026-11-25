@@ -544,3 +544,16 @@ test('unlimited delegation continues past 100 sessions but ends at its deadline'
     decision: 'finish',
   });
 });
+
+test('a workspace write block ends delegation without accepting or retrying', async () => {
+  const { id, v, d, config, runs } = fixture();
+  d.enable(id, config);
+  v.summary.status = 'failed';
+  v.gate = null;
+  v.workspaceBlocked = true;
+  v.failureId = randomUUID();
+  await d.tick();
+  expect(d.status(id)).toMatchObject({ enabled: false, used: 0 });
+  expect(runs.retry).not.toHaveBeenCalled();
+  expect(runs.decide).not.toHaveBeenCalled();
+});

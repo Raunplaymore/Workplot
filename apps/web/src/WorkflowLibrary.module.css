@@ -3,7 +3,7 @@
   grid-template-columns: minmax(230px, 34%) minmax(0, 1fr);
   min-height: 0;
   flex: 1;
-  background: white;
+  background: light-dark(white, var(--surface));
 }
 .list,
 .detail {
@@ -31,7 +31,7 @@
   padding: 6px;
 }
 .list li[data-selected='true'] {
-  background: #e4efe4;
+  background: light-dark(#e4efe4, var(--selection));
   border-radius: 6px;
 }
 .list li button {
@@ -89,7 +89,7 @@
 .detail button,
 .dialog button {
   border: 1px solid var(--border);
-  background: white;
+  background: light-dark(white, var(--surface));
   border-radius: 6px;
   padding: 9px 14px;
   color: var(--text);
@@ -127,8 +127,8 @@
 }
 .detail .primary,
 .dialog .primary {
-  background: #28533d;
-  color: white;
+  background: light-dark(#28533d, var(--focus));
+  color: light-dark(white, var(--on-accent));
 }
 .dialog .primary {
   margin-block: 12px;

@@ -62,6 +62,7 @@ export function NodeInstructions({
         역할 지침
         <textarea
           aria-label="작업 지침"
+          placeholder="AI가 어떤 자료로 무엇을 하고, 어떤 결과를 내야 하는지 적어 주세요."
           rows={7}
           maxLength={8000}
           value={value}

@@ -328,6 +328,10 @@ export function createDelegation(
       lookup(id)?.current === id &&
       Date.now() < Date.parse(config.until) &&
       (config.maxSessions === null || row.used <= config.maxSessions);
+    if (v.summary.status === 'failed' && v.workspaceBlocked) {
+      end(row, '작업 폴더 쓰기 차단으로 자동승인을 종료했습니다.');
+      return;
+    }
     if (v.summary.status === 'failed' && !v.quotaRetryAt) {
       const recovery = store.recoveryReport(id);
       if (

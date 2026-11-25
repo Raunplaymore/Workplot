@@ -31,7 +31,7 @@
   border-top: 1px solid var(--border);
 }
 .menu button[data-danger='true'] {
-  color: #ae3834;
+  color: light-dark(#ae3834, var(--danger));
 }
 .menu button small {
   display: block;

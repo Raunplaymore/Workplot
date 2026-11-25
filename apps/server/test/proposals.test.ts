@@ -236,3 +236,28 @@ test('binds only the selected skill to a task and never binds while asking or ta
     ).kind,
   ).toBe('question');
 });
+
+test('removing steps reconnects surviving stages and clears removed inputs', () => {
+  const expanded = buildProposal(base, edits);
+  if (expanded.kind !== 'proposal') throw Error();
+  const patch = {
+    clarification: '',
+    removals: ['critique', 'review'],
+    additions: [],
+    inputs: [],
+  };
+  const result = buildProposal(expanded.definition, patch);
+  if (result.kind !== 'proposal') throw Error();
+  expect(result.definition.links).toEqual([{ from: 'draft', to: 'revision' }]);
+  expect(workflowPlan(result.definition).steps.at(-1)?.inputs).toEqual([
+    'draft',
+  ]);
+  for (const removals of [
+    ['missing'],
+    ['draft', 'draft'],
+    ['draft', 'review', 'revision', 'critique'],
+  ])
+    expect(() =>
+      buildProposal(expanded.definition, { ...patch, removals }),
+    ).toThrow();
+});

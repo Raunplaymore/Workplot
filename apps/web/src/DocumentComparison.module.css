@@ -27,7 +27,7 @@
 .selection {
   min-width: 0;
   border: 1px solid var(--border);
-  background: white;
+  background: light-dark(white, var(--surface));
   padding: clamp(14px, 2vw, 24px);
   border-radius: 8px;
 }
@@ -47,7 +47,7 @@
   margin: 12px 0;
 }
 .source {
-  background: #f1f4ee;
+  background: light-dark(#f1f4ee, var(--wash));
 }
 .audit,
 .selection {
@@ -80,8 +80,8 @@
 }
 .page button {
   justify-self: start;
-  background: #28533d;
-  color: white;
+  background: light-dark(#28533d, var(--focus));
+  color: light-dark(white, var(--on-accent));
   padding: 10px 16px;
   border-radius: 6px;
   border: 0;
@@ -98,10 +98,10 @@
   width: auto;
 }
 .selection del {
-  color: #883d33;
+  color: light-dark(#883d33, var(--danger));
 }
 .selection ins {
-  color: #28533d;
+  color: light-dark(#28533d, var(--success));
   text-decoration: none;
 }
 .saved {
@@ -119,11 +119,11 @@
 }
 
 .audit [data-verdict='match'] {
-  color: #28533d;
+  color: light-dark(#28533d, var(--success));
 }
 .audit :is([data-verdict='uncertain'], [data-verdict='missing']) {
-  color: #78521e;
+  color: light-dark(#78521e, var(--attention));
 }
 .audit :is([data-verdict='mismatch'], [data-verdict='conflict']) {
-  color: #943c2c;
+  color: light-dark(#943c2c, var(--danger));
 }

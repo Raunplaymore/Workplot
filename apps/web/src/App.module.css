@@ -13,7 +13,7 @@
   justify-content: space-between;
   border-top: 1px solid var(--border);
   padding: 0 20px;
-  background: #f9fbf7;
+  background: light-dark(#f9fbf7, var(--surface));
   font-size: var(--type-caption);
   color: var(--muted);
   position: relative;
@@ -32,7 +32,7 @@
   max-height: 65dvh;
   overflow: auto;
   padding: 18px;
-  background: white;
+  background: light-dark(white, var(--surface));
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 8px 32px #23372f20;

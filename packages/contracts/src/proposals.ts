@@ -1,4 +1,4 @@
-import { insertWorkflowStep } from './workflow-layout.js';
+import { insertWorkflowStep, removeWorkflowStep } from './workflow-layout.js';
 import { z } from 'zod';
 import {
   codexSkillRefSchema,
@@ -54,11 +54,19 @@ const taskInsertion = z.strictObject({
   instructions: z.string().trim().min(1).max(8000),
   inputFrom,
 });
+const routedTask = z.strictObject({
+  improvementRoutes: z.strictObject({
+    screen: z.string().trim().min(1).max(2000),
+    feature: z.string().trim().min(1).max(2000),
+  }),
+});
 const edits = z.strictObject({
   clarification: z.string().max(1000),
+  removals: z.array(id).max(31),
   additions: z
     .array(
       z.union([
+        taskInsertion.extend(routedTask.shape),
         taskInsertion,
         z.strictObject({ ...insertion, kind: z.literal('review') }),
       ]),
@@ -86,6 +94,13 @@ const newFlow = z.strictObject({
           kind: z.literal('task'),
           instructions: z.string().trim().min(1).max(8000),
           inputFrom,
+        }),
+        z.strictObject({
+          ...plannedStep,
+          kind: z.literal('task'),
+          instructions: z.string().trim().min(1).max(8000),
+          inputFrom,
+          ...routedTask.shape,
         }),
         z.strictObject({ ...plannedStep, kind: z.literal('review') }),
       ]),
@@ -177,6 +192,7 @@ export function buildProposal(
 ): z.infer<typeof proposalResponseSchema> {
   const parsed = (selectedSkill ? skillEdits : edits)
     .extend({
+      removals: edits.shape.removals.default([]),
       instructions: edits.shape.instructions.default([]),
       goal: edits.shape.goal.default(null),
       doneWhen: edits.shape.doneWhen.default(null),
@@ -190,6 +206,7 @@ export function buildProposal(
       : null;
   const hasChanges =
     target ||
+    parsed.removals.length ||
     additions.length ||
     inputs.length ||
     instructions.length ||
@@ -201,6 +218,14 @@ export function buildProposal(
   }
   if (!hasChanges) throw new Error('empty proposal');
   let steps = orderedSteps(base).map((step) => ({ ...step }));
+  const removed = new Set(parsed.removals);
+  if (removed.size !== parsed.removals.length || removed.size >= steps.length)
+    throw new Error('invalid removals');
+  for (const stepId of removed) {
+    const index = steps.findIndex((step) => step.id === stepId);
+    if (index < 0) throw new Error('unknown removal');
+    steps = removeWorkflowStep(steps, index);
+  }
   const updated = new Set<string>();
   for (const { stepId, text } of instructions) {
     const step = steps.find((item) => item.id === stepId);
@@ -212,7 +237,11 @@ export function buildProposal(
   for (const add of additions) {
     const index = steps.findIndex((step) => step.id === add.after);
     const anchor = steps[index];
-    if (!anchor || steps.some((step) => step.id === add.id))
+    if (
+      !anchor ||
+      removed.has(add.id) ||
+      steps.some((step) => step.id === add.id)
+    )
       throw new Error('invalid insertion');
     const fields = { id: add.id, title: add.title, position: anchor.position };
     steps = insertWorkflowStep(
@@ -224,6 +253,10 @@ export function buildProposal(
             ...fields,
             kind: 'task',
             agent: 'codex',
+            ...('improvementRoutes' in add && {
+              improvementRoutes: add.improvementRoutes,
+              workspaceAccess: 'read-only' as const,
+            }),
             instructions: add.instructions,
             inputFrom: add.inputFrom,
           },
@@ -262,7 +295,9 @@ export function buildProposal(
   for (const effective of workflowPlan(definition).steps) {
     const step = steps.find((step) => step.id === effective.id)!;
     if (step.kind !== 'task') continue;
-    const desired = targets.get(step.id) ?? originalInputs.get(step.id);
+    const desired =
+      targets.get(step.id) ??
+      originalInputs.get(step.id)?.filter((id) => !removed.has(id));
     if (desired && JSON.stringify(desired) !== JSON.stringify(effective.inputs))
       step.inputFrom = desired;
   }
