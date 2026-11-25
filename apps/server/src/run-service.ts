@@ -6,6 +6,7 @@ import {
 } from './timeout-history.js';
 import { routeImprovements } from './improvement-router.js';
 import { reserveQaPort } from './qa-port.js';
+import { expandWorkflow } from './linked-workflow.js';
 import { probeRecovery } from './recovery-probe.js';
 import { verificationRecovery } from './verification-recovery.js';
 import {
@@ -45,6 +46,7 @@ import {
   orderedSteps,
   workflowPlan,
   runEventsSchema,
+  type ResultPromptOrigin,
   type RunDecision,
   type RunInput,
   type RunMaterial,
@@ -1808,6 +1810,75 @@ export function createRunService(
     },
     view,
     timeoutReport,
+    async resultPromptOrigin(
+      id: string,
+      file: string,
+    ): Promise<ResultPromptOrigin> {
+      const current = store.run(id);
+      const seen = new Set<string>();
+      let record = current;
+      let resultHash: string | undefined;
+      for (;;) {
+        const { summary, results, completedHashes } = record;
+        const resultIndex = results.indexOf(file);
+        if (
+          seen.has(summary.id) ||
+          summary.workflowId !== current.summary.workflowId ||
+          summary.status !== 'completed' ||
+          resultIndex < 0
+        )
+          throw new StoreNotFound();
+        seen.add(summary.id);
+        const digest = hash(await artifact(summary.id, file));
+        if (
+          (completedHashes && completedHashes[resultIndex] !== digest) ||
+          (resultHash && resultHash !== digest)
+        )
+          throw new StoreConflict();
+        resultHash = digest;
+
+        const { workflowId, workflowVersion, origin } = summary;
+        const { definition } = store.workflow(workflowId, workflowVersion);
+        const linkedSteps = new Map<
+          string,
+          { callId: string; stepId: string }
+        >();
+        const execution = expandWorkflow(
+          workflowId,
+          definition,
+          store.workflow,
+          (runtimeId, callId, stepId) =>
+            linkedSteps.set(runtimeId, { callId, stepId }),
+        );
+        const task = execution.steps.find((step) => step.id + '.md' === file);
+        if (task?.kind !== 'task') throw new StoreNotFound();
+        if (origin) {
+          const steps = orderedSteps(execution);
+          const index = steps.indexOf(task);
+          const restart = steps.findIndex((step) => step.id === origin.stepId);
+          if (index < 0 || restart < 0) throw new StoreNotFound();
+          if (index < restart) {
+            // The source run may itself have inherited this result.
+            record = store.run(origin.runId);
+            continue;
+          }
+        }
+
+        const linked = linkedSteps.get(task.id);
+        const call = definition.steps.find(
+          (step) => step.id === linked?.callId,
+        );
+        const ref = call?.kind === 'task' ? call.workflowRef : undefined;
+        if (linked && !ref) throw new StoreNotFound();
+        return {
+          runId: summary.id,
+          ...(ref && { workflowId: ref.id }),
+          version: ref?.version ?? workflowVersion,
+          stepId: linked?.stepId ?? task.id,
+          instructions: task.instructions,
+        };
+      }
+    },
     async failureEvidence(id: string, step: string) {
       const state = store.run(id);
       const log =

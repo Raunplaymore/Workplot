@@ -1,6 +1,91 @@
 import { prepareThreeStepDraft } from './three-step-draft.js';
 import { expect, test, type Locator } from '@playwright/test';
 
+for (const width of [1440, 390]) {
+  test(`saves the selected Prompt by keyboard after a failed write (${width}px)`, async ({
+    page,
+  }, info) => {
+    await page.setViewportSize({ width, height: 844 });
+    await prepareThreeStepDraft(page);
+    await page.goto('/');
+    const rail = page.getByRole('navigation', { name: '작업공간' });
+    await expect(rail.getByRole('link')).toHaveText([
+      'Runs',
+      'Library',
+      'Editor',
+    ]);
+    const entry = rail.getByRole('link', { name: 'Editor' });
+    await entry.press('Enter');
+    await expect(entry).toHaveAttribute('aria-current', 'page');
+    const panel = page.getByRole('region', { name: '와이어 편집기' });
+    const save = panel.getByRole('button', { name: 'Save', exact: true });
+    const viewRuns = panel.getByRole('link', { name: 'View Runs' });
+    const status = panel
+      .getByRole('status')
+      .filter({ hasText: /Saved|Unsaved|Saving/ });
+    await expect(viewRuns).toHaveCount(0);
+    await save.click();
+    await expect(status).toHaveText('Saved · v1');
+    const picker = panel.getByLabel('편집할 단계');
+    await picker.press('3');
+    await expect(picker).toHaveValue('revision');
+    const prompt = panel.getByRole('textbox', { name: 'Prompt', exact: true });
+    const original =
+      '  이전 초안과 검토 결과를 대조하세요.\n\n  변경 근거를 기록하세요. \n';
+    await prompt.fill(original);
+    await expect(status).toHaveText('Unsaved changes');
+    await expect(viewRuns).toHaveCount(0);
+    await expect(save).toBeInViewport({ ratio: 1 });
+    await expect(panel.getByLabel('AI에게 지침 수정 요청')).toBeHidden();
+    await page.screenshot({ path: info.outputPath('after-edit.png') });
+    for (
+      let i = 0;
+      i < 16 && !(await save.evaluate((el) => el === document.activeElement));
+      i++
+    ) {
+      await page.keyboard.press('Tab');
+    }
+    await expect(save).toBeFocused();
+    await expect(save).toHaveCSS('outline-style', 'solid');
+    await page.screenshot({ path: info.outputPath('after-focus.png') });
+
+    await page.route('**/api/workflows/*', async (route) => {
+      if (route.request().method() !== 'PUT') return route.fallback();
+      await route.fulfill({ status: 500, json: { error: 'storage_error' } });
+    });
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('alert')).toBeVisible();
+    await expect(save).toBeEnabled();
+    await expect(save).toBeFocused();
+    await expect(prompt).toHaveValue(original);
+    await expect(viewRuns).toHaveCount(0);
+
+    await page.unroute('**/api/workflows/*');
+    const response = page.waitForResponse(
+      (res) =>
+        res.request().method() === 'PUT' &&
+        /\/api\/workflows\//.test(res.url()),
+    );
+    await page.keyboard.press('Enter');
+    expect((await response.then((res) => res.json())).version).toBe(2);
+    await expect(status).toHaveText('Saved · v2');
+    await expect(save).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(viewRuns).toBeFocused();
+    await expect(viewRuns).toHaveCSS('outline-style', 'solid');
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/#\/runs$/);
+    await expect(rail.getByRole('link', { name: 'Runs' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    await page.goBack();
+    await page.reload();
+    await picker.selectOption('revision');
+    await expect(prompt).toHaveValue(original);
+  });
+}
+
 test('wire editing keeps order, nearby selection and zoom through insertion, movement, deletion and undo', async ({
   page,
 }, info) => {
@@ -126,7 +211,7 @@ test('selected task instructions can be refined and applied without changing ano
     graph.locator('.react-flow__edge[data-id="review:revision"]'),
   ).toContainText('승인 후');
   await graph.locator('.react-flow__node[data-id="draft"] strong').click();
-  const editor = page.getByRole('textbox', { name: '작업 지침', exact: true });
+  const editor = page.getByRole('textbox', { name: 'Prompt', exact: true });
   const original = await editor.inputValue();
   await editor.fill(original + ' 직접 편집.');
   await page.route('**/api/node-instructions', async (route) => {
@@ -135,6 +220,14 @@ test('selected task instructions can be refined and applied without changing ano
       json: { instructions: '출처를 확인하고 초안을 작성한다.' },
     });
   });
+  const refine = page.getByRole('button', { name: 'Refine' });
+  await expect(page.getByLabel('AI에게 지침 수정 요청')).toBeHidden();
+  await refine.press('Enter');
+  await expect(refine).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByLabel('AI에게 지침 수정 요청')).toBeVisible();
+  await refine.press('Enter');
+  await expect(page.getByLabel('AI에게 지침 수정 요청')).toBeHidden();
+  await refine.press('Enter');
   await page.getByLabel('AI에게 지침 수정 요청').fill('출처 확인을 추가해줘');
   await page.getByRole('button', { name: '수정안 요청' }).click();
   await expect(page.getByLabel('AI 수정안')).toHaveValue(
@@ -270,8 +363,8 @@ test('a recovered edit with a deleted document source saves on the first click',
   });
   await page.goto('/#/design/' + id);
   await page.reload();
-  await page.getByRole('button', { name: '흐름 저장', exact: true }).click();
-  await expect(page.getByText('저장된 버전 2', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByText('Saved · v2', { exact: true })).toBeVisible();
   const saved = await page.evaluate(
     async (id) => (await fetch('/api/workflows/' + id)).json(),
     id,
@@ -290,7 +383,7 @@ test('a new flow starts with one AI task and an empty instruction field', async 
   const nodes = page.locator('.react-flow__node');
   await expect(nodes).toHaveCount(1);
   await expect(nodes).toContainText('AI 작업');
-  const field = page.getByRole('textbox', { name: '작업 지침', exact: true });
+  const field = page.getByRole('textbox', { name: 'Prompt', exact: true });
   await expect(field).toHaveValue('');
   await expect(field).toHaveAttribute('placeholder', /어떤 결과/);
   await field.fill('작업 기록에서 남은 일을 정리하세요.');
@@ -308,7 +401,7 @@ test('a multi-task Git node shows its effective permission before granting write
   await expect(panel).toContainText('Git 개발 실행 시 · 읽기 전용');
   await panel.getByRole('button', { name: '이 노드에 파일 수정 허용' }).click();
   await expect(panel.getByRole('combobox')).toHaveValue('write');
-  await page.getByRole('button', { name: '흐름 저장', exact: true }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page).toHaveURL(/#\/design\/[a-f0-9-]+/);
   await page.reload();
   await page.getByRole('button', { name: '도구와 권한', exact: true }).click();

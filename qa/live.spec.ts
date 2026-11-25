@@ -117,7 +117,7 @@ for (const scenario of scenarios) {
   test(scenario.name, async ({ page, context }) => {
     const evidence: Record<string, unknown> = { scenario: scenario.name };
     await page.goto('/');
-    await page.getByRole('link', { name: '흐름 설계' }).click();
+    await page.getByRole('link', { name: 'Editor' }).click();
     await page.getByRole('button', { name: '흐름 목록' }).click();
     await page
       .getByLabel('저장한 흐름')
@@ -288,7 +288,7 @@ for (const scenario of scenarios) {
         revisionStarted ||= completed;
       }
       for (const tab of tabs) {
-        await tab.getByRole('link', { name: '실행 현황' }).click();
+        await tab.getByRole('link', { name: 'Runs' }).click();
         await expect(row(tab)).toContainText(completed ? '완료' : '중단됨', {
           timeout: 145000,
         });
@@ -436,7 +436,7 @@ test('Q27 실제 Codex 변경안 취소·적용과 업무 미실행', async ({ p
     (r) =>
       r.url().endsWith('/api/workflows') && r.request().method() === 'POST',
   );
-  await button(page, '흐름 저장').click();
+  await button(page, 'Save').click();
   const original = await (await saving).json();
   const get = async (path: string) =>
     (await page.request.get('/api/' + path)).json();
@@ -516,8 +516,7 @@ test('Q27 실제 Codex 변경안 취소·적용과 업무 미실행', async ({ p
     await expect(graph.locator('.react-flow__node')).toHaveCount(
       action === '취소' ? 3 : 4,
     );
-    if (action === '취소')
-      await expect(button(page, '흐름 저장')).toBeDisabled();
+    if (action === '취소') await expect(button(page, 'Save')).toBeDisabled();
     else {
       await expect(button(page, '저장한 버전 실행')).toBeDisabled();
       const saved = page.waitForResponse(
@@ -525,7 +524,7 @@ test('Q27 실제 Codex 변경안 취소·적용과 업무 미실행', async ({ p
           r.url().endsWith('/api/workflows/' + original.id) &&
           r.request().method() === 'PUT',
       );
-      await button(page, '흐름 저장').click();
+      await button(page, 'Save').click();
       const version = await (await saved).json();
       expect(version.version).toBe(2);
       expect(version.definition).toEqual(definition);
@@ -653,7 +652,7 @@ test('Q28 실제 Codex 목표 설계 취소·신규 저장과 업무 미실행',
       await expect(page.getByRole('heading', { level: 1 })).toHaveText(
         original.definition.name,
       );
-      await expect(button(page, '흐름 저장')).toBeDisabled();
+      await expect(button(page, 'Save')).toBeDisabled();
     } else {
       await expect(page.getByRole('heading', { level: 1 })).toHaveText(
         definition.name,
@@ -663,7 +662,7 @@ test('Q28 실제 Codex 목표 설계 취소·신규 저장과 업무 미실행',
         (r) =>
           r.url().endsWith('/api/workflows') && r.request().method() === 'POST',
       );
-      await button(page, '흐름 저장').click();
+      await button(page, 'Save').click();
       const created = await saving;
       expect(created.status()).toBe(201);
       const saved = await created.json();
@@ -1491,7 +1490,7 @@ test('Q38 새 자료로 실행하고 예전 결과의 버전을 다시 사용한
   const fav = panel.getByRole('button', { name: base.name + ' 즐겨찾기' });
   await fav.click();
   await expect(fav).toHaveAttribute('aria-pressed', 'true');
-  await panel.getByRole('button', { name: '새 자료로 실행' }).click();
+  await panel.getByRole('button', { name: 'New input' }).click();
   const dialog = page.getByRole('dialog');
   const records = [];
   for (const [i, shop] of ['달빛서점', '봄날카페'].entries()) {
@@ -1523,7 +1522,7 @@ test('Q38 새 자료로 실행하고 예전 결과의 버전을 다시 사용한
     await expect(
       page.getByRole('button', { name: '검토할 문서 열기' }),
     ).toBeVisible({ timeout: 135000 });
-    await page.getByRole('link', { name: '내 워크플로', exact: true }).click();
+    await page.getByRole('link', { name: 'Library', exact: true }).click();
     await page.getByRole('searchbox').fill('재사용 검증');
     await panel
       .getByRole('link', { name: '검토 이어가기 · ' + shop + ' 소개' })
@@ -1571,7 +1570,7 @@ test('Q38 새 자료로 실행하고 예전 결과의 버전을 다시 사용한
   expect(
     await readFile(join(root, 'runs', records[0]!.id, 'revision.md'), 'utf8'),
   ).toBe(records[0]!.artifacts[1]);
-  await page.getByRole('link', { name: '내 워크플로', exact: true }).click();
+  await page.getByRole('link', { name: 'Library', exact: true }).click();
   await page.getByRole('searchbox').fill('재사용 검증');
   await expect(panel.getByLabel('마지막 결과 미리보기')).toContainText(
     '봄날카페',
@@ -1597,7 +1596,7 @@ test('Q40 설계 스킬 탐색·지침 확인 후 실제 Codex 변경안 미리�
   const saving = page.waitForResponse(
     (r) => r.url().endsWith('/workflows') && r.request().method() === 'POST',
   );
-  await button(page, '흐름 저장').click();
+  await button(page, 'Save').click();
   const original = await (await saving).json();
   const observed: string[] = [];
   page.on('request', (r) => {
@@ -1680,7 +1679,7 @@ test('Q40 설계 스킬 탐색·지침 확인 후 실제 Codex 변경안 미리�
   expect(await originalRead()).toEqual(original);
   await page.screenshot({ path: join(root, 'Q40-proposal.png') });
   await dialog.getByRole('button', { name: '변경안 적용' }).click();
-  await expect(button(page, '흐름 저장')).toBeEnabled();
+  await expect(button(page, 'Save')).toBeEnabled();
   expect(await originalRead()).toEqual(original);
   expect(await (await page.request.get('/api/runs')).json()).toEqual(
     runsBefore,
@@ -1723,7 +1722,7 @@ test('Q41 실행 스킬 적용 범위를 확인하고 저장 후 지정한 노�
   const save = page.waitForResponse(
     (r) => r.url().endsWith('/workflows') && r.request().method() === 'POST',
   );
-  await button(page, '흐름 저장').click();
+  await button(page, 'Save').click();
   const initial = await (await save).json();
   const readSaved = () => get('workflows/' + initial.id);
   const originalRuns = await get('runs');
@@ -1752,7 +1751,7 @@ test('Q41 실행 스킬 적용 범위를 확인하고 저장 후 지정한 노�
       r.url().endsWith('/workflows/' + initial.id) &&
       r.request().method() === 'PUT',
   );
-  await button(page, '흐름 저장').click();
+  await button(page, 'Save').click();
   const version = await (await saving).json();
   const expected = structuredClone(initial.definition);
   const ref = version.definition.steps.find(
@@ -1845,7 +1844,7 @@ test('Q42 보관함에서 개인 스킬 등록 후 명시적 업데이트로만 
   expect(made.status()).toBe(201);
   const flow = await made.json();
   const before = await (await page.request.get('/api/runs')).json();
-  await page.getByRole('link', { name: '내 워크플로', exact: true }).click();
+  await page.getByRole('link', { name: 'Library', exact: true }).click();
   await page.getByRole('searchbox').fill(definition.name);
   await button(page, 'Codex 스킬로 등록').click();
   const alias = 'workplot-qa-' + flow.id.slice(0, 8);
@@ -1910,7 +1909,7 @@ test('Q43 예약 시각에 최신 파일로 한 번 실행하고 사용자 승�
     '매장명: 이전카페\n주소: 봄길 8\n영업시간: 09:00–18:00\n취급 품목: 커피';
   const source = previous.replace('이전카페', '예약연습카페');
   await writeFile(file, previous);
-  await page.getByRole('link', { name: '내 워크플로', exact: true }).click();
+  await page.getByRole('link', { name: 'Library', exact: true }).click();
   await page.getByRole('searchbox').fill(definition.name);
   const panel = page.getByRole('region', { name: '예약 실행' });
   await panel.getByRole('button', { name: '예약 추가' }).click();
@@ -2048,8 +2047,8 @@ test('Q44 개인 슬롯의 검토 노드를 실제 Codex로 맞추고 취소·�
   await modal.getByRole('button', { name: '와이어에 적용' }).click();
   await expect(picker.locator('option')).toHaveCount(4);
   expect((await api('workflows')).length).toBe(priorIds.size);
-  await page.getByRole('button', { name: '흐름 저장', exact: true }).click();
-  await expect(page.getByText('저장된 버전 1', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByText('Saved · v1', { exact: true })).toBeVisible();
   const list = await api('workflows');
   const row = list.find((x: { id: string }) => !priorIds.has(x.id));
   const v = await api('workflows/' + row.id);
@@ -2102,7 +2101,7 @@ test('Q45 미저장 편집을 같은 탭에서 복원하고 저장과 취소 후
   const picker = page.getByLabel('편집할 단계');
   const button = (name: string) =>
     page.getByRole('button', { name, exact: true });
-  const prompt = page.getByRole('textbox', { name: /작업 지침/ });
+  const prompt = page.getByRole('textbox', { name: 'Prompt' });
   const cache = () =>
     page.evaluate(() => sessionStorage.getItem('workplot.editor-draft.v1'));
   await picker.selectOption('revision');
@@ -2116,7 +2115,7 @@ test('Q45 미저장 편집을 같은 탭에서 복원하고 저장과 취소 후
   const created = page.waitForResponse(
     (r) => r.url().endsWith('/workflows') && r.request().method() === 'POST',
   );
-  await button('흐름 저장').click();
+  await button('Save').click();
   const original = await (await created).json();
   await picker.selectOption('revision');
   await prompt.fill('휴관일의 대체 이용 방법을 적으세요. ');
@@ -2133,7 +2132,7 @@ test('Q45 미저장 편집을 같은 탭에서 복원하고 저장과 취소 후
       r.url().endsWith('/workflows/' + original.id) &&
       r.request().method() === 'PUT',
   );
-  await button('흐름 저장').click();
+  await button('Save').click();
   expect((await (await updated).json()).version).toBe(2);
   await expect.poll(cache).toBeNull();
 });
@@ -2174,9 +2173,9 @@ test('보관함에서 마지막 완료 버전과 저장 자료를 구분해 실�
   await page.getByRole('searchbox').fill(flow.name);
   await expect(detail.getByText('실행 전', { exact: true })).toBeVisible();
   await expect(
-    detail.getByRole('button', { name: '저장된 자료로 실행' }),
+    detail.getByRole('button', { name: 'Run saved input' }),
   ).toHaveCount(0);
-  await detail.getByRole('button', { name: '새 자료로 실행' }).click();
+  await detail.getByRole('button', { name: 'New input' }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel('이번 작업 자료').fill('방문지: 우에노 공원');
   await dialog.getByRole('button', { name: '실행 시작' }).click();
@@ -2194,7 +2193,7 @@ test('보관함에서 마지막 완료 버전과 저장 자료를 구분해 실�
     },
   });
   expect(updated.ok()).toBe(true);
-  await page.getByRole('link', { name: '내 워크플로', exact: true }).click();
+  await page.getByRole('link', { name: 'Library', exact: true }).click();
   await page.getByRole('searchbox').fill(flow.name);
   const status = '저장 v2 · 마지막 완료 v1 · 최신 버전 실행 전';
   await expect(library.getByText(status, { exact: true })).toHaveCount(1);
@@ -2210,7 +2209,7 @@ test('보관함에서 마지막 완료 버전과 저장 자료를 구분해 실�
   const request = page.waitForRequest(
     (r) => r.url().endsWith('/api/runs') && r.method() === 'POST',
   );
-  await detail.getByRole('button', { name: '저장된 자료로 실행' }).click();
+  await detail.getByRole('button', { name: 'Run saved input' }).click();
   expect((await request).postDataJSON()).toMatchObject({
     workflowId: id,
     workflowVersion: 2,
@@ -2222,7 +2221,7 @@ test('보관함에서 마지막 완료 버전과 저장 자료를 구분해 실�
   );
   const second = page.url();
   expect(second).not.toBe(first);
-  await page.getByRole('link', { name: '내 워크플로', exact: true }).click();
+  await page.getByRole('link', { name: 'Library', exact: true }).click();
   await page.getByRole('searchbox').fill(flow.name);
   await expect(
     detail.getByText('마지막 완료 v2', { exact: true }),
@@ -2233,7 +2232,7 @@ test('보관함에서 마지막 완료 버전과 저장 자료를 구분해 실�
   const restarted = page.waitForResponse(
     (r) => r.url().endsWith('/api/runs') && r.request().method() === 'POST',
   );
-  await detail.getByRole('button', { name: '저장된 자료로 실행' }).click();
+  await detail.getByRole('button', { name: 'Run saved input' }).click();
   const failedId = (await (await restarted).json()).summary.id;
   let pid = 0;
   await expect
@@ -2263,7 +2262,7 @@ test('보관함에서 마지막 완료 버전과 저장 자료를 구분해 실�
         ).summary.status,
     )
     .toBe('failed');
-  await page.getByRole('link', { name: '내 워크플로', exact: true }).click();
+  await page.getByRole('link', { name: 'Library', exact: true }).click();
   await page.getByRole('searchbox').fill(flow.name);
   const failureHash = '#/runs/' + failedId + '/log';
   const recorded = jsonLines(
@@ -2375,7 +2374,7 @@ test('세션 승인으로 인계문이 연결되고 다음 승인에서 루프�
   expect(response.status()).toBe(201);
   await page.reload();
   await page.getByRole('searchbox').fill('세션 인계 QA');
-  await page.getByRole('button', { name: '저장된 자료로 실행' }).click();
+  await page.getByRole('button', { name: 'Run saved input' }).click();
   const accept = page.getByRole('button', { name: '승인하고 다음 세션 시작' });
   await expect(accept).toBeEnabled({ timeout: 120000 });
   const first = page.url();

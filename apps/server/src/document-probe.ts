@@ -350,9 +350,7 @@ export async function checkDocumentSwitching(
           );
           await page.setViewportSize({ width, height: 900 });
         }
-        await page
-          .getByRole('link', { name: '흐름 설계', exact: true })
-          .click();
+        await page.getByRole('link', { name: 'Editor', exact: true }).click();
         await page
           .getByRole('heading', { name: '와이어 편집기', exact: true })
           .waitFor();
@@ -365,9 +363,7 @@ export async function checkDocumentSwitching(
             (await capture('editor')),
         );
         action = '흐름 설계 → 실행 현황 필터 → 결과 열기';
-        await page
-          .getByRole('link', { name: '실행 현황', exact: true })
-          .click();
+        await page.getByRole('link', { name: 'Runs', exact: true }).click();
         const running = page.getByRole('button', { name: /진행 중/ }),
           all = page.getByRole('button', { name: /전체 실행/ }),
           result = page.getByRole('button', { name: '결과 열기', exact: true });

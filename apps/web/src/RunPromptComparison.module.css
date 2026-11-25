@@ -1,0 +1,47 @@
+.reader {
+  flex: 1;
+  overflow: auto;
+  padding: clamp(12px, 2vw, 24px);
+}
+.reader:focus-visible {
+  outline-offset: -3px;
+}
+.prompts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-block-end: 20px;
+}
+.result h3,
+.source dd {
+  overflow-wrap: anywhere;
+}
+.source {
+  margin-block: 8px;
+}
+.source summary {
+  width: fit-content;
+  cursor: pointer;
+}
+.source dl {
+  margin-block: 8px 0;
+}
+.source dd {
+  margin: 0 0 8px;
+  font-family: ui-monospace, monospace;
+}
+.reader pre {
+  margin-block: 8px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--wash);
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 700px) {
+  .prompts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

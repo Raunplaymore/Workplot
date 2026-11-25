@@ -669,7 +669,7 @@ test('keeps fresh material across an idempotent start, retry, comparison and a s
         return { kind: 'document', text: currentStepId + ' ' + source };
       },
     },
-    async ({ inject }) => {
+    async ({ inject, path }) => {
       const wf = await inject('POST', '/workflows', {
         ...definition,
         inputFields: ['프로젝트명'],
@@ -733,6 +733,38 @@ test('keeps fresh material across an idempotent start, retry, comparison and a s
       expect(
         (await inject('GET', '/workflows/' + workflowId)).json(),
       ).toMatchObject({ definition: { input: definition.input } });
+      const inherited = '/results/draft.md/prompt-origin';
+      const created = '/results/revision.md/prompt-origin';
+      const rerunUrl = '/runs/' + next.summary.id;
+      const original = {
+        runId: id,
+        version: 1,
+        stepId: 'draft',
+        instructions: '원본 지침',
+      };
+      expect((await inject('GET', rerunUrl + inherited)).json()).toEqual(
+        original,
+      );
+      expect((await inject('GET', rerunUrl + created)).json()).toEqual({
+        runId: next.summary.id,
+        version: next.summary.workflowVersion,
+        stepId: 'revision',
+        instructions: '핵심만 수정',
+      });
+      const repeated = runViewSchema.parse(
+        (
+          await inject('POST', rerunUrl + '/rerun', {
+            stepId: 'revision',
+            instructions: '다시 수정',
+          })
+        ).json(),
+      );
+      await accept(repeated.summary.id);
+      await until(inject, repeated.summary.id, 'completed');
+      const repeatedOrigin = '/runs/' + repeated.summary.id + inherited;
+      expect((await inject('GET', repeatedOrigin)).json()).toEqual(original);
+      await writeFile(join(path, 'runs', id, 'draft.md'), '변경된 결과');
+      expect((await inject('GET', repeatedOrigin)).statusCode).toBe(409);
     },
   );
 });
@@ -972,6 +1004,83 @@ test('a linked workflow uses its pinned version and returns its last document be
         (await until(inject, id, 'stopped')).summary.nextSessionId,
       ).toBeUndefined();
       expect((await inject('GET', '/runs')).json()).toHaveLength(1);
+    },
+  );
+});
+
+test('completed linked results resolve to the pinned generating child nodes', async () => {
+  await withStudio(
+    {
+      ready: async () => '0.166.0',
+      write: async () => ({ kind: 'document', text: 'result' }),
+    },
+    async ({ inject, path }) => {
+      const task = (id: string, instructions: string) => ({
+        id,
+        kind: 'task',
+        title: id,
+        instructions,
+        position: { x: 0, y: 0 },
+      });
+      const brief = '  Pinned child prompt\n\nSecond line  ';
+      const child = {
+        name: 'Child',
+        steps: [task('draft', 'Draft'), task('brief', brief)],
+        links: [{ from: 'draft', to: 'brief' }],
+      };
+      const linked = await inject('POST', '/workflows', child);
+      expect(linked.statusCode).toBe(201);
+      const { id: childId } = linked.json() as { id: string };
+      const parent = await inject('POST', '/workflows', {
+        name: 'Parent',
+        steps: [
+          {
+            ...task('prepare', 'Parent call'),
+            workflowRef: { id: childId, version: 1 },
+          },
+        ],
+        links: [],
+      });
+      expect(parent.statusCode).toBe(201);
+      const { id: workflowId } = parent.json() as { id: string };
+      const saved = await inject('PUT', '/workflows/' + childId, {
+        baseVersion: 1,
+        definition: { ...child, steps: [child.steps[0], task('brief', 'New')] },
+      });
+      expect(saved.statusCode).toBe(200);
+
+      const id = randomUUID();
+      await inject('POST', '/runs', { id, workflowId, workflowVersion: 1 });
+      expect((await until(inject, id, 'completed')).results).toEqual([
+        'prepare--draft.md',
+        'prepare.md',
+      ]);
+      for (const [file, stepId, instructions] of [
+        ['prepare--draft.md', 'draft', 'Draft'],
+        ['prepare.md', 'brief', brief],
+      ]) {
+        const response = await inject(
+          'GET',
+          '/runs/' + id + '/results/' + file + '/prompt-origin',
+        );
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toEqual({
+          runId: id,
+          workflowId: childId,
+          version: 1,
+          stepId,
+          instructions,
+        });
+      }
+      await writeFile(join(path, 'runs', id, 'prepare.md'), 'Changed');
+      expect(
+        (
+          await inject(
+            'GET',
+            '/runs/' + id + '/results/prepare.md/prompt-origin',
+          )
+        ).statusCode,
+      ).toBe(409);
     },
   );
 });

@@ -5,12 +5,12 @@ import {
 } from './material-draft';
 import { RequestAttachments } from './RequestAttachments';
 import type { RequestFiles } from '@studio/contracts';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { AutoSession } from './AutoSession';
 import { WorkflowSchedule } from './WorkflowSchedule';
 import { SkillRegistration } from './SkillRegistration';
 import { ActionMenu, anchorMenu, type MenuPosition } from './ActionMenu';
-import { MoreHorizontal, Search, Star } from 'lucide-react';
+import { ChevronDown, MoreHorizontal, Search, Star } from 'lucide-react';
 import {
   librarySchema,
   missingInputFields,
@@ -212,6 +212,9 @@ export function WorkflowLibrary({
   const currentFolder = requested?.location ?? folder;
 
   const [record, setRecord] = useState<WorkflowVersion | null>(null);
+  const [savedInputOpen, setSavedInputOpen] = useState(false);
+  const savedInputPanelId = useId();
+  const savedInputHeadingId = useId();
   const [result, setResult] = useState<{
     id: string;
     text: string;
@@ -279,6 +282,7 @@ export function WorkflowLibrary({
   useEffect(() => {
     const c = new AbortController();
     setRecord(null);
+    setSavedInputOpen(false);
     setError('');
     if (id && selectedVersion)
       localRequest(
@@ -349,6 +353,7 @@ export function WorkflowLibrary({
   }
   const version =
     record?.id === id && record?.version === selectedVersion ? record : null;
+  const savedInput = version?.definition.input;
   useEffect(() => {
     if (!revealChoice) return;
     if (revealChoice === choice && !version) return;
@@ -587,17 +592,91 @@ export function WorkflowLibrary({
           <>
             <div ref={summaryRef} tabIndex={-1}>
               <header>
-                <h2>{version.definition.name}</h2>
-                {version.definition.goal && <p>{version.definition.goal}</p>}
-                <button
-                  onClick={() => edit(version.id)}
-                  disabled={!canEdit || currentFolder === 'trash'}
-                >
-                  저장 v{version.version} 편집
-                </button>
-                <small>
-                  {versionStatus(version.version, rows ? runs : null, true)}
-                </small>
+                <div className={styles.summaryInfo}>
+                  <h2>{version.definition.name}</h2>
+                  {version.definition.goal && <p>{version.definition.goal}</p>}
+                  <button
+                    onClick={() => edit(version.id)}
+                    disabled={!canEdit || currentFolder === 'trash'}
+                  >
+                    저장 v{version.version} 편집
+                  </button>
+                  <small>
+                    {versionStatus(version.version, rows ? runs : null, true)}
+                  </small>
+                </div>
+                {currentFolder !== 'trash' && (
+                  <div
+                    className={styles.summaryActions}
+                    data-preview-open={savedInputOpen}
+                  >
+                    {savedInput?.trim() && (
+                      <>
+                        <button
+                          type="button"
+                          className={styles.savedInputToggle}
+                          aria-expanded={savedInputOpen}
+                          aria-controls={savedInputPanelId}
+                          onClick={() => setSavedInputOpen(!savedInputOpen)}
+                        >
+                          Saved input
+                          <ChevronDown size={16} aria-hidden="true" />
+                        </button>
+                        <div
+                          id={savedInputPanelId}
+                          className={styles.savedInputPanel}
+                          hidden={!savedInputOpen}
+                        >
+                          {savedInputOpen && (
+                            <>
+                              <h3 id={savedInputHeadingId}>
+                                Saved input · v{version.version}
+                              </h3>
+                              <pre
+                                role="region"
+                                aria-labelledby={savedInputHeadingId}
+                                tabIndex={0}
+                              >
+                                {savedInput}
+                              </pre>
+                            </>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          className={styles.primary}
+                          disabled={
+                            busy ||
+                            version.definition.steps.some(
+                              (s) =>
+                                s.kind === 'task' && s.agent === 'unassigned',
+                            )
+                          }
+                          onClick={() =>
+                            startSaved(
+                              version,
+                              request.trim() || undefined,
+                              attached,
+                            )
+                          }
+                        >
+                          {starting ? '실행 접수 중…' : 'Run saved input'}
+                        </button>
+                      </>
+                    )}
+                    <button
+                      type="button"
+                      className={styles.primary}
+                      aria-haspopup="dialog"
+                      disabled={busy}
+                      onClick={() =>
+                        prepare(version, request.trim() || undefined, attached)
+                      }
+                    >
+                      New input
+                    </button>
+                  </div>
+                )}
               </header>
             </div>
             <h3>작업 순서</h3>
@@ -644,34 +723,6 @@ export function WorkflowLibrary({
                   change={(files) => setFilesDraft({ key: requestKey, files })}
                 />
                 <div className={styles.runActions}>
-                  {version.definition.input?.trim() && (
-                    <button
-                      className={styles.primary}
-                      disabled={
-                        busy ||
-                        version.definition.steps.some(
-                          (s) => s.kind === 'task' && s.agent === 'unassigned',
-                        )
-                      }
-                      onClick={() =>
-                        startSaved(
-                          version,
-                          request.trim() || undefined,
-                          attached,
-                        )
-                      }
-                    >
-                      {starting ? '실행 접수 중…' : '저장된 자료로 실행'}
-                    </button>
-                  )}
-                  <button
-                    disabled={busy}
-                    onClick={() =>
-                      prepare(version, request.trim() || undefined, attached)
-                    }
-                  >
-                    새 자료로 실행
-                  </button>
                   <button
                     className={styles.secondaryAction}
                     disabled={
@@ -788,7 +839,10 @@ export function MaterialDialog({
       aria-labelledby="material-title"
       onCancel={(e) => {
         e.preventDefault();
-        if (!busy) close();
+        if (busy) return;
+        // Let the browser restore focus before React removes the dialog.
+        e.currentTarget.close();
+        close();
       }}
     >
       <small>

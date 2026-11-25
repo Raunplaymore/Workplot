@@ -137,7 +137,7 @@ for (const [code, title, step, target] of cases) {
     try {
       await server.ready;
       await page.goto('/');
-      await page.getByRole('link', { name: '흐름 설계' }).click();
+      await page.getByRole('link', { name: 'Editor' }).click();
       await page.getByRole('button', { name: '흐름 목록' }).click();
       await page
         .getByLabel('저장한 흐름')
@@ -286,7 +286,7 @@ for (const [code, title, step, target] of cases) {
       }
       const row = page.getByRole('row').filter({ hasText: '모퉁이서점' });
       if (codexCrash) {
-        await page.getByRole('link', { name: '실행 현황' }).click();
+        await page.getByRole('link', { name: 'Runs' }).click();
         await expect(
           row.getByRole('cell', { name: dashboard, exact: true }),
         ).toBeVisible();
@@ -299,7 +299,7 @@ for (const [code, title, step, target] of cases) {
         expect(server.child.pid).not.toBe(oldPid);
       }
       await page.reload();
-      await page.getByRole('link', { name: '실행 현황' }).click();
+      await page.getByRole('link', { name: 'Runs' }).click();
       await expect(row).toHaveCount(1);
       await expect(
         row.getByRole('cell', { name: dashboard, exact: true }),
@@ -422,7 +422,7 @@ for (const [code, title, step, target] of cases) {
         await expect(alert).toContainText('재실행 조건이 달라졌습니다.');
         const dashboardMessage = await alert.innerText();
         await page.reload();
-        await page.getByRole('link', { name: '실행 현황' }).click();
+        await page.getByRole('link', { name: 'Runs' }).click();
         await expect(
           row.getByRole('cell', { name: '실패', exact: true }),
         ).toBeVisible();
@@ -466,7 +466,7 @@ for (const [code, title, step, target] of cases) {
         });
         if (restartBeforeRestore) {
           const restart = await restartServer();
-          await page.getByRole('link', { name: '실행 현황' }).click();
+          await page.getByRole('link', { name: 'Runs' }).click();
           await expect(
             row.getByRole('cell', { name: '실패', exact: true }),
           ).toBeVisible();
@@ -538,7 +538,7 @@ for (const [code, title, step, target] of cases) {
         if (target === 'retry' && step === 'revision') {
           await restartServer();
         }
-        await page.getByRole('link', { name: '실행 현황' }).click();
+        await page.getByRole('link', { name: 'Runs' }).click();
         await row.getByRole('button', { name: '실패 상세 열기' }).click();
         if (concurrentRetry) {
           if (tabs.length === 1) tabs.push(await openOtherTab());
@@ -556,13 +556,13 @@ for (const [code, title, step, target] of cases) {
           evidence.acceptedRetryStatus = accepted.status();
         }
         const expected = step === 'draft' ? '승인 대기' : '완료';
-        await page.getByRole('link', { name: '실행 현황' }).click();
+        await page.getByRole('link', { name: 'Runs' }).click();
         await expect(
           row.getByRole('cell', { name: expected, exact: true }),
         ).toBeVisible({ timeout: 145000 });
         if (concurrentRetry) {
           for (const tab of tabs) {
-            await tab.getByRole('link', { name: '실행 현황' }).click();
+            await tab.getByRole('link', { name: 'Runs' }).click();
             const completedRow = tab
               .getByRole('row')
               .filter({ hasText: '모퉁이서점' });

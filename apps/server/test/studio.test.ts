@@ -332,6 +332,45 @@ test('an actual SQLite write failure preserves the previous version and returns 
   ).toBe(404);
 });
 
+test('saves and reopens the exact prompt while rejecting whitespace-only instructions', async () => {
+  app = await buildApp(path);
+  const headers = await session(app);
+  const created = await app.inject({
+    method: 'POST',
+    url: '/api/workflows',
+    payload: definition,
+    headers,
+  });
+  const v1 = workflowVersionSchema.parse(created.json());
+  const url = '/api/workflows/' + v1.id;
+  const update = (instructions: string) =>
+    app!.inject({
+      method: 'PUT',
+      url,
+      headers,
+      payload: {
+        baseVersion: v1.version,
+        definition: {
+          ...definition,
+          steps: definition.steps.map((step) =>
+            step.kind === 'task' ? { ...step, instructions } : step,
+          ),
+        },
+      },
+    });
+  expect((await update('  \n\t ')).statusCode).toBe(400);
+  const instructions = '  원문을 유지하세요.\n\n    두 번째 줄. \n';
+  const updated = await update(instructions);
+  expect(updated.statusCode).toBe(200);
+  const v2 = workflowVersionSchema.parse(updated.json());
+  expect(v2.version).toBe(2);
+  expect(v2.definition.steps[0]).toMatchObject({ instructions });
+  expect((await app.inject({ url, headers })).json()).toEqual(v2);
+  expect(
+    (await app.inject({ url: url + '/versions/1', headers })).json(),
+  ).toEqual(v1);
+});
+
 test('master plans pin child versions, reject invalid dependencies and survive restart without creating any runs', async () => {
   app = await buildApp(path);
   let headers = await session(app);

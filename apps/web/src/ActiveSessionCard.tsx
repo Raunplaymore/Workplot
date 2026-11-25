@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import {
   delegationStatusSchema,
   runViewSchema,
@@ -40,6 +40,10 @@ export function ActiveSessionCard({
   status: string;
   action: string;
 }) {
+  const cardId = useId();
+  const titleId = cardId + '-title';
+  const statusId = cardId + '-status';
+  const actionId = cardId + '-action';
   const [detail, setDetail] = useState<Detail | null>(null),
     [error, setError] = useState(false);
   const { id, workflowId, workflowVersion } = row;
@@ -149,16 +153,22 @@ export function ActiveSessionCard({
   return (
     <article className={styles.activeCard}>
       <header>
-        <h4>{row.name}</h4>
+        <h4 id={titleId}>{row.name}</h4>
         <span>
           v{workflowVersion} · {history.length + 1}회차
         </span>
       </header>
-      <strong>
+      <strong id={statusId}>
         {status}
         {detail?.stage && ' · ' + detail.stage}
       </strong>
-      <a href={'#/runs/' + id}>{action} →</a>
+      <a
+        href={'#/runs/' + id}
+        aria-labelledby={actionId + ' ' + titleId}
+        aria-describedby={statusId}
+      >
+        <span id={actionId}>{action}</span> <span aria-hidden="true">→</span>
+      </a>
       {detail?.task && <p>{detail.task}</p>}
       {latest && latest.text !== detail?.task && (
         <p>

@@ -30,7 +30,7 @@ test('tool detection shows partial availability without enabling work', async ({
   await expect(page.getByText('설치 확인 · 2.1.293')).toBeVisible();
   await expect(page.getByText('서버에서 찾지 못함')).toBeVisible();
   await expect(page.getByText('로그인 미확인', { exact: true })).toHaveCount(2);
-  await page.getByRole('link', { name: '흐름 설계' }).click();
+  await page.getByRole('link', { name: 'Editor' }).click();
   await expect(
     page.getByRole('button', { name: '작업 실행 · 연결 준비 중' }),
   ).toBeDisabled();
@@ -108,7 +108,7 @@ test('the built workspace connects to the local server without pretending to run
   await expect(
     page.getByRole('status').filter({ hasText: '로컬 서버' }),
   ).toHaveText('로컬 서버 연결됨');
-  await page.getByRole('link', { name: '흐름 설계' }).click();
+  await page.getByRole('link', { name: 'Editor' }).click();
   await expect(page.locator('.react-flow__node')).toHaveCount(1);
   await expect(page.locator('.react-flow__node')).toContainText('AI 작업');
   await expect(
@@ -132,7 +132,7 @@ test('a failed server connection is visible on a narrow screen', async ({
   await expect(page.getByRole('status')).toHaveText(
     '로컬 서버에 연결할 수 없음',
   );
-  await page.getByRole('link', { name: '흐름 설계' }).click();
+  await page.getByRole('link', { name: 'Editor' }).click();
   await expect(
     page.getByRole('button', { name: '작업 실행 · 연결 준비 중' }),
   ).toBeDisabled();
@@ -388,15 +388,53 @@ for (const width of [390, 1280]) {
 
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await page.goto('/#/runs');
+    const rail = page.getByRole('navigation', { name: '작업공간' });
+    await expect(rail.getByRole('link')).toHaveText([
+      'Runs',
+      'Library',
+      'Editor',
+    ]);
+    await expect(rail.getByRole('link', { name: 'Runs' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
     const cards = page
       .getByRole('region', { name: '진행 중인 워크플롯' })
       .getByRole('article');
     await expect(cards).toHaveCount(4);
+    const jump = page.getByRole('button', { name: 'Run list', exact: true });
+    if (width === 390) {
+      await expect(jump).toBeInViewport({ ratio: 1 });
+      await rail.getByRole('link', { name: 'Editor' }).focus();
+      await page.keyboard.press('Tab');
+      await expect(jump).toBeFocused();
+      await expect(jump).toHaveCSS('outline-style', 'solid');
+      await page.keyboard.press('Enter');
+      await expect(page).toHaveURL(/#\/runs$/);
+      const list = page.getByRole('region', { name: 'Run list' });
+      const title = list.getByRole('heading', { name: 'Run list' });
+      const waiting = list.getByRole('button', { name: /사용자 확인 대기/ });
+      await expect(title).toBeFocused();
+      await expect(title).toBeInViewport({ ratio: 1 });
+      await expect(waiting).toBeInViewport({ ratio: 1 });
+      await expect(waiting).toHaveAttribute('aria-pressed', 'false');
+      await page.keyboard.press('Tab');
+      await expect(
+        list.getByRole('button', { name: /전체 실행/ }),
+      ).toBeFocused();
+    } else {
+      await expect(jump).toBeHidden();
+    }
     await expect(cards.last().getByRole('heading')).toHaveText(
       '실행 중인 작업',
     );
     const cardFor = (name: string) =>
       cards.filter({ has: page.getByRole('heading', { name, exact: true }) });
+    const cardAction = (name: string, action: string) =>
+      cardFor(name).getByRole('link', {
+        name: (action === '검토 열기' ? '문서 검토 열기' : action) + ' ' + name,
+        exact: true,
+      });
     for (const {
       row: { name },
       expectedStatus,
@@ -407,23 +445,26 @@ for (const width of [390, 1280]) {
       await expect(
         card.getByText(expectedStatus + ' · 자료 확인', { exact: true }),
       ).toBeVisible();
-      await expect(
-        card.getByRole('link', {
-          name: (action === '검토 열기' ? '문서 검토 열기' : action) + ' →',
-          exact: true,
-        }),
-      ).toBeVisible();
+      const link = cardAction(name, action);
+      await expect(link).toBeVisible();
+      await expect(link).toHaveAccessibleDescription(
+        expectedStatus + ' · 자료 확인',
+      );
     }
     for (const {
       row: { id, name, gateKind },
       action,
     } of rows) {
-      await cardFor(name)
-        .getByRole('link', {
-          name: (action === '검토 열기' ? '문서 검토 열기' : action) + ' →',
-          exact: true,
-        })
-        .click();
+      const link = cardAction(name, action);
+      if (gateKind === 'review') {
+        await cardAction('기록 1', '질문 열기').focus();
+        await page.keyboard.press('Tab');
+        await expect(link).toBeFocused();
+        await expect(link).toHaveCSS('outline-style', 'solid');
+        await page.keyboard.press('Enter');
+      } else {
+        await link.click();
+      }
       await expect(page).toHaveURL(new RegExp('#/runs/' + id + '$'));
       if (id === responses[0]!.id) {
         const initialReads = detailReads;
@@ -478,14 +519,35 @@ for (const width of [390, 1280]) {
       action,
     } of rows) {
       await page.goto('/#/runs');
-      await page.getByRole('button', { name: /사용자 확인 대기/ }).click();
-      const list = page.locator('tbody');
+      const region = page.getByRole('region', { name: 'Run list' });
+      const filter = region.getByRole('button', { name: /사용자 확인 대기/ });
+      const list = region.locator('tbody');
+      await expect(cards).toHaveCount(4);
+      if (gateKind === 'question') {
+        await region.getByRole('button', { name: /진행 중/ }).focus();
+        await page.keyboard.press('Tab');
+        await expect(filter).toBeFocused();
+        await expect(filter).toHaveCSS('outline-style', 'solid');
+        await page.keyboard.press('Enter');
+      } else {
+        await filter.click();
+      }
+      await expect(filter).toHaveAttribute('aria-pressed', 'true');
+      await expect(cards).toHaveCount(4);
       await expect(list.getByRole('row')).toHaveCount(3);
       const row = list.getByRole('row').filter({ hasText: name });
       await expect(
         row.getByText(expectedStatus, { exact: true }),
       ).toBeVisible();
-      await row.getByRole('button', { name: action, exact: true }).click();
+      const open = row.getByRole('button', { name: action, exact: true });
+      if (gateKind === 'question') {
+        await page.keyboard.press('Tab');
+        await expect(open).toBeFocused();
+        await expect(open).toHaveCSS('outline-style', 'solid');
+        await page.keyboard.press('Enter');
+      } else {
+        await open.click();
+      }
       await expect(page).toHaveURL(new RegExp('#/runs/' + id + '$'));
       if (gateKind) {
         await expect(

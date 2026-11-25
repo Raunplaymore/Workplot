@@ -179,7 +179,7 @@ try {
       .click();
     await page.waitForURL(origin + '/#/design/' + wf.id);
     assert.equal(await page.getByLabel('단계 제목').inputValue(), '새 단계명');
-    assert.equal(await page.getByLabel('작업 지침').inputValue(), '최신 지침');
+    assert.equal(await page.getByLabel('Prompt').inputValue(), '최신 지침');
     const resultButton = page
       .getByRole('button', {
         name: /^screen-design\.md 열기 · 최근 결과 · 4회차 · /,
@@ -370,25 +370,23 @@ try {
     await page.waitForURL(address);
     await page.reload();
     await page.getByRole('heading', { level: 1, name: '화면 개선' }).waitFor();
-    await page
-      .getByLabel('작업 지침', { exact: true })
-      .fill('주소별 미저장 지침');
+    await page.getByLabel('Prompt', { exact: true }).fill('주소별 미저장 지침');
     await page.reload();
     assert.equal(
-      await page.getByLabel('작업 지침', { exact: true }).inputValue(),
+      await page.getByLabel('Prompt', { exact: true }).inputValue(),
       '주소별 미저장 지침',
     );
     await page.goto(origin + '/#/design/' + wf.id);
     await page.getByRole('heading', { level: 1, name: '이동 검증' }).waitFor();
     assert.notEqual(
-      await page.getByLabel('작업 지침', { exact: true }).inputValue(),
+      await page.getByLabel('Prompt', { exact: true }).inputValue(),
       '주소별 미저장 지침',
     );
     await page.goBack();
     await page.waitForURL(address);
     await page.getByRole('heading', { level: 1, name: '화면 개선' }).waitFor();
     assert.equal(
-      await page.getByLabel('작업 지침', { exact: true }).inputValue(),
+      await page.getByLabel('Prompt', { exact: true }).inputValue(),
       '주소별 미저장 지침',
     );
     await page.goto(origin + '/#/design/' + randomUUID());
@@ -396,10 +394,7 @@ try {
       .getByRole('alert')
       .filter({ hasText: '찾을 수 없습니다' })
       .waitFor();
-    assert.equal(
-      await page.getByLabel('작업 지침', { exact: true }).count(),
-      0,
-    );
+    assert.equal(await page.getByLabel('Prompt', { exact: true }).count(), 0);
     await ctx.close();
   }
   console.log('PASS', dir);

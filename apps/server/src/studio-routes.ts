@@ -1243,6 +1243,14 @@ export function registerStudioRoutes(
         ),
     );
     protectedRoutes.get<{ Params: { id: string; file: string } }>(
+      '/runs/:id/results/:file/prompt-origin',
+      async (req) =>
+        runs.resultPromptOrigin(
+          workflowIdSchema.parse(req.params.id),
+          req.params.file,
+        ),
+    );
+    protectedRoutes.get<{ Params: { id: string; file: string } }>(
       '/runs/:id/results/:file',
       async (request, reply) => {
         const id = workflowIdSchema.safeParse(request.params.id);

@@ -62,7 +62,10 @@ export const workflowDefinitionSchema = z
               })
               .optional(),
             templateDocuments: nodeDocumentsSchema.optional(),
-            instructions: z.string().trim().min(1).max(8_000),
+            instructions: z
+              .string()
+              .max(8_000)
+              .refine((text) => text.trim().length > 0),
             inputFrom: z.array(stepId).max(4).optional(),
             workspaceAccess: z.enum(['read-only', 'write']).optional(),
             agent: z.enum(['codex', 'unassigned']).optional(),
@@ -400,6 +403,14 @@ export type WorkflowDefinition = z.infer<typeof workflowDefinitionSchema>;
 export type WorkflowVersion = z.infer<typeof workflowVersionSchema>;
 
 const artifactName = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}\.md$/);
+export const resultPromptOriginSchema = z.strictObject({
+  runId: z.uuid(),
+  workflowId: workflowIdSchema.optional(),
+  version: versionSchema,
+  stepId,
+  instructions: z.string(),
+});
+export type ResultPromptOrigin = z.infer<typeof resultPromptOriginSchema>;
 export const runInputSchema = runSummarySchema
   .omit({
     id: true,

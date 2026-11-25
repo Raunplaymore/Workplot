@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { localRequest } from './local-request';
+import styles from './WorkflowStudio.module.css';
 
 export function NodeInstructions({
   title,
@@ -14,6 +15,8 @@ export function NodeInstructions({
   change: (text: string) => void;
   available: boolean;
 }) {
+  const [refining, setRefining] = useState(false);
+  const refineId = useId();
   const [request, setRequest] = useState('');
   const [proposal, setProposal] = useState('');
   const [pending, setPending] = useState(false);
@@ -56,72 +59,83 @@ export function NodeInstructions({
     }
   }
   return (
-    <section aria-label="노드 역할 편집">
+    <div className={styles.promptEditor}>
       <label>
-        역할 지침
+        Prompt
         <textarea
-          aria-label="작업 지침"
           placeholder="AI가 어떤 자료로 무엇을 하고, 어떤 결과를 내야 하는지 적어 주세요."
-          rows={7}
+          rows={5}
           maxLength={8000}
           value={value}
           onChange={(e) => change(e.target.value)}
         />
       </label>
-      {proposal && (
+      <div className={styles.buttons}>
+        <button
+          type="button"
+          aria-expanded={refining}
+          aria-controls={refineId}
+          onClick={() => setRefining(!refining)}
+        >
+          Refine
+        </button>
+      </div>
+      <div id={refineId} className={styles.refinePanel} hidden={!refining}>
+        {proposal && (
+          <label>
+            AI 수정안
+            <textarea rows={7} readOnly value={proposal} />
+          </label>
+        )}
         <label>
-          AI 수정안
-          <textarea rows={7} readOnly value={proposal} />
+          AI에게 지침 수정 요청
+          <textarea
+            rows={2}
+            maxLength={2000}
+            value={request}
+            disabled={pending}
+            onChange={(e) => setRequest(e.target.value)}
+            placeholder={
+              proposal
+                ? '수정안에서 더 바꿀 점'
+                : '이 역할에서 보완할 점을 적어 주세요'
+            }
+          />
         </label>
-      )}
-      <label>
-        AI에게 지침 수정 요청
-        <textarea
-          rows={2}
-          maxLength={2000}
-          value={request}
-          disabled={pending}
-          onChange={(e) => setRequest(e.target.value)}
-          placeholder={
-            proposal
-              ? '수정안에서 더 바꿀 점'
-              : '이 역할에서 보완할 점을 적어 주세요'
-          }
-        />
-      </label>
-      <button
-        type="button"
-        disabled={!available || pending || !request.trim()}
-        onClick={() => void ask()}
-      >
-        {pending ? '제안 작성 중…' : '수정안 요청'}
-      </button>
-      {proposal && (
-        <>
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => {
-              change(proposal);
-              setProposal('');
-              setRequest('');
-            }}
-          >
-            지침에 적용
-          </button>
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => {
-              setProposal('');
-              setRequest('');
-            }}
-          >
-            제안 취소
-          </button>
-        </>
-      )}
-      {error && <p role="alert">{error}</p>}
-    </section>
+        <button
+          type="button"
+          disabled={!available || pending || !request.trim()}
+          onClick={() => void ask()}
+        >
+          {pending ? '제안 작성 중…' : '수정안 요청'}
+        </button>
+        {proposal && (
+          <>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => {
+                change(proposal);
+                setProposal('');
+                setRequest('');
+              }}
+            >
+              지침에 적용
+            </button>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => {
+                setProposal('');
+                setRequest('');
+              }}
+            >
+              제안 취소
+            </button>
+          </>
+        )}
+        {error && <p role="alert">{error}</p>}
+      </div>
+    </div>
   );
 }

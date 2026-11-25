@@ -175,10 +175,49 @@
 
 .detail header {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  place-items: start;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+}
+@media (max-width: 800px) {
+  .detail header {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.summaryInfo {
+  display: grid;
   justify-items: start;
   gap: 6px;
+  min-width: 0;
   overflow-wrap: anywhere;
-  margin-bottom: 12px;
+}
+.summaryActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.summaryActions[data-preview-open='true'] {
+  grid-column: 1 / -1;
+  justify-self: stretch;
+}
+.savedInputToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.savedInputToggle[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+.savedInputPanel {
+  flex-basis: 100%;
+  min-width: 0;
+}
+.library .detail .savedInputPanel h3 {
+  margin: 0 0 6px;
+}
+.savedInputPanel pre {
+  margin: 0;
 }
 .detail header :is(h2, p) {
   margin: 0;
