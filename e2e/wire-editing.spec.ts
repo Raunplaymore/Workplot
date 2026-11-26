@@ -105,24 +105,24 @@ test('wire editing keeps order, nearby selection and zoom through insertion, mov
     page.getByRole('button', { name, exact: true });
   await expect(node('draft')).toBeVisible();
   const initial = await viewport();
-  await button('추가').click();
+  await button('Add').click();
   const added = await step.inputValue();
   expect(await position(added)).toBe('translate(240px, 90px)');
   expect(await position('review')).toBe('translate(480px, 90px)');
   expect(await viewport()).toBe(initial);
-  await button('단계 연결').click();
-  await button('뒤로 이동').click();
+  await button('Step connections').click();
+  await button('Move later').click();
   expect(await step.inputValue()).toBe(added);
   expect(await position(added)).toBe('translate(480px, 90px)');
   expect(await position('review')).toBe('translate(240px, 90px)');
-  await button('단계 삭제').click();
+  await button('Delete step').click();
   await expect(step).toHaveValue('revision');
   expect(await position('revision')).toBe('translate(480px, 90px)');
-  await button('되돌리기').click();
+  await button('Undo').click();
   await expect(step).toHaveValue(added);
   expect(await position(added)).toBe('translate(480px, 90px)');
   await step.selectOption('revision');
-  await button('추가').click();
+  await button('Add').click();
   const tail = await step.inputValue();
   const frame = (await graph.boundingBox())!;
   await expect
@@ -174,11 +174,11 @@ test('wire endpoints follow a dragged node and support reconnect, cancel, cycle 
     (n) => (n as HTMLElement).style.transform,
   );
   await expect(page.getByLabel('편집할 단계')).toHaveValue('review');
-  await page.getByRole('button', { name: '추가', exact: true }).click();
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
   expect(
     await node('review').evaluate((n) => (n as HTMLElement).style.transform),
   ).toBe(custom);
-  await page.getByRole('button', { name: '되돌리기', exact: true }).click();
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
   const handle = (id: string) => node(id).locator('.react-flow__handle.target');
   await reconnect('review:revision', handle('draft'));
   await expect(page.getByRole('alert')).toContainText('순환');
@@ -196,7 +196,7 @@ test('wire endpoints follow a dragged node and support reconnect, cancel, cycle 
     page.getByText('연결되지 않은 흐름', { exact: false }),
   ).toBeVisible();
   await page.screenshot({ path: info.outputPath('wire-reconnected.png') });
-  await page.getByRole('button', { name: '되돌리기', exact: true }).click();
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(edge('draft:review')).toHaveCount(1);
   await expect(edge('review:revision')).toHaveCount(1);
 });
@@ -229,12 +229,12 @@ test('selected task instructions can be refined and applied without changing ano
   await expect(page.getByLabel('AI에게 지침 수정 요청')).toBeHidden();
   await refine.press('Enter');
   await page.getByLabel('AI에게 지침 수정 요청').fill('출처 확인을 추가해줘');
-  await page.getByRole('button', { name: '수정안 요청' }).click();
+  await page.getByRole('button', { name: 'Request revision' }).click();
   await expect(page.getByLabel('AI 수정안')).toHaveValue(
     '출처를 확인하고 초안을 작성한다.',
   );
   await expect(editor).toHaveValue(original + ' 직접 편집.');
-  await page.getByRole('button', { name: '지침에 적용' }).click();
+  await page.getByRole('button', { name: 'Apply to instructions' }).click();
   await expect(
     graph.locator('.react-flow__node[data-id="draft"]'),
   ).toContainText('출처를 확인하고');
@@ -259,7 +259,7 @@ test('wire menu inserts an editable improvement router between two stages', asyn
   });
   await page.mouse.click(point.x, point.y, { button: 'right' });
   await page
-    .getByRole('menuitem', { name: '사이에 화면·기능 개선 분기 추가' })
+    .getByRole('menuitem', { name: 'Insert improvement router' })
     .click();
   const criteria = page.getByRole('group', {
     name: '개선 경로 선택 조건과 역할',
@@ -280,7 +280,7 @@ test('an added AI review stays put after a missed mouse release', async ({
 }) => {
   await page.goto('/#/design');
   await page.getByLabel('추가할 단계 유형').selectOption('ai-review');
-  await page.getByRole('button', { name: '추가', exact: true }).click();
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
   const id = await page.getByLabel('편집할 단계').inputValue();
   const node = page.locator('.react-flow__node[data-id="' + id + '"]');
   const position = () =>
@@ -396,14 +396,49 @@ test('a multi-task Git node shows its effective permission before granting write
   await prepareThreeStepDraft(page);
   await page.goto('/#/design');
   await page.getByLabel('단계 제목').fill('개발 및 Git 반영');
-  await page.getByRole('button', { name: '도구와 권한', exact: true }).click();
+  await page
+    .getByRole('button', { name: 'Tools and permissions', exact: true })
+    .click();
   const panel = page.getByRole('region', { name: '개발 실행 권한' });
   await expect(panel).toContainText('Git 개발 실행 시 · 읽기 전용');
-  await panel.getByRole('button', { name: '이 노드에 파일 수정 허용' }).click();
+  await panel.getByRole('button', { name: 'Allow file edits' }).click();
   await expect(panel.getByRole('combobox')).toHaveValue('write');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page).toHaveURL(/#\/design\/[a-f0-9-]+/);
   await page.reload();
-  await page.getByRole('button', { name: '도구와 권한', exact: true }).click();
+  await page
+    .getByRole('button', { name: 'Tools and permissions', exact: true })
+    .click();
   await expect(panel).toContainText('Git 개발 실행 시 · 파일 수정 허용');
+});
+
+test('keeps each node’s refinement request and restores discarded edits in one Undo', async ({
+  page,
+}) => {
+  await prepareThreeStepDraft(page);
+  await page.goto('/#/design');
+  const picker = page.getByLabel('편집할 단계');
+  await picker.selectOption('draft');
+  const save = page.getByRole('button', { name: 'Save', exact: true });
+  await save.click();
+  await expect(page.getByText('Saved · v1', { exact: true })).toBeVisible();
+  const refine = page.getByRole('button', { name: 'Refine', exact: true });
+  await refine.click();
+  const request = page.getByLabel('AI에게 지침 수정 요청');
+  await request.fill('Keep the original wording');
+  const prompt = page.getByPlaceholder(
+    'AI가 어떤 자료로 무엇을 하고, 어떤 결과를 내야 하는지 적어 주세요.',
+  );
+  await prompt.fill('Draft A');
+  await picker.selectOption('revision');
+  await refine.click();
+  await expect(request).toHaveValue('');
+  await prompt.fill('Draft B');
+  await page.getByRole('button', { name: 'Discard changes' }).click();
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(prompt).toHaveValue('Draft B');
+  await picker.selectOption('draft');
+  await expect(prompt).toHaveValue('Draft A');
+  await refine.click();
+  await expect(request).toHaveValue('Keep the original wording');
 });

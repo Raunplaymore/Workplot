@@ -23,6 +23,7 @@ function excerpt(markdown: string) {
 }
 
 type Detail = {
+  nextSession: boolean;
   delivery: string;
   stage: string;
   task: string;
@@ -120,6 +121,7 @@ export function ActiveSessionCard({
           : '';
         if (!controller.signal.aborted) {
           setDetail({
+            nextSession: !!view.gate?.startNextSession,
             delivery: [
               delivery.receipts.at(-1),
               delivery.integration &&
@@ -167,45 +169,51 @@ export function ActiveSessionCard({
         aria-labelledby={actionId + ' ' + titleId}
         aria-describedby={statusId}
       >
-        <span id={actionId}>{action}</span> <span aria-hidden="true">→</span>
+        <span id={actionId}>
+          {detail?.nextSession ? 'Review next session' : action}
+        </span>{' '}
+        <span aria-hidden="true">→</span>
       </a>
-      {detail?.task && <p>{detail.task}</p>}
-      {latest && latest.text !== detail?.task && (
-        <p>
-          <b>{latest.title}</b> · {latest.text || latest.file}
-        </p>
-      )}
-      {error && <p role="status">최신 세션 기록을 다시 불러오는 중입니다.</p>}
-      {detail?.delivery && <p>{detail.delivery}</p>}
-      {detail?.delegation && <small>{detail.delegation}</small>}
-      {docs.length > 0 && (
-        <details>
-          <summary>이번 회차 수행 기록 {docs.length}건</summary>
-          <ol>
-            {docs.map((d) => (
-              <li key={d.file}>
-                <b>{d.title}</b>
-                <p>{d.text || d.file}</p>
-              </li>
-            ))}
-          </ol>
-        </details>
-      )}
-      {history.length > 0 && (
-        <details>
-          <summary>최근 회차 결과</summary>
-          <ul>
-            {history.slice(0, 3).map((h, i) => (
-              <li key={h.id}>
-                <a href={'#/runs/' + h.id}>{history.length - i}회차</a> ·{' '}
-                {h.sessionSummary
-                  ? sessionHeadline(h.sessionSummary, true)
-                  : '결과 열기'}
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
+      <details>
+        <summary>Session details</summary>
+        {detail?.task && <p>{detail.task}</p>}
+        {latest && latest.text !== detail?.task && (
+          <p>
+            <b>{latest.title}</b> · {latest.text || latest.file}
+          </p>
+        )}
+        {error && <p role="status">최신 세션 기록을 다시 불러오는 중입니다.</p>}
+        {detail?.delivery && <p>{detail.delivery}</p>}
+        {detail?.delegation && <small>{detail.delegation}</small>}
+        {docs.length > 0 && (
+          <details>
+            <summary>Session activity ({docs.length})</summary>
+            <ol>
+              {docs.map((d) => (
+                <li key={d.file}>
+                  <b>{d.title}</b>
+                  <p>{d.text || d.file}</p>
+                </li>
+              ))}
+            </ol>
+          </details>
+        )}
+        {history.length > 0 && (
+          <details>
+            <summary>Recent results</summary>
+            <ul>
+              {history.slice(0, 3).map((h, i) => (
+                <li key={h.id}>
+                  <a href={'#/runs/' + h.id}>{history.length - i}회차</a> ·{' '}
+                  {h.sessionSummary
+                    ? sessionHeadline(h.sessionSummary, true)
+                    : 'View results'}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+      </details>
     </article>
   );
 }

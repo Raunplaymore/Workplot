@@ -154,7 +154,7 @@ try {
       });
     const edit = entry('edit');
     const summary = edit.locator('summary');
-    await summary.getByText('작업 · 완료', { exact: true }).waitFor();
+    await summary.getByText('Task · Completed', { exact: true }).waitFor();
     assert.equal(await summary.locator('strong').innerText(), 'edit');
     assert.ok(
       await summary.evaluate((element) => {
@@ -175,14 +175,14 @@ try {
     await edit.getByText('draft → edit → removed').waitFor();
     await page.screenshot({ path: join(dir, 'steps-' + width + '.png') });
     await edit
-      .getByRole('button', { name: '최신 저장본에서 이 단계 편집' })
+      .getByRole('button', { name: 'Edit step in latest version' })
       .click();
     await page.waitForURL(origin + '/#/design/' + wf.id);
     assert.equal(await page.getByLabel('단계 제목').inputValue(), '새 단계명');
     assert.equal(await page.getByLabel('Prompt').inputValue(), '최신 지침');
     const resultButton = page
       .getByRole('button', {
-        name: /^screen-design\.md 열기 · 최근 결과 · 4회차 · /,
+        name: /^screen-design\.md · Open · Latest result · Session 4 · /,
       })
       .filter({ visible: true })
       .first();
@@ -208,7 +208,9 @@ try {
       /이전 결과 · 3회차 · .*\d{2}:\d{2}/,
     );
     assert.equal(await selector.locator('option').count(), 2);
-    await dialog.getByRole('button', { name: '직전 회차와 비교' }).click();
+    await dialog
+      .getByRole('button', { name: 'Compare with previous session' })
+      .click();
     const diff = dialog.getByRole('table', { name: '회차별 문서 변경' });
     await diff.getByRole('columnheader', { name: '직전 · 3회차' }).waitFor();
     await diff.getByRole('columnheader', { name: '선택 · 4회차' }).waitFor();
@@ -219,7 +221,7 @@ try {
     await dialog
       .getByText('이 버전에서 비교할 이전 결과가 없습니다.')
       .waitFor();
-    await dialog.getByRole('button', { name: '문서 보기' }).click();
+    await dialog.getByRole('button', { name: 'View document' }).click();
     for (const [id, body] of documents) {
       await selector.selectOption(id);
       await page
@@ -251,7 +253,7 @@ try {
       .waitFor();
     await fresh.close();
     await page
-      .getByRole('button', { name: '하위 지침 편집', exact: true })
+      .getByRole('button', { name: 'Edit child instructions', exact: true })
       .click();
     const instruction = page.getByLabel('draft 지침', { exact: true });
     await instruction.fill('결과 문서를 참고해 수정한 지침');
@@ -262,7 +264,7 @@ try {
       path: join(dir, 'design-document-' + width + '.png'),
     });
     if (width === 390) {
-      await page.getByRole('button', { name: '저장', exact: true }).click();
+      await page.getByRole('button', { name: 'Save', exact: true }).click();
       await page
         .getByRole('article')
         .getByText('결과 문서를 참고해 수정한 지침', { exact: true })
@@ -294,10 +296,10 @@ try {
         .getByText(body, { exact: true })
         .waitFor();
     } else {
-      await page.getByRole('button', { name: '취소', exact: true }).click();
+      await page.getByRole('button', { name: 'Cancel', exact: true }).click();
       assert.equal((await req('GET', '/workflows/' + linked.id)).version, 1);
     }
-    await dialog.getByRole('button', { name: '닫기' }).click();
+    await dialog.getByRole('button', { name: 'Close' }).click();
     if (width === 390) {
       const stale = await app.inject({
         method: 'PUT',
@@ -330,7 +332,7 @@ try {
     const removed = entry('removed');
     await removed.locator('summary').click();
     await removed
-      .getByRole('button', { name: '최신 저장본에서 이 단계 편집' })
+      .getByRole('button', { name: 'Edit step in latest version' })
       .click();
     await page
       .getByText('선택한 단계는 최신 저장 워크플로에서 삭제되었습니다.')
@@ -365,7 +367,7 @@ try {
     await page
       .getByRole('heading', { name: '화면 개선', exact: true })
       .waitFor();
-    await page.getByRole('button', { name: /^저장 v\d+ 편집$/ }).click();
+    await page.getByRole('button', { name: /^Edit saved v\d+$/ }).click();
     const address = origin + '/#/design/' + linked.id;
     await page.waitForURL(address);
     await page.reload();

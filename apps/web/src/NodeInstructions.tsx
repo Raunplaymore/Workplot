@@ -5,19 +5,28 @@ import styles from './WorkflowStudio.module.css';
 export function NodeInstructions({
   title,
   context,
+  draftKey,
   value,
   change,
   available,
 }: {
   title: string;
   context: string;
+  draftKey: string;
   value: string;
   change: (text: string) => void;
   available: boolean;
 }) {
   const [refining, setRefining] = useState(false);
   const refineId = useId();
-  const [request, setRequest] = useState('');
+  const key = 'workplot.refine.' + draftKey;
+  const [request, setRequest] = useState(
+    () => sessionStorage.getItem(key) ?? '',
+  );
+  useEffect(() => {
+    if (request) sessionStorage.setItem(key, request);
+    else sessionStorage.removeItem(key);
+  }, [key, request]);
   const [proposal, setProposal] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
@@ -107,7 +116,7 @@ export function NodeInstructions({
           disabled={!available || pending || !request.trim()}
           onClick={() => void ask()}
         >
-          {pending ? '제안 작성 중…' : '수정안 요청'}
+          {pending ? 'Drafting…' : 'Request revision'}
         </button>
         {proposal && (
           <>
@@ -120,7 +129,7 @@ export function NodeInstructions({
                 setRequest('');
               }}
             >
-              지침에 적용
+              Apply to instructions
             </button>
             <button
               type="button"
@@ -130,7 +139,7 @@ export function NodeInstructions({
                 setRequest('');
               }}
             >
-              제안 취소
+              Discard proposal
             </button>
           </>
         )}

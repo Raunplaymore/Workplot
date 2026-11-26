@@ -9,14 +9,18 @@ export function SessionRequests({ summary }: { summary: RunView['summary'] }) {
   const path = '/runs/' + id + '/session-requests';
   const [view, setView] =
     useState<ReturnType<typeof sessionRequestView.parse>>();
-  const [text, setText] = useState('');
+  const [text, setText] = useState(() => sessionStorage.getItem(path) ?? '');
+  useEffect(() => {
+    if (text) sessionStorage.setItem(path, text);
+    else sessionStorage.removeItem(path);
+  }, [path, text]);
   const [error, setError] = useState('');
   const [receipt, setReceipt] = useState<{
     round: number;
     runId: string;
   } | null>(null);
   const [busy, setBusy] = useState(false);
-  const requestId = useRef('');
+  const requestId = useRef(sessionStorage.getItem(path + '.request-id') ?? '');
   const revision = useRef(0);
   useEffect(() => {
     const controller = new AbortController();
@@ -38,6 +42,7 @@ export function SessionRequests({ summary }: { summary: RunView['summary'] }) {
     setBusy(true);
     setError('');
     requestId.current ||= crypto.randomUUID();
+    sessionStorage.setItem(path + '.request-id', requestId.current);
     try {
       const response = await localRequest(path, 'POST', {
         id: requestId.current,
@@ -49,8 +54,13 @@ export function SessionRequests({ summary }: { summary: RunView['summary'] }) {
       setReceipt(saved);
       setText('');
       requestId.current = '';
+      sessionStorage.removeItem(path + '.request-id');
     } catch (e) {
-      setError((e as Error).message);
+      setError(
+        e instanceof TypeError
+          ? '요청 접수를 확인하지 못했습니다. 연결을 확인한 뒤 Submit request로 다시 시도하세요.'
+          : (e as Error).message,
+      );
     } finally {
       setBusy(false);
     }
@@ -71,7 +81,7 @@ export function SessionRequests({ summary }: { summary: RunView['summary'] }) {
       </header>
       {!!view?.incoming.length && (
         <details className={styles.history}>
-          <summary>이번 회차에 전달된 요청 · {view.incoming.length}건</summary>
+          <summary>Requests for this session ({view.incoming.length})</summary>
           <ul>
             {view.incoming.map((v, i) => (
               <li key={i}>{v}</li>
@@ -121,6 +131,7 @@ export function SessionRequests({ summary }: { summary: RunView['summary'] }) {
             onChange={(e) => {
               setText(e.target.value);
               requestId.current = '';
+              sessionStorage.removeItem(path + '.request-id');
               setReceipt(null);
             }}
           />
@@ -128,7 +139,7 @@ export function SessionRequests({ summary }: { summary: RunView['summary'] }) {
             <small>{text.length.toLocaleString()} / 2,000자</small>
             <button disabled={busy || !text.trim()}>
               <CornerDownRight size={15} aria-hidden="true" />
-              {busy ? '남기는 중…' : '요청 남기기'}
+              {busy ? 'Submitting…' : 'Submit request'}
             </button>
           </div>
         </form>

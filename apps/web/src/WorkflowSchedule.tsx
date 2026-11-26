@@ -27,13 +27,14 @@ export function WorkflowSchedule({ flow }: { flow: WorkflowVersion }) {
     [editing, edit] = useState(false),
     [busy, setBusy] = useState(false),
     [message, say] = useState('');
-  const [form, setForm] = useState<ScheduleConfig>({
+  const defaults: ScheduleConfig = {
     version: flow.version,
     enabled: true,
     weekday: 1,
     time: '09:00',
     material: { kind: 'text', value: '' },
-  });
+  };
+  const [form, setForm] = useState<ScheduleConfig>(defaults);
   const [base, setBase] = useState<string | null>(null);
   useEffect(() => {
     const c = new AbortController();
@@ -78,9 +79,11 @@ export function WorkflowSchedule({ flow }: { flow: WorkflowVersion }) {
       setBusy(false);
     }
   }
+  const [materials, setMaterials] = useState({ text: '', file: '' });
   function begin() {
+    setMaterials({ text: '', file: '' });
     setBase(saved?.revision ?? null);
-    if (saved) setForm(saved.config);
+    setForm(saved?.config ?? defaults);
     edit(true);
     say('');
   }
@@ -96,7 +99,7 @@ export function WorkflowSchedule({ flow }: { flow: WorkflowVersion }) {
               ? '매일'
               : '매주 ' + days[saved.config.weekday] + '요일'}{' '}
             {saved.config.time} · 서울 · v{saved.config.version} ·{' '}
-            {saved.config.enabled ? '사용 중' : '일시정지'}
+            {saved.config.enabled ? '사용 중' : 'Pause'}
           </p>
           {saved.nextAt && <p>다음 실행 {when(saved.nextAt)}</p>}
           {saved.lastAt && (
@@ -110,7 +113,7 @@ export function WorkflowSchedule({ flow }: { flow: WorkflowVersion }) {
       {!editing ? (
         <>
           <button disabled={!data || busy} onClick={begin}>
-            {saved ? '예약 편집' : '예약 추가'}
+            {saved ? 'Edit schedule' : 'Add schedule'}
           </button>
           {saved && (
             <button
@@ -122,7 +125,7 @@ export function WorkflowSchedule({ flow }: { flow: WorkflowVersion }) {
                 )
               }
             >
-              {saved.config.enabled ? '일시정지' : '재개'}
+              {saved.config.enabled ? 'Pause' : 'Resume'}
             </button>
           )}
         </>
@@ -186,15 +189,17 @@ export function WorkflowSchedule({ flow }: { flow: WorkflowVersion }) {
             자료 방식
             <select
               value={form.material.kind}
-              onChange={(e) =>
+              onChange={(e) => {
+                const kind = e.target.value === 'file' ? 'file' : 'text';
+                setMaterials({
+                  ...materials,
+                  [form.material.kind]: form.material.value,
+                });
                 setForm({
                   ...form,
-                  material: {
-                    kind: e.target.value === 'file' ? 'file' : 'text',
-                    value: '',
-                  },
-                })
-              }
+                  material: { kind, value: materials[kind] },
+                });
+              }}
             >
               <option value="text">고정 자료</option>
               <option value="file">매번 파일에서 읽기</option>
@@ -239,10 +244,10 @@ export function WorkflowSchedule({ flow }: { flow: WorkflowVersion }) {
           </small>
           <div>
             <button disabled={busy} type="submit">
-              예약 저장
+              Save schedule
             </button>{' '}
             <button type="button" disabled={busy} onClick={() => edit(false)}>
-              취소
+              Cancel
             </button>{' '}
             {saved && (
               <button
@@ -250,7 +255,7 @@ export function WorkflowSchedule({ flow }: { flow: WorkflowVersion }) {
                 disabled={busy}
                 onClick={() => void change(null, base)}
               >
-                예약 삭제
+                Delete schedule
               </button>
             )}
           </div>

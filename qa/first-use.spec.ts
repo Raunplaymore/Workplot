@@ -35,7 +35,7 @@ test('Q36 실제 Codex workplot 설계 와이어와 업무 미실행', async ({ 
     const start = (await lines('design-cli.jsonl')).length;
     await page.goto('/');
     await page
-      .getByRole('button', { name: '목표로 시작', exact: true })
+      .getByRole('button', { name: 'Start with a goal', exact: true })
       .click();
     const dialog = page.getByRole('dialog');
     await dialog.getByLabel('업무 목표', { exact: true }).fill(goal);
@@ -45,7 +45,7 @@ test('Q36 실제 Codex workplot 설계 와이어와 업무 미실행', async ({ 
         r.request().method() === 'POST',
       { timeout: 130000 },
     );
-    await dialog.getByRole('button', { name: '흐름 찾기' }).click();
+    await dialog.getByRole('button', { name: 'Find workflow' }).click();
     const response = await pending;
     expect(response.status()).toBe(200);
     const { definition } = await response.json();
@@ -77,7 +77,7 @@ test('Q36 실제 Codex workplot 설계 와이어와 업무 미실행', async ({ 
     const preview = await activity();
     expect(preview).toEqual(before);
     await dialog.screenshot({ path: join(root, 'Q36-wire.png') });
-    await dialog.getByRole('button', { name: '취소', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
     await expect(dialog).toHaveCount(0);
     const cancelled = await activity();
     expect(cancelled).toEqual(before);
@@ -163,7 +163,7 @@ test('Q35 첫 방문에서 목표 한 줄로 설계·실행·승인·비교·선
     );
     settled('설계안 표시', begin);
     expect(counts()).toEqual({ workflows: 0, runs: 0 });
-    const save = modal.getByRole('button', { name: '흐름 저장' });
+    const save = modal.getByRole('button', { name: 'Save workflow' });
     await expect(save).toBeDisabled();
     await click('가상 매장 자료로 연습');
     const source = await modal
@@ -349,7 +349,7 @@ test('Q39 실제 Codex가 메타정보로 카페 흐름 하나를 추천하고 �
     const before = await activity();
     await page.goto('/');
     await page
-      .getByRole('button', { name: '목표로 시작', exact: true })
+      .getByRole('button', { name: 'Start with a goal', exact: true })
       .click();
     const dialog = page.getByRole('dialog');
     await dialog.getByLabel('업무 목표', { exact: true }).fill(goal);
@@ -357,7 +357,7 @@ test('Q39 실제 Codex가 메타정보로 카페 흐름 하나를 추천하고 �
       (r) => r.url().endsWith('/workflow-matches'),
       { timeout: 130000 },
     );
-    await dialog.getByRole('button', { name: '흐름 찾기' }).click();
+    await dialog.getByRole('button', { name: 'Find workflow' }).click();
     const response = await pending;
     expect(response.status()).toBe(200);
     const { match } = await response.json();
@@ -414,7 +414,7 @@ test('Q39 실제 Codex가 메타정보로 카페 흐름 하나를 추천하고 �
     expect(updated).toBe(200);
     await otherTab.close();
     const beforeSelect = await activity();
-    await dialog.getByRole('button', { name: '이 흐름 사용' }).click();
+    await dialog.getByRole('button', { name: 'Use this workflow' }).click();
     const materials = page.getByRole('dialog', { name: '새 자료로 실행' });
     await expect(materials).toContainText(name + ' · v2');
     await expect(materials.getByLabel('이번 작업 자료')).toHaveValue('');
@@ -422,10 +422,10 @@ test('Q39 실제 Codex가 메타정보로 카페 흐름 하나를 추천하고 �
       '',
     );
     await expect(
-      materials.getByRole('button', { name: '실행 시작' }),
+      materials.getByRole('button', { name: 'Start run' }),
     ).toBeDisabled();
     await materials.screenshot({ path: join(root, 'Q39-material.png') });
-    await materials.getByRole('button', { name: '닫기' }).click();
+    await materials.getByRole('button', { name: 'Close' }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
     expect(await activity()).toEqual(beforeSelect);
     await writeFile(

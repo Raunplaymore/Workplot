@@ -25,7 +25,11 @@ export function WorkflowProposal({
 }: {
   base: WorkflowDefinition | null;
   disabled?: boolean;
-  reuse?: (match: WorkflowMatch, signal: AbortSignal) => Promise<void>;
+  reuse?: (
+    match: WorkflowMatch,
+    signal: AbortSignal,
+    goal: string,
+  ) => Promise<void>;
   guidedSave?: (definition: WorkflowDefinition) => Promise<void>;
   propose: (
     request: string,
@@ -40,7 +44,13 @@ export function WorkflowProposal({
   const dialog = useRef<HTMLDialogElement>(null);
   const active = useRef<AbortController | null>(null);
   const [previewOpen, setPreviewOpen] = useState(!base);
-  const [request, setRequest] = useState('');
+  const [request, setRequest] = useState(() =>
+    reuse ? (sessionStorage.getItem('workplot.searchGoal') ?? '') : '',
+  );
+  const guided = !!reuse;
+  useEffect(() => {
+    if (guided) sessionStorage.setItem('workplot.searchGoal', request);
+  }, [guided, request]);
   const [match, setMatch] = useState<WorkflowMatch | null>(null);
   const [searching, setSearching] = useState(false);
   const [noMatch, setNoMatch] = useState(false);
@@ -86,7 +96,7 @@ export function WorkflowProposal({
     setBusy(true);
     setNotice('');
     try {
-      await reuse(match, controller.signal);
+      await reuse(match, controller.signal, request);
     } catch (error) {
       if (!controller.signal.aborted)
         setNotice(
@@ -280,8 +290,8 @@ export function WorkflowProposal({
           : candidate
             ? candidate.name
             : guidedSave
-              ? '목표로 시작'
-              : '목표로 새 흐름 만들기'}
+              ? 'Start with a goal'
+              : 'Create workflow from goal'}
       </h2>
       {skill && <small>선택한 스킬 · {skill.title}</small>}
       {guidedSave && !candidate && (
@@ -532,7 +542,7 @@ export function WorkflowProposal({
                 )
               }
             >
-              가상 매장 자료로 연습
+              Try sample store data
             </button>
           )}
         </fieldset>
@@ -559,13 +569,13 @@ export function WorkflowProposal({
               disabled={busy}
               onClick={() => void selectMatch()}
             >
-              이 흐름 사용
+              Use this workflow
             </button>
             <button
               disabled={busy}
               onClick={() => void generate(request, true)}
             >
-              새 흐름 설계
+              Design new workflow
             </button>
           </>
         ) : revising ? (
@@ -577,7 +587,7 @@ export function WorkflowProposal({
               }
               onClick={() => void generate()}
             >
-              {question ? '답변 보내기' : '다시 요청하기'}
+              {question ? 'Send answer' : 'Request again'}
             </button>
             <button
               disabled={busy}
@@ -590,7 +600,7 @@ export function WorkflowProposal({
                 setNotice('');
               }}
             >
-              수정 요청 취소
+              Cancel revision request
             </button>
           </>
         ) : candidate ? (
@@ -602,7 +612,7 @@ export function WorkflowProposal({
                 setRevising(true);
               }}
             >
-              수정 요청
+              Request revision
             </button>
             <button
               className={styles.primary}
@@ -611,7 +621,11 @@ export function WorkflowProposal({
                 guidedSave ? void saveCandidate() : apply(candidate)
               }
             >
-              {guidedSave ? '흐름 저장' : base ? '변경안 적용' : '새 흐름 적용'}
+              {guidedSave
+                ? 'Save workflow'
+                : base
+                  ? 'Apply changes'
+                  : 'Apply new workflow'}
             </button>
           </>
         ) : (
@@ -621,16 +635,16 @@ export function WorkflowProposal({
             onClick={() => void generate()}
           >
             {question
-              ? '답변 보내기'
+              ? 'Send answer'
               : base
-                ? '변경안 만들기'
+                ? 'Propose changes'
                 : reuse
-                  ? '흐름 찾기'
-                  : '설계안 만들기'}
+                  ? 'Find workflow'
+                  : 'Generate design'}
           </button>
         )}
         <button disabled={saving.current} onClick={close}>
-          취소
+          Cancel
         </button>
       </footer>
     </dialog>

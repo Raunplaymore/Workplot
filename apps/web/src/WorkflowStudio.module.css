@@ -1447,6 +1447,51 @@
   font-size: 0.9em;
 }
 
+.runOptions {
+  position: relative;
+}
+.runOptions[data-compact='false'] > details > summary {
+  display: none;
+}
+.runOptions[data-compact='false'] > details > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.runOptions[data-compact='true'] > details[open] > div {
+  display: grid;
+  gap: 0.4rem;
+  position: absolute;
+  inset-inline-start: 0;
+  z-index: 12;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 0.6rem;
+  min-width: 13rem;
+}
+@media (min-width: 801px) and (max-height: 600px) {
+  .canvas {
+    overflow: auto;
+  }
+  .canvas > .graph {
+    flex: 1 0 190px;
+    min-height: 190px;
+  }
+}
+@media (max-width: 800px) {
+  .mobileSteps {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mobilePath,
+  .mobilePath button,
+  .mobilePath button span {
+    min-width: 0;
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
 .mobilePath + .mobilePath {
   border-top: 1px dashed var(--border);
   padding-top: 8px;

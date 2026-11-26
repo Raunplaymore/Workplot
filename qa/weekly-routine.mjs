@@ -146,7 +146,7 @@ try {
     await page.goto(origin + '/#' + path + '/review');
     if (index === 0) {
       await page
-        .getByRole('button', { name: '문서 수정', exact: true })
+        .getByRole('button', { name: 'Edit document', exact: true })
         .click();
       assert.ok(
         await page.getByLabel('이번 결과만 수정', { exact: true }).isChecked(),
@@ -161,9 +161,9 @@ try {
       await page.getByLabel('승인할 수정본', { exact: true }).fill(edited);
       await page.getByLabel('다음 실행에도 규칙 적용').check();
       await page.getByLabel('주간 보고서 작성에 추가할 규칙').fill(rule);
-      await page.getByText('저장될 노드 지침 미리보기').click();
+      await page.getByText('Preview node instructions').click();
       assert.equal(await page.locator('ins').innerText(), rule);
-      await page.getByRole('button', { name: '규칙 저장 후 승인' }).click();
+      await page.getByRole('button', { name: 'Save rule and approve' }).click();
     } else {
       assert.ok(current.definition.steps[0].instructions.endsWith(rule));
       const boundary = original.indexOf('확인 대기');

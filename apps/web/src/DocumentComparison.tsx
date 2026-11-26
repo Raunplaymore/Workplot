@@ -180,7 +180,7 @@ export function DocumentComparison({ runId }: { runId: string }) {
                 </header>
                 <pre>{data[key].text}</pre>
                 <a href={'#/runs/' + data[key].runId}>
-                  실행 상세 · Codex {data[key].cliVersion}
+                  Run details · Codex {data[key].cliVersion}
                 </a>
               </article>
             ))}
@@ -193,7 +193,7 @@ export function DocumentComparison({ runId }: { runId: string }) {
             <h2>주소와 영업시간 대조</h2>
             {!review && (
               <button disabled={busy} onClick={() => void submit('review')}>
-                {busy ? 'Codex가 근거를 확인하는 중…' : 'Codex로 근거 대조'}
+                {busy ? 'Checking evidence…' : 'Check evidence with Codex'}
               </button>
             )}
             {review && (
@@ -265,7 +265,7 @@ export function DocumentComparison({ runId }: { runId: string }) {
                       />
                       <span>
                         <strong>{p.label}</strong>
-                        <del>{p.before || '추가'}</del>
+                        <del>{p.before || 'Add'}</del>
                         <ins>{p.after || '삭제'}</ins>
                       </span>
                     </label>
@@ -279,7 +279,7 @@ export function DocumentComparison({ runId }: { runId: string }) {
                 }
                 onClick={() => void submit('apply')}
               >
-                선택한 변경 반영
+                Apply selected changes
               </button>
               {data.applied !== null && (
                 <section className={styles.saved}>

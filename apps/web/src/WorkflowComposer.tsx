@@ -131,7 +131,7 @@ export function WorkflowComposer({
           </details>
           <button
             type="button"
-            aria-label={skill.title + ' 스킬 해제'}
+            aria-label={skill.title + ' · Remove skill'}
             onClick={() => {
               selectSkill(null);
               field.current?.focus();
@@ -201,8 +201,8 @@ export function WorkflowComposer({
           className={styles.primary}
           type="submit"
           disabled={disabled || open || !instruction}
-          title="변경안 만들기"
-          aria-label="변경안 만들기"
+          title="Propose changes"
+          aria-label="Propose changes"
         >
           <ArrowUp size={18} aria-hidden="true" />
         </button>
@@ -243,9 +243,9 @@ export function WorkflowComposer({
         <button
           type="button"
           className={styles.suggestion}
-          onClick={() => submit(suggestion)}
+          onClick={() => submit(suggestion.request)}
         >
-          [Quick response] {suggestion}
+          {suggestion.label}
         </button>
       )}
     </form>

@@ -74,7 +74,7 @@ try {
       if (report.status === 'conflict')
         await page.getByRole('heading', { name: '충돌 파일' }).waitFor();
       await page
-        .getByText('마지막 통과본 보기', { exact: true })
+        .getByText('View last passing version', { exact: true })
         .press('Enter');
       await page.getByLabel('검증 화면').selectOption('390-editor.png');
       await page.waitForFunction(() => {

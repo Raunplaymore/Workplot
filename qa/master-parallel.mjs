@@ -175,13 +175,13 @@ try {
       await tab.getByText('a · 실패', { exact: true }).waitFor();
       await tab.getByText('b · 완료', { exact: true }).waitFor();
       assert.equal(
-        await tab.getByRole('button', { name: '이 작업만 다시 실행' }).count(),
+        await tab.getByRole('button', { name: 'Retry this task' }).count(),
         1,
       );
     }
     await Promise.all(
       tabs.map((tab) =>
-        tab.getByRole('button', { name: '이 작업만 다시 실행' }).click(),
+        tab.getByRole('button', { name: 'Retry this task' }).click(),
       ),
     );
     await status(a, 'completed');
@@ -189,7 +189,7 @@ try {
       await tab.getByText('a · 완료', { exact: true }).waitFor();
       await tab.getByText('문서 작업 완료', { exact: false }).waitFor();
       assert.equal(
-        await tab.getByRole('button', { name: '이 작업만 다시 실행' }).count(),
+        await tab.getByRole('button', { name: 'Retry this task' }).count(),
         0,
       );
     }

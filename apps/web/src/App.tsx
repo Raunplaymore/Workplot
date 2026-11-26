@@ -73,7 +73,7 @@ export function App() {
       <footer className={styles.footer}>
         <span role="status">{connection}</span>
         <details className={styles.tools} ref={toolsPanel}>
-          <summary>내 에이전트 도구</summary>
+          <summary>Agent tools</summary>
           <section id="agent-tools-panel" aria-labelledby="tools-title">
             <h2 id="tools-title" ref={toolsTitle} tabIndex={-1}>
               내 에이전트 도구

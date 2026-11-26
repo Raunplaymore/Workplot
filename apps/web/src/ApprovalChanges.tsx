@@ -30,7 +30,7 @@ export function ApprovalChanges({ run, file }: { run: string; file: string }) {
         }
       }}
     >
-      <summary>승인 시 수정한 내용</summary>
+      <summary>Approval edits</summary>
       {error && <p role="alert">{error}</p>}
       {history?.edits.map((edit, i) => {
         const before = i ? history.edits[i - 1]!.text : history.original;

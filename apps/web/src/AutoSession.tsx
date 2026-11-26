@@ -208,7 +208,7 @@ export function AutoSession({
           <p>{state.note}</p>
           {state.checks.length > 0 && (
             <details>
-              <summary>기준별 판정</summary>
+              <summary>Criteria results</summary>
               <ul>
                 {state.checks.map((c) => {
                   const quote = c.quote;
@@ -229,7 +229,7 @@ export function AutoSession({
                             type="button"
                             onClick={() => openEvidence(file, quote)}
                           >
-                            검사 근거 열기
+                            View evidence
                           </button>
                         </>
                       )}
@@ -273,18 +273,18 @@ export function AutoSession({
               }
             }}
           >
-            기존 위임으로 재개
+            Resume auto-approval
           </button>
         )}
       {state?.enabled ? (
         <button disabled={busy} onClick={() => void save(false)}>
-          자동승인 해제
+          Disable auto-approval
         </button>
       ) : (
         (canConfigure || canRestart) &&
         !editing && (
           <button onClick={() => (handoffOnly ? edit(true) : void propose())}>
-            {canRestart ? '마지막 인계로 새 실행' : '자동승인 설정'}
+            {canRestart ? 'Start from last handoff' : 'Set up auto-approval'}
           </button>
         )
       )}
@@ -315,10 +315,12 @@ export function AutoSession({
             }
             onClick={() => void save(true)}
           >
-            {canRestart ? '인계로 실행하고 위임 시작' : '위임 시작'}
+            {canRestart
+              ? 'Start from handoff with auto-approval'
+              : 'Enable auto-approval'}
           </button>
           <button disabled={busy} onClick={() => edit(false)}>
-            닫기
+            Close
           </button>
         </fieldset>
       )}
@@ -341,7 +343,7 @@ export function AutoSession({
             <>
               {mission && (
                 <details>
-                  <summary>첫 세션의 작업 자료</summary>
+                  <summary>First session input</summary>
                   <p style={{ whiteSpace: 'pre-wrap' }}>{mission}</p>
                 </details>
               )}
@@ -404,7 +406,9 @@ export function AutoSession({
                 }
                 onClick={() => void save(true)}
               >
-                {canRestart ? '인계로 실행하고 위임 시작' : '위임 시작'}
+                {canRestart
+                  ? 'Start from handoff with auto-approval'
+                  : 'Enable auto-approval'}
               </button>
             </>
           )}
@@ -413,7 +417,7 @@ export function AutoSession({
               disabled={!!draft && !draft.goal.trim()}
               onClick={() => void propose()}
             >
-              목표 다시 제안
+              Refine goal
             </button>
           )}
           <button
@@ -424,7 +428,7 @@ export function AutoSession({
               setDraft(null);
             }}
           >
-            닫기
+            Close
           </button>
         </fieldset>
       )}

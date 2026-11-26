@@ -4,7 +4,7 @@ export type DocumentSource = {
   runNumber: number;
 };
 
-const executionTime = new Intl.DateTimeFormat('ko-KR', {
+const executionTime = new Intl.DateTimeFormat('en-GB', {
   year: 'numeric',
   month: '2-digit',
   day: '2-digit',
@@ -14,10 +14,10 @@ const executionTime = new Intl.DateTimeFormat('ko-KR', {
 });
 
 export function documentSourceLabel(source: DocumentSource, latest: boolean) {
-  const result = latest ? '최근 결과' : '이전 결과';
+  const result = latest ? 'Latest result' : 'Previous result';
   return [
     result,
-    source.runNumber + '회차',
+    'Session ' + source.runNumber,
     executionTime.format(new Date(source.recordedAt)),
   ].join(' · ');
 }

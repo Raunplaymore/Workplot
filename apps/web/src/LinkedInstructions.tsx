@@ -73,7 +73,7 @@ export function LinkedInstructions({
               })
             }
           >
-            저장
+            Save
           </button>
           <button
             type="button"
@@ -83,7 +83,7 @@ export function LinkedInstructions({
               setEditing(false);
             }}
           >
-            취소
+            Cancel
           </button>
         </>
       ) : (
@@ -92,7 +92,7 @@ export function LinkedInstructions({
           disabled={disabled}
           onClick={() => setEditing(true)}
         >
-          하위 지침 편집
+          Edit child instructions
         </button>
       )}
     </>

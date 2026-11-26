@@ -14,13 +14,13 @@ export function StepProperties({
   const sections = [
     {
       id: 'role',
-      title: '역할과 지침',
+      title: 'Role and instructions',
       icon: NotebookPen,
       content: roleContent,
     },
     {
       id: 'connections',
-      title: '단계 연결',
+      title: 'Step connections',
       icon: GitBranch,
       content: connections,
     },
@@ -28,7 +28,7 @@ export function StepProperties({
       ? [
           {
             id: 'tools',
-            title: '도구와 권한',
+            title: 'Tools and permissions',
             icon: ShieldCheck,
             content: execution,
           },

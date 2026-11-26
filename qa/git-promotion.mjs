@@ -311,8 +311,9 @@ async function verify() {
     return pages;
   }
   const approve = (p) =>
-      p.getByRole('button', { name: '승인하고 원본에 반영' }),
-    recheck = (p) => p.getByRole('button', { name: '현재 원본으로 재검사' });
+      p.getByRole('button', { name: 'Approve and apply to target' }),
+    recheck = (p) =>
+      p.getByRole('button', { name: 'Recheck against current target' });
   const report = { fixture: root, initialHead: head() };
   console.log('G4 QA', root);
   try {
@@ -430,7 +431,7 @@ async function verify() {
       exact: true,
     });
     await review.getByText('반영 범위 · 변경 파일 2개').waitFor();
-    await review.getByText('전체 diff 보기').click();
+    await review.getByText('View full diff').click();
     assert.match(
       await review.locator('details pre').last().innerText(),
       /\+a-first/,

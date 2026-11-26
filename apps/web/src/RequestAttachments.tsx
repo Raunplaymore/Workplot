@@ -39,11 +39,11 @@ export function RequestAttachments({
   return (
     <details className={styles.attachments}>
       <summary>
-        첨부 · 작업 폴더
+        Attachments and work folder
         {value.references.length
-          ? ' · 참고 ' + value.references.length + '개'
+          ? ' · References: ' + value.references.length
           : ''}
-        {value.workspace ? ' · 작업 폴더 지정됨' : ''}
+        {value.workspace ? ' · Work folder selected' : ''}
       </summary>
       <small>
         참고 문서·소스·이미지는 실행할 때 복사해 후속 세션에서도 사용합니다.
@@ -68,21 +68,21 @@ export function RequestAttachments({
           disabled={!path.trim() || picking}
           onClick={() => add(path)}
         >
-          첨부
+          Attach
         </button>
         <button
           type="button"
           disabled={picking}
           onClick={() => void pick('file')}
         >
-          파일 선택
+          Choose file
         </button>
         <button
           type="button"
           disabled={picking}
           onClick={() => void pick('folder')}
         >
-          폴더 선택
+          Choose folder
         </button>
       </div>
       {value.references.map((name) => (
@@ -90,7 +90,7 @@ export function RequestAttachments({
           {name}{' '}
           <button
             type="button"
-            aria-label={name + ' 제거'}
+            aria-label={name + ' · Remove'}
             onClick={() =>
               change({
                 ...value,
@@ -98,7 +98,7 @@ export function RequestAttachments({
               })
             }
           >
-            제거
+            Remove
           </button>
         </div>
       ))}
@@ -117,7 +117,7 @@ export function RequestAttachments({
         disabled={picking}
         onClick={() => void pick('folder', true)}
       >
-        작업 폴더 선택
+        Choose work folder
       </button>
       {error && <p role="alert">{error}</p>}
     </details>

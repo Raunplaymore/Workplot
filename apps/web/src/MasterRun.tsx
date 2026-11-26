@@ -125,7 +125,7 @@ function RunAction({
   return (
     <>
       <button type="button" disabled={pending} onClick={() => void retry()}>
-        {pending ? '처리 중…' : label}
+        {pending ? 'Processing…' : label}
       </button>
       {error && <p role="alert">{error}</p>}
     </>
@@ -192,7 +192,7 @@ function PromotionReview({
             setAttempt((n) => n + 1);
           }}
         >
-          다시 조회
+          Reload
         </button>
       </p>
     );
@@ -279,7 +279,7 @@ function PromotionReview({
         ))}
       </ul>
       <details>
-        <summary>전체 diff 보기</summary>
+        <summary>View full diff</summary>
         <pre
           style={{
             whiteSpace: 'pre-wrap',
@@ -292,7 +292,7 @@ function PromotionReview({
         </pre>
       </details>
       <button type="button" onClick={() => void copySummary()}>
-        PR 검토 요약 복사
+        Copy PR review summary
       </button>
       {copyState === 'copied' && <span role="status">복사했습니다.</span>}
       {copyState === 'manual' && (
@@ -308,7 +308,7 @@ function PromotionReview({
       {allowApproval && (
         <RunAction
           path={path + 'approve'}
-          label="승인하고 원본에 반영"
+          label="Approve and apply to target"
           body={{ ticket, expected, candidate }}
           refresh={refresh}
         />
@@ -398,7 +398,7 @@ export function MasterRun({ id }: { id: string }) {
               data.children.some((c) => c.view.failureId)) && (
               <RunAction
                 path={'/master-runs/' + id + '/stop'}
-                label="전체 작업 중단"
+                label="Stop all tasks"
                 refresh={refresh}
               />
             )}
@@ -427,7 +427,7 @@ export function MasterRun({ id }: { id: string }) {
                     {!data.stopped && active(child.view.summary.status) && (
                       <RunAction
                         path={'/runs/' + child.runId + '/stop'}
-                        label="이 작업만 중단"
+                        label="Stop this task"
                         refresh={refresh}
                       />
                     )}
@@ -437,7 +437,7 @@ export function MasterRun({ id }: { id: string }) {
                         <RunAction
                           key={child.view.failureId}
                           path={'/runs/' + child.runId + '/retry'}
-                          label="이 작업만 다시 실행"
+                          label="Retry this task"
                           body={{ failureId: child.view.failureId }}
                           refresh={() => setRefreshKey((n) => n + 1)}
                         />
@@ -467,7 +467,7 @@ export function MasterRun({ id }: { id: string }) {
             ) && (
               <RunAction
                 path={'/master-runs/' + id + '/git-integration'}
-                label="Git 통합 큐에 추가"
+                label="Add to integration queue"
                 refresh={refresh}
               />
             )}
@@ -544,7 +544,7 @@ export function MasterRun({ id }: { id: string }) {
                   )}
                   {promotion.checks && (
                     <details>
-                      <summary>재검사 결과</summary>
+                      <summary>Recheck results</summary>
                       <pre style={{ whiteSpace: 'pre-wrap' }}>
                         {promotion.checks}
                       </pre>
@@ -573,7 +573,7 @@ export function MasterRun({ id }: { id: string }) {
                     ['stale', 'failed'].includes(promotion.status) && (
                       <RunAction
                         path={'/master-runs/' + id + '/git-promotion/recheck'}
-                        label="현재 원본으로 재검사"
+                        label="Recheck against current target"
                         body={{
                           ticket: promotion.ticket,
                           expected: promotion.expected,
@@ -610,7 +610,7 @@ export function MasterRun({ id }: { id: string }) {
               )}
               {report.verifiedStage && (
                 <details>
-                  <summary>마지막 통과본 보기</summary>
+                  <summary>View last passing version</summary>
                   <p>작업본 위치</p>
                   <code>{report.verifiedStage}</code>
                   <label>

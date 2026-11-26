@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { RunList } from '@studio/contracts';
 import styles from './WorkflowStudio.module.css';
 
@@ -42,9 +43,10 @@ export function SessionTrail({
   rows: RunList;
   labels: Record<Row['status'], string>;
 }) {
+  const [limit, setLimit] = useState(5);
   if (!rows.length) return null;
   const groups: Row[][] = [];
-  for (const row of rows) {
+  for (const row of rows.slice(0, limit)) {
     const prior = groups.at(-1);
     if (
       prior &&
@@ -75,7 +77,7 @@ export function SessionTrail({
   return (
     <details className={styles.historyPanel}>
       <summary>
-        이전 세션 보기 <span>{rows.length}개</span>
+        Previous sessions <span>{rows.length}</span>
       </summary>
       <ul>
         {groups.map((group) => {
@@ -87,7 +89,8 @@ export function SessionTrail({
               ) : (
                 <details>
                   <summary>
-                    <strong>변경 없음</strong> · 연속 {group.length}개 세션
+                    <strong>No changes</strong> · {group.length} consecutive
+                    sessions
                   </summary>
                   <ul>
                     {group.map((item) => (
@@ -100,6 +103,11 @@ export function SessionTrail({
           );
         })}
       </ul>
+      {limit < rows.length && (
+        <button type="button" onClick={() => setLimit(limit + 10)}>
+          Show more sessions
+        </button>
+      )}
     </details>
   );
 }

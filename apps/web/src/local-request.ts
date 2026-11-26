@@ -47,6 +47,18 @@ export class LocalRequestError extends Error {
     super(message);
   }
 }
+async function send(url: string, init: RequestInit) {
+  try {
+    return await fetch(url, init);
+  } catch (error) {
+    if (error instanceof TypeError && !init.signal?.aborted)
+      throw new TypeError(
+        '로컬 서버 응답을 확인하지 못했습니다. 연결을 확인한 뒤 다시 시도하세요.',
+        { cause: error },
+      );
+    throw error;
+  }
+}
 export async function localRequest(
   path: string,
   method = 'GET',
@@ -59,14 +71,14 @@ export async function localRequest(
     headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   };
-  let response = await fetch('/api' + path, init);
+  let response = await send('/api' + path, init);
   if (response.status === 401) {
-    const session = await fetch('/api/session', {
+    const session = await send('/api/session', {
       method: 'POST',
       headers: { 'X-Studio-Client': 'browser' },
     });
     if (!session.ok) throw new Error('로컬 작업실 세션을 열 수 없습니다.');
-    response = await fetch('/api' + path, init);
+    response = await send('/api' + path, init);
   }
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));

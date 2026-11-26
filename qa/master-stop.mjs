@@ -137,11 +137,11 @@ try {
     await page.goto('http://127.0.0.1:4310/#/masters/' + id);
     const button =
       mode === 'all'
-        ? page.getByRole('button', { name: '전체 작업 중단' })
+        ? page.getByRole('button', { name: 'Stop all tasks' })
         : page
             .getByRole('listitem')
             .filter({ hasText: 'a 결과' })
-            .getByRole('button', { name: '이 작업만 중단' });
+            .getByRole('button', { name: 'Stop this task' });
     await button.waitFor();
     const first = await until(() => {
       const pair = calls.slice(offset);

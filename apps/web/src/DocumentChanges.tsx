@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useRef, useState, useMemo } from 'react';
 import { diffArrays, diffWordsWithSpace } from 'diff';
 import type { DocumentSource } from './document-source';
 import styles from './DesignDocument.module.css';
@@ -53,6 +53,21 @@ export function DocumentChanges({
   current: DocumentSource;
 }) {
   const rows = useMemo(() => documentRows(before, after), [before, after]);
+  const [onlyChanges, setOnlyChanges] = useState(false);
+  const table = useRef<HTMLTableElement>(null);
+  const [changeIndex, setChangeIndex] = useState(-1);
+  function visitChange(offset: number) {
+    const changes = table.current?.querySelectorAll<HTMLElement>(
+      'tr[data-changed="true"]',
+    );
+    if (!changes?.length) return;
+    const index = Math.max(
+      0,
+      Math.min(changes.length - 1, changeIndex + offset),
+    );
+    setChangeIndex(index);
+    changes[index]?.focus();
+  }
   const counts = { 추가: 0, 삭제: 0, 수정: 0 };
   for (const row of rows ?? []) if (row.kind !== '유지') counts[row.kind]++;
   return (
@@ -70,7 +85,34 @@ export function DocumentChanges({
               counts.삭제 +
               '줄'}
       </p>
-      <table className={styles.comparison} aria-label="회차별 문서 변경">
+      {rows?.some((row) => row.kind !== '유지') && (
+        <button
+          aria-pressed={onlyChanges}
+          onClick={() => setOnlyChanges(!onlyChanges)}
+        >
+          {onlyChanges ? 'Show all lines' : 'Show changes only'}
+        </button>
+      )}
+      {rows?.some((row) => row.kind !== '유지') && (
+        <div>
+          <button disabled={changeIndex <= 0} onClick={() => visitChange(-1)}>
+            Previous change
+          </button>
+          <button
+            disabled={
+              changeIndex >= counts.추가 + counts.삭제 + counts.수정 - 1
+            }
+            onClick={() => visitChange(1)}
+          >
+            Next change
+          </button>
+        </div>
+      )}
+      <table
+        ref={table}
+        className={styles.comparison}
+        aria-label="회차별 문서 변경"
+      >
         <thead>
           <tr>
             <th>직전 · {previous.runNumber}회차</th>
@@ -80,12 +122,17 @@ export function DocumentChanges({
         <tbody>
           {(rows ?? [{ before, after, kind: '유지' } as Row]).map(
             (row, index) => {
+              if (onlyChanges && row.kind === '유지') return null;
               const words =
                 row.kind === '수정'
                   ? diffWordsWithSpace(row.before!, row.after!, { timeout: 15 })
                   : undefined;
               return (
-                <tr key={index}>
+                <tr
+                  key={index}
+                  data-changed={row.kind !== '유지'}
+                  tabIndex={row.kind === '유지' ? undefined : -1}
+                >
                   <td
                     data-change={
                       row.before !== undefined && row.kind !== '유지'

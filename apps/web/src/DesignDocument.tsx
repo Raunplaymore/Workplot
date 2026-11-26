@@ -13,6 +13,7 @@ export function DesignDocument({
   busy,
   run,
   onRun,
+  compare,
   workflowId,
   version,
   file,
@@ -21,7 +22,8 @@ export function DesignDocument({
   children?: ReactNode;
   busy: boolean;
   run?: string;
-  onRun: (id: string) => void;
+  onRun: (id: string, compare?: boolean) => void;
+  compare: boolean;
   workflowId: string;
   version: number;
   file: string;
@@ -33,7 +35,6 @@ export function DesignDocument({
     return () => el.close();
   }, []);
   const [runs, setRuns] = useState<DocumentSource[] | null>(null);
-  const [compare, setCompare] = useState(false);
   const id = run ?? runs?.[0]?.id;
   const index = runs?.findIndex((item) => item.id === id) ?? -1;
   const current = runs?.[index];
@@ -81,7 +82,7 @@ export function DesignDocument({
       <header>
         <h2>{file}</h2>
         <button type="button" disabled={busy} onClick={close}>
-          닫기
+          Close
         </button>
       </header>
       <div className={styles.panes}>
@@ -91,7 +92,14 @@ export function DesignDocument({
           ) : !runs ? (
             <p>실행 기록 조회 중…</p>
           ) : run !== undefined && !runs.some((item) => item.id === run) ? (
-            <p role="alert">이 실행 회차의 결과 문서를 찾을 수 없습니다.</p>
+            <p role="alert">
+              이 실행 회차의 결과 문서를 찾을 수 없습니다.{' '}
+              {runs[0] && (
+                <button onClick={() => onRun(runs[0]!.id)}>
+                  Open latest result
+                </button>
+              )}
+            </p>
           ) : runs.length === 0 ? (
             <p>저장본 v{version}에 보관된 이 단계의 결과 문서가 없습니다.</p>
           ) : (
@@ -110,9 +118,9 @@ export function DesignDocument({
                 <button
                   type="button"
                   aria-pressed={compare}
-                  onClick={() => setCompare(!compare)}
+                  onClick={() => id && onRun(id, !compare)}
                 >
-                  {compare ? '문서 보기' : '직전 회차와 비교'}
+                  {compare ? 'View document' : 'Compare with previous session'}
                 </button>
               ) : (
                 <small>이 버전에서 비교할 이전 결과가 없습니다.</small>

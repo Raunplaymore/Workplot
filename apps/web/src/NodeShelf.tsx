@@ -194,14 +194,14 @@ export function NodeShelf({
       <header>
         <h2 id="node-shelf-heading" ref={heading} tabIndex={-1}>
           {panel === 'save'
-            ? '내 노드로 저장'
+            ? 'Save to my nodes'
             : panel === 'custom'
-              ? '새 맞춤 노드'
+              ? 'New custom node'
               : panel === 'preview'
                 ? '흐름 맞춤 미리보기'
-                : '내 노드함'}
+                : 'My nodes'}
         </h2>
-        <button onClick={close} aria-label="닫기">
+        <button onClick={close} aria-label="Close">
           <X size={16} />
         </button>
       </header>
@@ -228,7 +228,7 @@ export function NodeShelf({
                 setError('');
               }}
             >
-              새 맞춤 노드
+              New custom node
             </button>
           </div>
           <p>{ordered[index]?.title} 뒤에 추가</p>
@@ -243,7 +243,7 @@ export function NodeShelf({
             {slotList.map((n) => (
               <li key={n.id}>
                 <button
-                  aria-label={n.template.title + ' 즐겨찾기'}
+                  aria-label={n.template.title + ' · Toggle favorite'}
                   aria-pressed={n.favorite}
                   disabled={busy}
                   onClick={() =>
@@ -267,13 +267,13 @@ export function NodeShelf({
                   <small>
                     v{n.version} ·{' '}
                     {n.template.kind === 'review'
-                      ? '사용자 승인'
+                      ? 'User approval'
                       : n.template.output}
                   </small>
                 </button>
                 <button
                   disabled={busy}
-                  aria-label={n.template.title + ' 노드함에서 삭제'}
+                  aria-label={n.template.title + ' · Delete from node shelf'}
                   onClick={() => setConfirm(n.id)}
                 >
                   <Trash2 size={15} />
@@ -292,7 +292,7 @@ export function NodeShelf({
                       })
                     }
                   >
-                    삭제 확인
+                    Confirm deletion
                   </button>
                 )}
               </li>
@@ -357,19 +357,19 @@ export function NodeShelf({
             <footer>
               {selectedStep.templateOrigin && (
                 <button disabled={busy} onClick={() => save(true)}>
-                  기존 슬롯 갱신
+                  Update existing slot
                 </button>
               )}
               <button disabled={busy} onClick={() => save(false)}>
                 {selectedStep.templateOrigin
-                  ? '별도 슬롯에 저장'
-                  : '슬롯에 저장'}
+                  ? 'Save to a new slot'
+                  : 'Save to slot'}
               </button>
             </footer>
           ) : (
             <footer>
               <button disabled={busy} onClick={() => void propose(template)}>
-                흐름에 맞추기
+                Adapt to workflow
               </button>
             </footer>
           )}
@@ -385,7 +385,7 @@ export function NodeShelf({
             <>
               <p>{fit.reason}</p>
               <details>
-                <summary>원래 지침</summary>
+                <summary>Original instructions</summary>
                 <p>{template.instructions}</p>
               </details>
               <label>
@@ -443,7 +443,7 @@ export function NodeShelf({
             <p>이 위치에서 실행이 멈추고 사용자의 검토를 기다립니다.</p>
           )}
           <footer>
-            <button onClick={close}>취소</button>
+            <button onClick={close}>Cancel</button>
             <button
               disabled={
                 busy ||
@@ -472,7 +472,7 @@ export function NodeShelf({
                 }
               }}
             >
-              와이어에 적용
+              Apply to wire
             </button>
           </footer>
         </>
@@ -482,7 +482,7 @@ export function NodeShelf({
       </div>
       {busy && (
         <p role="status">
-          {panel === 'custom' || panel === 'browse' ? '처리 중…' : '저장 중…'}
+          {panel === 'custom' || panel === 'browse' ? 'Processing…' : 'Saving…'}
         </p>
       )}
       {error && <p role="alert">{error}</p>}

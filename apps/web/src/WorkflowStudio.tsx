@@ -117,10 +117,17 @@ const runLabels: Record<RunView['summary']['status'], string> = {
   unknown: '종료 상태 미확인',
 };
 const waitingRunLabels = {
-  question: { status: '답변 대기', action: '질문 열기' },
-  review: { status: '승인 대기', action: '검토 열기' },
-  unspecified: { status: runLabels.waiting, action: '대기 단계 열기' },
+  question: { status: '답변 대기', action: 'Open question' },
+  review: { status: '승인 대기', action: 'Open review' },
+  unspecified: { status: runLabels.waiting, action: 'View pending step' },
 };
+function runAction(row: RunList[number]) {
+  if (row.status === 'waiting')
+    return waitingRunLabels[row.gateKind ?? 'unspecified'].action;
+  if (row.status === 'failed') return 'View failure details';
+  return row.status === 'stopped' ? 'View run details' : 'View results';
+}
+
 function chain(steps: Step[]) {
   return steps.flatMap((step, index) => {
     const previous = steps[index - 1];
@@ -133,7 +140,7 @@ function message(error: unknown) {
 
 function instructionPreview(instructions: string) {
   const text = instructions.trim().replace(/\s+/g, ' ');
-  if (!text) return '이 노드가 할 일을 지침에 적어 주세요.';
+  if (!text) return 'Describe what this node should do.';
   const firstSentence = text.split(/(?<=[.!?。！？])\s/, 1)[0]!;
   return firstSentence.length > 80
     ? firstSentence.slice(0, 80).trimEnd() + '…'
@@ -154,6 +161,7 @@ function routeRun() {
   const parsed = workflowIdSchema.safeParse(
     location.hash
       .slice('#/runs/'.length)
+      .split('?')[0]!
       .replace(/\/(?:compare|review|log)$/, ''),
   );
   return location.hash.startsWith('#/runs/') && parsed.success
@@ -174,6 +182,7 @@ type DocumentRoute = {
   step: string;
   version: number;
   run?: string;
+  compare?: boolean;
 };
 function readDocumentRoute(): DocumentRoute | null {
   const workflow = designTarget();
@@ -182,13 +191,20 @@ function readDocumentRoute(): DocumentRoute | null {
   const version = Number(params.get('version'));
   if (!workflow || !step || !Number.isSafeInteger(version) || version < 1)
     return null;
-  return { workflow, step, version, run: params.get('run') ?? undefined };
+  return {
+    workflow,
+    step,
+    version,
+    compare: params.get('compare') === 'previous',
+    run: params.get('run') ?? undefined,
+  };
 }
 function documentUrl(route: DocumentRoute) {
   const params = new URLSearchParams({
     node: route.step,
     version: String(route.version),
   });
+  if (route.compare) params.set('compare', 'previous');
   if (route.run) params.set('run', route.run);
   return designUrl(route.workflow) + '?' + params;
 }
@@ -196,7 +212,10 @@ function screen() {
   if (routeMaster()) return 'master';
   if (routeRun())
     return location.hash.endsWith('/compare') ? 'compare' : 'detail';
-  if (location.hash === '#/library' || location.hash.startsWith('#/library/'))
+  if (
+    location.hash.split('?')[0] === '#/library' ||
+    location.hash.startsWith('#/library/')
+  )
     return 'library';
   return location.hash === '#/design' || designTarget() !== null
     ? 'design'
@@ -238,17 +257,29 @@ export function WorkflowStudio({
   const [newKind, setNewKind] = useState<Step['kind'] | 'ai-review' | 'shelf'>(
     'task',
   );
+  const [narrowEditor, setNarrowEditor] = useState(
+    () => matchMedia('(max-width:800px)').matches,
+  );
+  useEffect(() => {
+    const media = matchMedia('(max-width:800px)');
+    const update = () => setNarrowEditor(media.matches);
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
   const [properties, setProperties] = useState(true);
   const [flowSettings, setFlowSettings] = useState(
     initial?.flowSettings ?? false,
   );
+  const [materialGoal, setMaterialGoal] = useState<string>();
   const [materialRequest, setMaterialRequest] = useState<string>();
   const [materialFiles, setMaterialFiles] = useState<RequestFiles>();
   function prepareMaterial(
     v: WorkflowVersion,
     request?: string,
     files?: RequestFiles,
+    goal?: string,
   ) {
+    setMaterialGoal(goal);
     setMaterialFiles(files);
     setMaterialRequest(request);
     setMaterialVersion(v);
@@ -288,9 +319,14 @@ export function WorkflowStudio({
   const [selected, select] = useState(initial?.selected ?? 'draft');
   const [choice, setChoice] = useState(initial?.saved?.id ?? '');
   const [run, setRun] = useState<RunView | null>(null);
+  const [endedStep, setEndedStep] = useState<{
+    runId: string;
+    stepId: string;
+  } | null>(null);
   const { record, executionSteps } = useRunDefinition(
     surface === 'detail' ? run : null,
   );
+  const [missingRun, setMissingRun] = useState('');
   const [runId, setRunId] = useState(
     () => routeRun() ?? sessionStorage.getItem('studio-run'),
   );
@@ -349,7 +385,7 @@ export function WorkflowStudio({
   );
   const modelControl = (
     <details>
-      <summary>AI 실행 설정</summary>
+      <summary>AI settings</summary>
       {modelFields}
     </details>
   );
@@ -469,7 +505,7 @@ export function WorkflowStudio({
   const [slotSettings, setSlotSettings] = useState<ReturnType<
     typeof slotSettingsSchema.parse
   > | null>(null);
-  const [slotInput, setSlotInput] = useState('');
+  const [slotInput, setSlotInput] = useState<string | null>(null);
   const [slotIssue, setSlotIssue] = useState('');
   const [savingSlots, setSavingSlots] = useState(false);
   async function saveSlotLimit(limit: number) {
@@ -479,7 +515,7 @@ export function WorkflowStudio({
         limit,
       });
       setSlotSettings(slotSettingsSchema.parse(await response.json()));
-      setSlotInput('');
+      setSlotInput(null);
       setSlotIssue('');
     } catch (e) {
       setSlotIssue(message(e));
@@ -496,11 +532,27 @@ export function WorkflowStudio({
       return runPageSizes[0];
     }
   });
-  const [requestedPage, setPage] = useState(1);
+  function listLocation() {
+    const params = new URLSearchParams(location.hash.split('?')[1]);
+    const f = params.get('filter'),
+      p = Number(params.get('page'));
+    return {
+      page: Number.isSafeInteger(p) && p > 0 ? p : 1,
+      filter: f === 'waiting' || f === 'running' ? f : 'all',
+    } as const;
+  }
+  const [requestedPage, setPage] = useState(() => listLocation().page);
   const [dashboardError, setDashboardError] = useState('');
-  const [filter, setFilter] = useState<'all' | 'waiting' | 'running'>('all');
+  const [filter, setFilter] = useState<'all' | 'waiting' | 'running'>(
+    () => listLocation().filter,
+  );
   useEffect(() => {
     function route() {
+      if (location.hash.split('?')[0] === '#/runs') {
+        const next = listLocation();
+        setFilter(next.filter);
+        setPage(next.page);
+      }
       const id = routeRun();
       setError('');
       if (id && id !== runId) {
@@ -557,6 +609,22 @@ export function WorkflowStudio({
   );
   const currentPage = Math.min(requestedPage, pageCount);
   const offset = (currentPage - 1) * pageSize;
+  useEffect(() => {
+    if (
+      surface !== 'monitor' ||
+      !rows ||
+      location.hash.split('?')[0] !== '#/runs'
+    )
+      return;
+    const q = new URLSearchParams();
+    if (filter !== 'all') q.set('filter', filter);
+    if (currentPage > 1) q.set('page', String(currentPage));
+    window.history.replaceState(
+      window.history.state,
+      '',
+      '#/runs' + (q.size ? '?' + q : ''),
+    );
+  }, [surface, rows, filter, currentPage]);
   const pageRows = visibleRows?.slice(offset, offset + pageSize) ?? [];
   useEffect(() => {
     if (!connected) return;
@@ -593,7 +661,12 @@ export function WorkflowStudio({
   const step = steps.find((item) => item.id === selected) ?? steps[0];
   const link = step?.kind === 'task' ? step.workflowRef : undefined;
   const [documentRequest, setDocumentRequest] = useState(readDocumentRoute);
+  const documentTrigger = useRef<HTMLElement | null>(null);
   function openDocument(route: DocumentRoute) {
+    documentTrigger.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     window.history.pushState(null, '', documentUrl(route));
     setDocumentRequest(route);
   }
@@ -601,6 +674,20 @@ export function WorkflowStudio({
     if (documentRequest && documentRequest.workflow === saved?.id)
       inspect(documentRequest.step);
   }, [documentRequest?.step, documentRequest?.workflow, saved?.id]);
+  useEffect(() => {
+    function restoreStep() {
+      const id = new URLSearchParams(location.hash.split('?')[1]).get('step');
+      if (
+        id &&
+        saved?.id === designTarget() &&
+        saved?.definition.steps.some((s) => s.id === id)
+      )
+        inspect(id);
+    }
+    restoreStep();
+    window.addEventListener('hashchange', restoreStep);
+    return () => window.removeEventListener('hashchange', restoreStep);
+  }, [saved?.id, saved?.version]);
   const [linkedRecord, setLinkedRecord] = useState<WorkflowVersion | null>(
     null,
   );
@@ -624,6 +711,15 @@ export function WorkflowStudio({
       });
     return () => cancel.abort();
   }, [link?.id, link?.version]);
+  useEffect(() => {
+    if (surface === 'library') return;
+    const name =
+      surface === 'design'
+        ? draft.name
+        : rows?.find((row) => row.id === routeRun())?.name;
+    const menu = surface === 'design' ? 'Editor' : 'Runs';
+    document.title = [name, menu, 'Workplot'].filter(Boolean).join(' · ');
+  }, [surface, draft.name, rows, runId]);
   const plan = workflowPlan(draft);
   const index = steps.findIndex(({ id }) => id === step?.id);
   const canDeleteStep = joined && steps.length >= 2;
@@ -652,7 +748,7 @@ export function WorkflowStudio({
   );
   const titleFor = (id: string) => {
     const item = steps.find((step) => step.id === id);
-    return item ? item.title.trim() || '제목 없음' : '삭제된 단계';
+    return item ? item.title.trim() || 'Untitled' : '삭제된 단계';
   };
   const active = Boolean(run && activeStatuses.has(run.summary.status));
   const checkingRun = runId !== null && run?.summary.id !== runId;
@@ -701,16 +797,28 @@ export function WorkflowStudio({
       ? executedPreviewStep
       : null;
   const gateId = run?.gate?.id;
+  const chosenFile =
+    routeRun() === run?.summary.id
+      ? new URLSearchParams(location.hash.split('?')[1]).get('file')
+      : null;
   const autoOpenReview =
     run?.gate?.kind === 'review' &&
     routeRun() === run.summary.id &&
     (location.hash.endsWith('/review') ||
       location.hash === '#/runs/' + run.summary.id);
   useEffect(() => {
-    if (!autoOpenReview || !reviewFile || !gateId || !runId) return;
+    const file =
+      chosenFile ?? (autoOpenReview && gateId ? reviewFile : undefined);
+    if (
+      !file ||
+      !runId ||
+      !run?.results.includes(file) ||
+      preview?.name === file
+    )
+      return;
     const c = new AbortController();
     void localRequest(
-      '/runs/' + runId + '/results/' + reviewFile,
+      '/runs/' + runId + '/results/' + encodeURIComponent(file),
       'GET',
       undefined,
       c.signal,
@@ -718,15 +826,22 @@ export function WorkflowStudio({
       .then((r) => r.text())
       .then((text) => {
         if (!c.signal.aborted) {
-          setPreview({ name: reviewFile, text });
-          setPreviewedGate(gateId);
+          setPreview({ name: file, text });
+          if (file === reviewFile && gateId) setPreviewedGate(gateId);
         }
       })
       .catch((e) => {
         if (!c.signal.aborted) setError(message(e));
       });
     return () => c.abort();
-  }, [autoOpenReview, reviewFile, gateId, runId]);
+  }, [
+    autoOpenReview,
+    reviewFile,
+    gateId,
+    runId,
+    chosenFile,
+    run?.results.length,
+  ]);
   const failedCommit =
     run?.summary.status === 'failed' &&
     executionSteps.some(
@@ -746,6 +861,7 @@ export function WorkflowStudio({
           await (await localRequest('/runs/' + runId + '/view')).json(),
         );
         if (!disposed) {
+          setMissingRun('');
           setRun(updated);
           if (
             activeStatuses.has(updated.summary.status) ||
@@ -764,7 +880,9 @@ export function WorkflowStudio({
       } catch (error) {
         if (!disposed) {
           setError(message(error));
-          timer = setTimeout(refresh, 2000);
+          if (error instanceof LocalRequestError && error.status === 404)
+            setMissingRun(runId!);
+          else timer = setTimeout(refresh, 2000);
         }
       }
     }
@@ -1243,6 +1361,11 @@ export function WorkflowStudio({
         )
       ).text();
       if (routeRun() !== runId) return;
+      window.history.replaceState(
+        window.history.state,
+        '',
+        '#/runs/' + runId + '?file=' + encodeURIComponent(name),
+      );
       setPreview({
         name,
         text,
@@ -1310,16 +1433,16 @@ export function WorkflowStudio({
       : !saved ||
           !saved.definition.steps.some((s) => s.id === item.id) ||
           run === null
-        ? '실행 결과 없음'
+        ? 'No results'
         : !connected || files
-          ? '회차 확인 불가'
-          : '회차 조회 중';
+          ? 'Session unavailable'
+          : 'Loading session…';
     return (
       <button
         type="button"
         disabled={!run}
         className={'nodrag nopan ' + styles.nodeFile}
-        aria-label={item.id + '.md 열기 · ' + status}
+        aria-label={item.id + '.md · Open · ' + status}
         title={item.id + '.md · ' + status}
         onClick={(event) => {
           event.stopPropagation();
@@ -1360,7 +1483,7 @@ export function WorkflowStudio({
               item.tool === 'workplot-ui' &&
               ' · 화면 작업본'}
           </small>
-          <strong>{item.title || '제목 없음'}</strong>
+          <strong>{item.title || 'Untitled'}</strong>
           {item.kind === 'task' && item.improvementRoutes && (
             <div
               className={styles.routerPaths}
@@ -1375,7 +1498,7 @@ export function WorkflowStudio({
               title={item.instructions.trim() || undefined}
               style={{ display: 'block', overflowWrap: 'anywhere' }}
             >
-              역할 · {instructionPreview(item.instructions)}
+              Role · {instructionPreview(item.instructions)}
             </small>
           )}
           {item.kind === 'task' && item.codexSkill && (
@@ -1485,8 +1608,12 @@ export function WorkflowStudio({
           : '슬롯 확인 중'}
       </span>
       {slotSettings && (
-        <details>
-          <summary>슬롯 설정</summary>
+        <details
+          onToggle={(e) => {
+            if (!e.currentTarget.open) setSlotInput(null);
+          }}
+        >
+          <summary>Slot settings</summary>
           <p>
             사용 가능 CPU {slotSettings.cores}코어 · 여유 메모리{' '}
             {slotSettings.availableGiB} GiB · 추천 {slotSettings.recommended}개
@@ -1494,7 +1621,7 @@ export function WorkflowStudio({
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              void saveSlotLimit(Number(slotInput || slotLimit));
+              void saveSlotLimit(Number(slotInput ?? slotLimit));
             }}
           >
             <label>
@@ -1504,17 +1631,17 @@ export function WorkflowStudio({
                 min="1"
                 max={MAX_DEVELOPMENT_SLOTS}
                 required
-                value={slotInput || String(slotLimit)}
+                value={slotInput ?? String(slotLimit)}
                 onChange={(e) => setSlotInput(e.target.value)}
               />
             </label>
-            <button disabled={savingSlots}>저장</button>
+            <button disabled={savingSlots}>Save</button>
             <button
               type="button"
               disabled={savingSlots}
-              onClick={() => void saveSlotLimit(slotSettings.recommended)}
+              onClick={() => setSlotInput(String(slotSettings.recommended))}
             >
-              추천값 적용
+              Use recommendation
             </button>
           </form>
           {slotIssue && <p role="alert">{slotIssue}</p>}
@@ -1540,44 +1667,40 @@ export function WorkflowStudio({
     </div>
   );
   function startDisabledReason(development = false): string {
-    if (starting) return '실행 요청을 접수하고 있습니다.';
-    if (!connected) return '로컬 서버 연결을 확인하세요.';
-    if (development && !slotDataReady) return '실행 슬롯을 확인하고 있습니다.';
+    if (starting) return 'Starting the run.';
+    if (!connected) return 'Check the local server connection.';
+    if (development && !slotDataReady) return 'Checking available slots.';
     if (occupyingRun && !(development && gitSlotAvailable)) {
       const label =
         (occupyingRun.workflowId === saved?.id
-          ? '이 워크플롯'
-          : '다른 워크플롯') +
+          ? 'This workflow'
+          : 'Another workflow') +
         ' v' +
         occupyingRun.workflowVersion;
       if (!development && !startDisabledReason(true)) {
         const state =
-          occupyingRun.status === 'waiting' ? '승인 대기 중' : '실행 중';
+          occupyingRun.status === 'waiting' ? 'awaiting approval' : 'running';
         return (
           label +
-          '이 ' +
+          ' is ' +
           state +
-          '입니다. ‘개발 작업 실행’으로 별도 Git 작업 폴더에서 병렬 실행할 수 있습니다.'
+          '. Choose Run development task to run in a separate Git worktree.'
         );
       }
       if (occupyingRun.status === 'waiting') {
         if (occupyingRun.id === run?.summary.id && run.gate?.startNextSession)
           return (
             label +
-            '이 다음 세션 승인 대기 중입니다. 실행 상세에서 ‘이번 세션 마치기’를 선택하면 새 실행을 시작할 수 있습니다.'
+            '이 다음 세션 awaiting approval입니다. 실행 상세에서 ‘이번 세션 마치기’를 선택하면 새 실행을 시작할 수 있습니다.'
           );
-        return (
-          label +
-          '이 사용자 확인 대기 중입니다. 실행 현황에서 대기 중인 단계를 열어 주세요.'
-        );
+        return label + ' is awaiting input. Open the pending step in Runs.';
       }
-      return label + '이 실행 중입니다. 실행 현황에서 진행 상황을 확인하세요.';
+      return label + '이 running입니다. 실행 현황에서 진행 상황을 확인하세요.';
     }
-    if (!codexAvailable)
-      return '내 에이전트 도구에서 Codex 연결 상태를 확인하세요.';
-    if (!saved || dirty) return '흐름을 먼저 저장하세요.';
-    if (invalidAgent) return '담당 도구가 없는 작업 단계에 도구를 지정하세요.';
-    if (checkingRun || busy) return '현재 요청을 처리하고 있습니다.';
+    if (!codexAvailable) return 'Check the Codex connection in Agent tools.';
+    if (!saved || dirty) return 'Save the workflow first.';
+    if (invalidAgent) return 'Assign a tool to each task.';
+    if (checkingRun || busy) return 'Processing the current request.';
     return '';
   }
   const startHint = startDisabledReason(!!saved?.definition.projectFolder);
@@ -1607,17 +1730,17 @@ export function WorkflowStudio({
     </span>
   );
   const actionIcons = {
-    되돌리기: Undo2,
-    '변경 취소': RotateCcw,
-    '앞으로 이동': ArrowLeft,
-    '뒤로 이동': ArrowRight,
-    '단계 삭제': Trash2,
-    '작업 중단': Square,
-    '실패한 단계 다시 실행': Redo2,
-    '흐름 열기': FolderOpen,
-    '새 흐름': FilePlus,
-    '내 노드로 저장': Save,
-    '내 노드함': FolderOpen,
+    Undo: Undo2,
+    'Discard changes': RotateCcw,
+    'Move earlier': ArrowLeft,
+    'Move later': ArrowRight,
+    'Delete step': Trash2,
+    'Stop run': Square,
+    'Retry failed step': Redo2,
+    'Open workflow': FolderOpen,
+    'New workflow': FilePlus,
+    'Save to my nodes': Save,
+    'My nodes': FolderOpen,
   };
   const button = (label: string, action: () => void, disabled = false) => {
     const Icon = actionIcons[label as keyof typeof actionIcons];
@@ -1632,6 +1755,12 @@ export function WorkflowStudio({
   function openWorkflow(id: string, stepId?: string, settings = false) {
     if (dirty || !connected) return;
     if (!stepId && !settings) {
+      if (saved?.id === id && surface === 'design') {
+        select(orderedSteps(saved.definition)[0]?.id ?? '');
+        setFlowSettings(false);
+        setSelectedWire('');
+        setLibrary(false);
+      }
       location.hash = designUrl(id);
       return;
     }
@@ -1658,6 +1787,12 @@ export function WorkflowStudio({
     });
   }
   function inspect(id: string) {
+    if (saved && designTarget() === saved.id && !readDocumentRoute())
+      window.history.replaceState(
+        window.history.state,
+        '',
+        designUrl(saved.id) + '?step=' + encodeURIComponent(id),
+      );
     select(id);
     setSelectedWire('');
     setFlowSettings(false);
@@ -1677,8 +1812,9 @@ export function WorkflowStudio({
             file={documentRequest.step + '.md'}
             busy={busy}
             run={documentRequest.run}
-            onRun={(run) => {
-              const route = { ...documentRequest, run };
+            compare={!!documentRequest.compare}
+            onRun={(run, compare = documentRequest.compare) => {
+              const route = { ...documentRequest, run, compare };
               window.history.replaceState(
                 window.history.state,
                 '',
@@ -1690,9 +1826,12 @@ export function WorkflowStudio({
               window.history.replaceState(
                 window.history.state,
                 '',
-                designUrl(saved.id),
+                designUrl(saved.id) +
+                  '?step=' +
+                  encodeURIComponent(documentRequest.step),
               );
               setDocumentRequest(null);
+              requestAnimationFrame(() => documentTrigger.current?.focus());
             }}
           >
             {step?.id === documentRequest.step && link && (
@@ -1827,7 +1966,7 @@ export function WorkflowStudio({
                         setTimeout(() => URL.revokeObjectURL(url), 1000);
                       }}
                     >
-                      v{olderDraft.version} 미저장 초안 내려받기
+                      Download unsaved v{olderDraft.version} draft
                     </button>
                   )}
                 {storageFailed && (
@@ -1841,56 +1980,71 @@ export function WorkflowStudio({
                 aria-expanded={library}
                 onClick={() => setLibrary(!library)}
               >
-                <ListTree size={16} aria-hidden="true" /> 흐름 목록
+                <ListTree size={16} aria-hidden="true" /> Workflow list
               </button>{' '}
               <div className={styles.buttons}>
-                {saved && (
-                  <button
-                    type="button"
-                    disabled={!!startDisabledReason(true)}
-                    title={startDisabledReason(true) || undefined}
-                    onClick={() => prepareGit(saved)}
-                  >
-                    개발 작업 실행
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFlowSettings(true);
-                    setProperties(true);
-                    setConnectingProject(true);
-                  }}
-                >
-                  {draft.projectFolder
-                    ? draft.projectFolder.service +
-                      ' · ' +
-                      draft.projectFolder.folder +
-                      ' · ' +
-                      draft.projectFolder.branch
-                    : '프로젝트 폴더 연결'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setProperties(true);
-                    setFlowSettings(true);
-                    requestAnimationFrame(() =>
-                      stepPanel.current
-                        ?.querySelector<HTMLSelectElement>(
-                          'select[aria-label="모델"]',
-                        )
-                        ?.focus(),
-                    );
-                  }}
-                >
-                  GPT 실행 설정
-                </button>
-                {saved && slotInfo}
-                {button('되돌리기', undo, busy || history.length === 0)}
+                <div className={styles.runOptions} data-compact={narrowEditor}>
+                  <details open={!narrowEditor || undefined}>
+                    <summary>Run settings</summary>
+                    <div>
+                      {saved && (
+                        <button
+                          type="button"
+                          disabled={!!startDisabledReason(true)}
+                          title={startDisabledReason(true) || undefined}
+                          onClick={() => prepareGit(saved)}
+                        >
+                          Run development task
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFlowSettings(true);
+                          setProperties(true);
+                          setConnectingProject(true);
+                        }}
+                      >
+                        {draft.projectFolder
+                          ? draft.projectFolder.service +
+                            ' · ' +
+                            draft.projectFolder.folder +
+                            ' · ' +
+                            draft.projectFolder.branch
+                          : 'Connect project folder'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProperties(true);
+                          setFlowSettings(true);
+                          requestAnimationFrame(() =>
+                            stepPanel.current
+                              ?.querySelector<HTMLSelectElement>(
+                                'select[aria-label="모델"]',
+                              )
+                              ?.focus(),
+                          );
+                        }}
+                      >
+                        GPT settings
+                      </button>
+                      {saved && slotInfo}
+                    </div>
+                  </details>
+                </div>
+                {button('Undo', undo, busy || history.length === 0)}
                 {button(
-                  '변경 취소',
-                  () => reset(baseline, saved, true),
+                  'Discard changes',
+                  () => {
+                    change(baseline);
+                    select(
+                      baseline.steps.some((s) => s.id === selected)
+                        ? selected
+                        : (orderedSteps(baseline)[0]?.id ?? ''),
+                    );
+                    setSelectedWire('');
+                  },
                   busy || !dirty,
                 )}
                 {!properties && saveButton}
@@ -1898,7 +2052,9 @@ export function WorkflowStudio({
                   className={styles.startControl}
                   tabIndex={startHint ? 0 : undefined}
                   role={startHint ? 'group' : undefined}
-                  aria-label={startHint ? '실행할 수 없는 이유' : undefined}
+                  aria-label={
+                    startHint ? 'Why this run is unavailable' : undefined
+                  }
                   aria-describedby={startHint ? 'run-start-hint' : undefined}
                 >
                   <button
@@ -1910,10 +2066,10 @@ export function WorkflowStudio({
                   >
                     <Play size={15} aria-hidden="true" />{' '}
                     {starting
-                      ? '실행 접수 중…'
+                      ? 'Starting…'
                       : saved
-                        ? '저장한 버전 실행'
-                        : '작업 실행 · 연결 준비 중'}
+                        ? 'Run saved version'
+                        : 'Run task · connecting'}
                   </button>
                   {startHint && (
                     <span
@@ -1935,9 +2091,7 @@ export function WorkflowStudio({
                 {run?.summary.status === 'failed' &&
                   run.failureId &&
                   button(
-                    failedCommit
-                      ? '커밋 단계만 다시 실행'
-                      : '실패한 단계 다시 실행',
+                    failedCommit ? 'Retry commit step' : 'Retry failed step',
                     () =>
                       perform(async () => {
                         const response = await localRequest(
@@ -1954,7 +2108,7 @@ export function WorkflowStudio({
                   )}
                 {active &&
                   button(
-                    '작업 중단',
+                    'Stop run',
                     () =>
                       perform(async () => {
                         setRun(
@@ -1980,7 +2134,7 @@ export function WorkflowStudio({
               <>
                 <p role="alert">{routeProblem}</p>
                 <button onClick={() => retryRoute((n) => n + 1)}>
-                  다시 시도
+                  Retry
                 </button>{' '}
                 <a href="#/library">내 워크플로</a>
               </>
@@ -1998,7 +2152,7 @@ export function WorkflowStudio({
           <WorkflowProposal
             reuse={
               proposalMode === 'guided'
-                ? async (match, signal) => {
+                ? async (match, signal, goal) => {
                     const version = workflowVersionSchema.parse(
                       await (
                         await localRequest(
@@ -2015,7 +2169,7 @@ export function WorkflowStudio({
                     if (signal.aborted) return;
                     setError('');
                     setProposalMode(null);
-                    prepareMaterial(version);
+                    prepareMaterial(version, undefined, undefined, goal);
                   }
                 : undefined
             }
@@ -2137,6 +2291,9 @@ export function WorkflowStudio({
         )}
         {materialVersion && !gitPrep && (
           <MaterialDialog
+            goal={materialGoal}
+            taskRequest={materialRequest}
+            changeRequest={setMaterialRequest}
             key={materialVersion.id + ':' + materialVersion.version}
             version={materialVersion}
             start={(v, m) => start(v, m, materialRequest, materialFiles)}
@@ -2182,7 +2339,7 @@ export function WorkflowStudio({
           run?.summary.status === 'completed' && (
             <div className={styles.buttons}>
               {button(
-                '이 버전으로 다시 사용',
+                'Reuse this version',
                 () =>
                   perform(async () => {
                     const version = workflowVersionSchema.parse(
@@ -2238,10 +2395,10 @@ export function WorkflowStudio({
                   disabled={busy || dirty || !connected || !codexAvailable}
                   onClick={() => setProposalMode('guided')}
                 >
-                  목표로 시작
+                  Start with a goal
                 </button>
                 <a className={styles.launch} href={designUrl(saved?.id)}>
-                  와이어 편집기 열기 →
+                  Open Editor →
                 </a>
               </div>
               {dirty && (
@@ -2281,9 +2438,9 @@ export function WorkflowStudio({
                             action={
                               row.status === 'waiting' && !row.quotaRetryAt
                                 ? row.gateKind === 'review'
-                                  ? '문서 검토 열기'
+                                  ? 'Review document'
                                   : waiting.action
-                                : '실행 상세 열기'
+                                : 'View run details'
                             }
                           />
                         );
@@ -2294,15 +2451,14 @@ export function WorkflowStudio({
               {connected && !codexAvailable && (
                 <div className={`${styles.buttons} ${styles.codexNotice}`}>
                   <p>
-                    시작하려면 ‘내 에이전트 도구’에서 Codex 설치 상태를
-                    확인하세요.
+                    시작하려면 ‘Agent tools’에서 Codex 설치 상태를 확인하세요.
                   </p>
                   <button
                     type="button"
                     aria-controls="agent-tools-panel"
                     onClick={onShowTools}
                   >
-                    Codex 설치 상태 보기
+                    Check Codex setup
                   </button>
                 </div>
               )}
@@ -2347,22 +2503,22 @@ export function WorkflowStudio({
                         </select>
                         <button
                           type="button"
-                          aria-label="이전 페이지"
+                          aria-label="Previous page"
                           disabled={currentPage === 1}
                           onClick={() => setPage(currentPage - 1)}
                         >
-                          이전
+                          Previous
                         </button>
                         <span aria-live="polite">
                           {currentPage} / {pageCount} 페이지
                         </span>
                         <button
                           type="button"
-                          aria-label="다음 페이지"
+                          aria-label="Next page"
                           disabled={currentPage === pageCount}
                           onClick={() => setPage(currentPage + 1)}
                         >
-                          다음
+                          Next
                         </button>
                       </nav>
                     )}
@@ -2370,15 +2526,15 @@ export function WorkflowStudio({
                 <div className={styles.runFilters}>
                   {(
                     [
-                      ['all', '전체 실행', latestRows?.length],
+                      ['all', 'All runs', latestRows?.length],
                       [
                         'running',
-                        '진행 중',
+                        'Running',
                         rows?.filter((row) => running(row.status)).length,
                       ],
                       [
                         'waiting',
-                        '사용자 확인 대기',
+                        'Awaiting input',
                         rows?.filter((row) => row.status === 'waiting').length,
                       ],
                     ] as const
@@ -2467,20 +2623,21 @@ export function WorkflowStudio({
                                 <button
                                   type="button"
                                   disabled={busy}
+                                  aria-label={[
+                                    runAction(row),
+                                    row.name,
+                                    new Date(row.recordedAt).toLocaleString(
+                                      'ko-KR',
+                                    ),
+                                  ].join(' · ')}
                                   onClick={() => openRun(row.id)}
                                 >
-                                  {row.status === 'waiting'
-                                    ? waitingRunLabels[
-                                        row.gateKind ?? 'unspecified'
-                                      ].action
-                                    : row.status === 'failed'
-                                      ? '실패 상세 열기'
-                                      : '결과 열기'}
+                                  {runAction(row)}
                                 </button>{' '}
                                 {row.status === 'completed' &&
                                   !!row.comparable && (
                                     <a href={'#/runs/' + row.id + '/compare'}>
-                                      문서 비교
+                                      Compare documents
                                     </a>
                                   )}
                               </td>
@@ -2492,9 +2649,37 @@ export function WorkflowStudio({
                   ) : (
                     <p>
                       {filter === 'all'
-                        ? '첫 문서를 만들려면 ‘목표로 시작’을 선택하세요. 초안을 승인한 뒤 수정안을 비교할 수 있습니다.'
+                        ? '첫 문서를 만들려면 ‘Start with a goal’을 선택하세요. 초안을 승인한 뒤 수정안을 비교할 수 있습니다.'
                         : '해당 상태의 실행이 없습니다.'}
                     </p>
+                  )}
+                  {pageCount > 1 && (
+                    <nav
+                      aria-label="Run list footer"
+                      className={styles.pagination}
+                    >
+                      <button
+                        disabled={currentPage === 1}
+                        onClick={() => {
+                          setPage(currentPage - 1);
+                          runListHeading.current?.focus();
+                        }}
+                      >
+                        Previous
+                      </button>
+                      <span>
+                        {currentPage} / {pageCount}
+                      </span>
+                      <button
+                        disabled={currentPage === pageCount}
+                        onClick={() => {
+                          setPage(currentPage + 1);
+                          runListHeading.current?.focus();
+                        }}
+                      >
+                        Next
+                      </button>
+                    </nav>
                   )}
                   <MasterLinks rows={pageRows} />
                 </div>
@@ -2507,7 +2692,7 @@ export function WorkflowStudio({
             {library && (
               <div className={styles.library}>
                 {button(
-                  '새 흐름',
+                  'New workflow',
                   () => {
                     reset(blank, null);
                     location.hash = designUrl();
@@ -2515,7 +2700,7 @@ export function WorkflowStudio({
                   busy || dirty,
                 )}
                 {button(
-                  '목표로 새 흐름 만들기',
+                  'Create workflow from goal',
                   () => setProposalMode('create'),
                   busy || dirty || !connected || !codexAvailable,
                 )}
@@ -2535,7 +2720,7 @@ export function WorkflowStudio({
                   </select>
                 </label>
                 {button(
-                  '흐름 열기',
+                  'Open workflow',
                   () => openWorkflow(choice),
                   !choice || dirty || busy,
                 )}
@@ -2554,7 +2739,7 @@ export function WorkflowStudio({
                   </div>
                   {chosenWire && (
                     <button
-                      aria-label="와이어 메뉴"
+                      aria-label="Wire menu"
                       aria-haspopup="menu"
                       onClick={(e) =>
                         setWireMenu({
@@ -2576,14 +2761,13 @@ export function WorkflowStudio({
                           ['router', 'ai-review', 'task', 'review'] as const
                         ).map((kind) => ({
                           label:
-                            '사이에 ' +
+                            'Insert ' +
                             {
-                              router: '화면·기능 개선 분기',
-                              'ai-review': 'AI 검토',
-                              task: '작업',
-                              review: '사용자 검토',
-                            }[kind] +
-                            ' 추가',
+                              router: 'improvement router',
+                              'ai-review': 'AI review',
+                              task: 'task',
+                              review: 'user review',
+                            }[kind],
                           disabled: busy || !joined || steps.length >= 32,
                           action: () =>
                             add(
@@ -2592,7 +2776,7 @@ export function WorkflowStudio({
                             ),
                         })),
                         {
-                          label: '연결 끊기',
+                          label: 'Disconnect',
                           divider: true,
                           disabled: busy,
                           action: () => disconnect(wireMenu.id),
@@ -2606,7 +2790,7 @@ export function WorkflowStudio({
                       disabled={busy}
                       onClick={() => disconnect(chosenWire.id)}
                     >
-                      <Scissors size={16} aria-hidden="true" /> 연결 끊기
+                      <Scissors size={16} aria-hidden="true" /> Disconnect
                     </button>
                   )}
                   <button
@@ -2614,7 +2798,7 @@ export function WorkflowStudio({
                     aria-expanded={properties}
                   >
                     <PanelRight size={16} aria-hidden="true" />{' '}
-                    {properties ? '속성 접기' : '속성 열기'}
+                    {properties ? 'Hide properties' : 'Show properties'}
                   </button>
                 </div>
                 {!joined && (
@@ -2758,15 +2942,15 @@ export function WorkflowStudio({
                             }}
                           >
                             <span>
-                              {i + 1}. {item.title || '제목 없음'}
+                              {i + 1}. {item.title || 'Untitled'}
                               {item.kind === 'task' && (
                                 <small>
-                                  역할 · {instructionPreview(item.instructions)}
+                                  Role · {instructionPreview(item.instructions)}
                                 </small>
                               )}
                               {item.kind === 'review' && (
                                 <small style={{ display: 'block' }}>
-                                  사용자 검토
+                                  User review
                                 </small>
                               )}
                             </span>
@@ -2788,7 +2972,7 @@ export function WorkflowStudio({
                   ))}
                 </div>{' '}
                 <details className={styles.plan}>
-                  <summary>업무 설계서</summary>
+                  <summary>Workflow brief</summary>
                   <div className={styles.planBody}>
                     <label>
                       업무 목표
@@ -2823,7 +3007,7 @@ export function WorkflowStudio({
                       <ol aria-label="단계별 결과 전달">
                         {plan.steps.map((item) => (
                           <li key={item.id}>
-                            <strong>{item.title || '제목 없음'}</strong>
+                            <strong>{item.title || 'Untitled'}</strong>
                             <p>
                               {item.kind === 'task'
                                 ? '입력: 원본 자료'
@@ -2887,14 +3071,15 @@ export function WorkflowStudio({
                       aria-pressed={!flowSettings}
                       onClick={() => setFlowSettings(false)}
                     >
-                      <SlidersHorizontal size={16} aria-hidden="true" /> 단계
-                      속성
+                      <SlidersHorizontal size={16} aria-hidden="true" /> Step
+                      properties
                     </button>
                     <button
                       aria-pressed={flowSettings}
                       onClick={() => setFlowSettings(true)}
                     >
-                      <Workflow size={16} aria-hidden="true" /> 흐름 설정
+                      <Workflow size={16} aria-hidden="true" /> Workflow
+                      settings
                     </button>
                   </div>{' '}
                   <fieldset className={styles.settings} disabled={busy}>
@@ -2904,7 +3089,9 @@ export function WorkflowStudio({
                       ) : (
                         <Settings2 size={18} aria-hidden="true" />
                       )}{' '}
-                      {flowSettings ? '흐름 정보' : step?.title || '단계 속성'}
+                      {flowSettings
+                        ? '흐름 정보'
+                        : step?.title || 'Step properties'}
                     </legend>
                     {flowSettings && (
                       <>
@@ -2927,7 +3114,9 @@ export function WorkflowStudio({
                             type="button"
                             onClick={() => setConnectingProject(true)}
                           >
-                            {draft.projectFolder ? '폴더 변경' : '폴더 연결'}
+                            {draft.projectFolder
+                              ? 'Change folder'
+                              : 'Connect folder'}
                           </button>
                           {draft.projectFolder && (
                             <button
@@ -2936,7 +3125,7 @@ export function WorkflowStudio({
                                 change({ ...draft, projectFolder: undefined })
                               }
                             >
-                              연결 해제
+                              Disconnect
                             </button>
                           )}
                         </section>
@@ -2952,7 +3141,7 @@ export function WorkflowStudio({
                               type="button"
                               onClick={() => inspect(sessionGate.id)}
                             >
-                              반복 단계 보기
+                              View loop step
                             </button>
                           ) : (
                             <button
@@ -2960,7 +3149,7 @@ export function WorkflowStudio({
                               disabled={!joined || steps.length > 30}
                               onClick={addSessionLoop}
                             >
-                              인계와 반복 승인 추가
+                              Add handoff and loop approval
                             </button>
                           )}
                           {!sessionGate && (!joined || steps.length > 30) && (
@@ -3027,7 +3216,7 @@ export function WorkflowStudio({
                           {steps.map((item, i) => (
                             <option value={item.id} key={item.id}>
                               {joined ? i + 1 + '. ' : ''}
-                              {item.title || '제목 없음'}
+                              {item.title || 'Untitled'}
                             </option>
                           ))}
                         </select>
@@ -3040,6 +3229,7 @@ export function WorkflowStudio({
                           <>
                             {step.kind === 'task' && !step.workflowRef && (
                               <NodeInstructions
+                                draftKey={(saved?.id ?? 'new') + ':' + step.id}
                                 key={canvasSession + ':' + step.id}
                                 title={step.title}
                                 context={JSON.stringify({
@@ -3148,7 +3338,7 @@ export function WorkflowStudio({
                                   .filter((item) => item.id !== step.id)
                                   .map((item) => (
                                     <option key={item.id} value={item.id}>
-                                      {item.title || '제목 없음'}
+                                      {item.title || 'Untitled'}
                                     </option>
                                   ))}
                               </select>
@@ -3187,7 +3377,7 @@ export function WorkflowStudio({
                                     : '연결된 선행 문서 없음'}
                                 </p>
                                 <details className={styles.inputs}>
-                                  <summary>전달받을 문서</summary>
+                                  <summary>Input documents</summary>
                                   <label>
                                     <input
                                       type="checkbox"
@@ -3329,7 +3519,7 @@ export function WorkflowStudio({
                                             })
                                           }
                                         >
-                                          문서와 하위 지침 열기
+                                          Open document and child instructions
                                         </button>
                                       )}
                                     </details>
@@ -3338,17 +3528,17 @@ export function WorkflowStudio({
                             )}
                             <div className={styles.buttons}>
                               {button(
-                                '앞으로 이동',
+                                'Move earlier',
                                 () => move(-1),
                                 !joined || index < 1,
                               )}
                               {button(
-                                '뒤로 이동',
+                                'Move later',
                                 () => move(1),
                                 !joined || index >= steps.length - 1,
                               )}
                               {button(
-                                '단계 삭제',
+                                'Delete step',
                                 () => {
                                   const next = removeWorkflowStep(steps, index);
                                   const neighbor =
@@ -3362,7 +3552,7 @@ export function WorkflowStudio({
                             </div>
                             {canDeleteStep && !busy && (
                               <details className={styles.inputs}>
-                                <summary>삭제 영향</summary>
+                                <summary>Deletion impact</summary>
                                 {previousStep && nextStep && (
                                   <p>
                                     앞 단계 ‘{titleFor(previousStep.id)}’와 뒤
@@ -3471,7 +3661,7 @@ export function WorkflowStudio({
                                               })
                                             }
                                           >
-                                            이 노드에 파일 수정 허용
+                                            Allow file edits
                                           </button>
                                         </>
                                       )}
@@ -3515,7 +3705,7 @@ export function WorkflowStudio({
                                           })
                                         }
                                       >
-                                        연결 해제
+                                        Disconnect
                                       </button>
                                     </div>
                                   )}
@@ -3584,11 +3774,11 @@ export function WorkflowStudio({
                     {!flowSettings && step && (
                       <div className={styles.buttons}>
                         {button(
-                          '내 노드로 저장',
+                          'Save to my nodes',
                           () => setShelf('save'),
                           !joined,
                         )}
-                        {button('내 노드함', () => setShelf('browse'), !joined)}
+                        {button('My nodes', () => setShelf('browse'), !joined)}
                       </div>
                     )}
                     {!flowSettings && (
@@ -3622,7 +3812,7 @@ export function WorkflowStudio({
                               : add(newKind)
                           }
                         >
-                          <Plus size={16} aria-hidden="true" /> 추가
+                          <Plus size={16} aria-hidden="true" /> Add
                         </button>
                       </div>
                     )}
@@ -3643,7 +3833,13 @@ export function WorkflowStudio({
             </section>
           </>
         )}
-        {surface === 'detail' && (
+        {surface === 'detail' && missingRun === runId && (
+          <section>
+            <h2>Run not found</h2>
+            <a href="#/runs">Back to Runs</a>
+          </section>
+        )}
+        {surface === 'detail' && missingRun !== runId && (
           <section className={styles.execution} aria-label="실행 상세">
             {preview && run?.gate?.kind === 'review' && (
               <div className={styles.readingBar}>
@@ -3655,7 +3851,7 @@ export function WorkflowStudio({
                     reviewPrompt.current?.scrollIntoView({ block: 'start' });
                   }}
                 >
-                  검토로 이동
+                  Go to review
                 </button>
               </div>
             )}
@@ -3670,7 +3866,8 @@ export function WorkflowStudio({
                 <nav className={styles.sessionLinks} aria-label="세션 이동">
                   {run.summary.previousSessionId && (
                     <a href={'#/runs/' + run.summary.previousSessionId}>
-                      <ArrowLeft size={15} aria-hidden="true" /> 이전 세션
+                      <ArrowLeft size={15} aria-hidden="true" /> Previous
+                      session
                     </a>
                   )}
                   {run.summary.nextSessionId && (
@@ -3795,7 +3992,7 @@ export function WorkflowStudio({
                             })
                           }
                         >
-                          이 과제로 개발 시작
+                          Start development task
                         </button>
                       </div>
                     )}
@@ -3851,6 +4048,7 @@ export function WorkflowStudio({
                             await response.json(),
                           );
                           if (routeRun() === id) {
+                            setMissingRun('');
                             setRun(updated);
                             if (action === 'delete') setPreview(null);
                           }
@@ -3859,9 +4057,9 @@ export function WorkflowStudio({
                     >
                       {run.retention.kept.includes(preview.name)
                         ? run.retention.expired
-                          ? '보관 문서 삭제'
-                          : '보관 해제'
-                        : '보관'}
+                          ? 'Delete archived document'
+                          : 'Unarchive'
+                        : 'Archive'}
                     </button>
                   )}
                   {preview.evidenceQuote && (
@@ -3887,16 +4085,48 @@ export function WorkflowStudio({
                     />
                   )}
                   <MarkdownDocument key={preview.name} text={preview.text} />
+                  {run?.gate?.kind === 'review' && (
+                    <button
+                      onClick={() => {
+                        reviewPrompt.current?.focus();
+                        reviewPrompt.current?.scrollIntoView({
+                          block: 'center',
+                        });
+                      }}
+                    >
+                      Review decision
+                    </button>
+                  )}
                 </div>
               )}
 
               {!preview && (
                 <p className={styles.fileHint}>
-                  {run?.results.length
-                    ? '문서를 선택하면 이곳에서 내용을 읽을 수 있습니다.'
-                    : run?.retention?.expired
-                      ? '보관한 문서가 없습니다.'
-                      : '생성된 문서가 여기에 표시됩니다.'}
+                  {run?.results.length ? (
+                    '문서를 선택하면 이곳에서 내용을 읽을 수 있습니다.'
+                  ) : run &&
+                    ['stopped', 'failed'].includes(run.summary.status) ? (
+                    <>
+                      문서를 생성하기 전에 실행이 종료됐습니다.{' '}
+                      {
+                        executionSteps.find(
+                          (item) =>
+                            item.id ===
+                            (run.stepId ??
+                              (endedStep?.runId === run.summary.id
+                                ? endedStep.stepId
+                                : null)),
+                        )?.title
+                      }{' '}
+                      <a href={'#/runs/' + run.summary.id + '/log'}>
+                        Open run log
+                      </a>
+                    </>
+                  ) : run?.retention?.expired ? (
+                    '보관한 문서가 없습니다.'
+                  ) : (
+                    '생성된 문서가 여기에 표시됩니다.'
+                  )}
                 </p>
               )}
             </div>
@@ -3935,7 +4165,7 @@ export function WorkflowStudio({
               {run && <GitRunInfo run={run} />}
               {run?.summary.requestFiles && (
                 <details>
-                  <summary>첨부 · 작업 폴더</summary>
+                  <summary>Attachments and work folder</summary>
                   {run.summary.requestFiles.references.map((path) => (
                     <p key={path}>참고 · {path}</p>
                   ))}
@@ -3946,7 +4176,7 @@ export function WorkflowStudio({
               )}
               {run && (
                 <details>
-                  <summary>AI 실행 설정과 호출 기록</summary>
+                  <summary>AI settings and activity</summary>
                   <p>
                     요청 모델 {run.summary.modelSettings?.model ?? '자동'} ·
                     추론 강도 {run.summary.modelSettings?.effort ?? '자동'}
@@ -3968,7 +4198,7 @@ export function WorkflowStudio({
               )}
               {run?.summary.taskRequest && (
                 <details>
-                  <summary>이번 작업 요청</summary>
+                  <summary>Task request</summary>
                   <p style={{ whiteSpace: 'pre-wrap' }}>
                     {run.summary.taskRequest}
                   </p>
@@ -4005,7 +4235,7 @@ export function WorkflowStudio({
                     작업을 시작하세요.
                   </p>
                   {button(
-                    '노드 권한 수정',
+                    'Edit node permissions',
                     () =>
                       openWorkflow(
                         run.summary.workflowId,
@@ -4035,7 +4265,7 @@ export function WorkflowStudio({
                   <p role="status">{run.portCheck.reason}</p>
                   {run.portCheck.status !== 'passed' &&
                     button(
-                      '포트 검사만 다시 실행',
+                      'Retry port check',
                       () =>
                         perform(async () => {
                           const id = run.summary.id;
@@ -4171,7 +4401,7 @@ export function WorkflowStudio({
                                   />
                                 </label>
                                 <details>
-                                  <summary>저장될 노드 지침 미리보기</summary>
+                                  <summary>Preview node instructions</summary>
                                   <p style={{ whiteSpace: 'pre-wrap' }}>
                                     {reviewAuthor.instructions}
                                   </p>
@@ -4185,8 +4415,8 @@ export function WorkflowStudio({
                         )}
                         {button(
                           editing.rule === undefined
-                            ? '수정 후 승인'
-                            : '규칙 저장 후 승인',
+                            ? 'Approve edits'
+                            : 'Save rule and approve',
                           () =>
                             decide(
                               { gateId: run.gate!.id, decision: 'accept' },
@@ -4200,11 +4430,15 @@ export function WorkflowStudio({
                             (editing.text === editing.original &&
                               editing.rule === undefined),
                         )}
-                        {button('수정 취소', () => setEditing(undefined), busy)}
+                        {button(
+                          'Cancel edits',
+                          () => setEditing(undefined),
+                          busy,
+                        )}
                       </div>
                     ) : (
                       button(
-                        '문서 수정',
+                        'Edit document',
                         () =>
                           setEditing({
                             gate: run.gate!.id,
@@ -4222,14 +4456,21 @@ export function WorkflowStudio({
                           !reviewReady) &&
                         button(
                           run.gate.startNextSession
-                            ? '다음 세션 계획 열기'
-                            : '검토할 문서 열기',
+                            ? 'View next session plan'
+                            : 'Open document for review',
                           () => showFile(run.results.at(-1)!),
                           busy,
                         )}
+                      {run.gate.startNextSession && (
+                        <p>
+                          Finish session은 이번 회차를 완료합니다. Approve는
+                          인계로 다음 회차를 시작하고, Decline은 실행을
+                          중단합니다.
+                        </p>
+                      )}
                       {run.gate.startNextSession &&
                         button(
-                          '이번 세션 마치기',
+                          'Finish session',
                           () =>
                             decide({
                               gateId: run.gate!.id,
@@ -4240,9 +4481,9 @@ export function WorkflowStudio({
                       {button(
                         run.gate.startNextSession
                           ? run.gate.repeatsSession
-                            ? '다른 접근으로 다음 세션 시작'
-                            : '승인하고 다음 세션 시작'
-                          : '승인하고 계속',
+                            ? 'Start next session with a new approach'
+                            : 'Approve and start next session'
+                          : 'Approve and continue',
                         () =>
                           decide({ gateId: run.gate!.id, decision: 'accept' }),
                         busy ||
@@ -4251,7 +4492,7 @@ export function WorkflowStudio({
                           editing?.gate === run.gate.id,
                       )}
                       {button(
-                        '거절',
+                        'Decline',
                         () =>
                           decide({ gateId: run.gate!.id, decision: 'decline' }),
                         busy || !connected,
@@ -4268,7 +4509,7 @@ export function WorkflowStudio({
                         />
                       </label>
                       {button(
-                        '답변 보내기',
+                        'Send answer',
                         () =>
                           decide({
                             gateId: run.gate!.id,
@@ -4282,6 +4523,7 @@ export function WorkflowStudio({
                 </div>
               )}
               <RunHistory
+                onLastStep={setEndedStep}
                 openEvidence={(file, quote) => showFile(file, true, quote)}
                 record={record}
                 executionSteps={executionSteps}
@@ -4316,7 +4558,7 @@ export function WorkflowStudio({
               {run && (
                 <div className={styles.buttons}>
                   {button(
-                    '저장 흐름 편집',
+                    'Edit saved workflow',
                     () => {
                       const previous = run.summary.modelSettings;
                       const id = previous?.model ?? '';
@@ -4404,8 +4646,8 @@ function TimeoutHistory({
       {report.map((r) => (
         <details key={r.step} open={status === 'failed' || undefined}>
           <summary>
-            {steps.find((s) => s.id === r.step)?.title ?? r.step} · 시간 초과{' '}
-            {r.attempts.length}회
+            {steps.find((s) => s.id === r.step)?.title ?? r.step} · Timeouts{' '}
+            {r.attempts.length}
           </summary>
           <p>
             다시 시작할 단계 ·{' '}
@@ -4480,7 +4722,7 @@ function CommitRecovery({ run }: { run: RunView }) {
             }
           }}
         >
-          <summary>변경 내용 보기</summary>
+          <summary>View changes</summary>
           <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
             {error || diff || '변경을 읽는 중…'}
           </pre>
@@ -4573,7 +4815,7 @@ function DocumentFlow({
               {title && <strong>{title}</strong>}
               <span>
                 {index + 1}. {name}
-                {isSelected && <small> · 읽는 중</small>}
+                {isSelected && <small> · Reading</small>}
               </span>
             </button>
           </li>
@@ -4605,25 +4847,34 @@ function stageStatus(
 ) {
   const status = run.summary.status;
   const decision = run.summary.lastReview;
-  if (index === currentIndex && run.quotaRetryAt) return '한도 대기';
+  if (index === currentIndex && run.quotaRetryAt) return 'Awaiting quota';
   if (index === currentIndex && activeStatuses.has(status)) {
-    if (run.gate) return run.gate.kind === 'review' ? '승인 대기' : '답변 대기';
-    return runLabels[status];
+    if (run.gate)
+      return run.gate.kind === 'review'
+        ? 'Awaiting approval'
+        : 'Awaiting answer';
+    return status === 'queued'
+      ? 'Queued'
+      : status === 'waiting'
+        ? 'Waiting'
+        : 'Running';
   }
   if (decision?.stepId === item.id && item.kind === 'review')
-    return { accept: '승인 완료', decline: '거절', finish: '세션 마침' }[
+    return { accept: 'Approved', decline: 'Declined', finish: 'Finished' }[
       decision.decision
     ];
   if (index === currentIndex && (status === 'failed' || status === 'stopped'))
-    return runLabels[status];
+    return status === 'failed' ? 'Failed' : 'Stopped';
   if (run.results.includes(item.id + '.md') || status === 'completed')
-    return '완료';
-  if (status === 'unknown') return '확인 필요';
-  if (currentIndex < 0) return status === 'queued' ? '시작 전' : '확인 필요';
-  return index < currentIndex ? '완료' : '시작 전';
+    return 'Completed';
+  if (status === 'unknown') return 'Needs attention';
+  if (currentIndex < 0)
+    return status === 'queued' ? 'Not started' : 'Needs attention';
+  return index < currentIndex ? 'Completed' : 'Not started';
 }
 
 function RunHistory({
+  onLastStep,
   openEvidence,
   record,
   executionSteps,
@@ -4635,6 +4886,7 @@ function RunHistory({
   onInstructionsSaved,
   rerun,
 }: {
+  onLastStep: (value: { runId: string; stepId: string }) => void;
   openEvidence: (file: string, quote: string) => void;
   record: WorkflowVersion | null;
   executionSteps: Step[];
@@ -4667,7 +4919,8 @@ function RunHistory({
     status = run?.summary.status,
     step = run?.stepId;
   useEffect(() => {
-    if (!id || !expanded) return;
+    if (!id || (!expanded && status !== 'stopped' && status !== 'failed'))
+      return;
     let disposed = false;
     void localRequest('/runs/' + id + '/events')
       .then((response) => response.json())
@@ -4675,6 +4928,9 @@ function RunHistory({
       .then((data) => {
         if (!disposed) {
           setEvents(data);
+          const ended = step ?? data.findLast((event) => event.stepId)?.stepId;
+          if (ended && (status === 'failed' || status === 'stopped'))
+            onLastStep({ runId: id, stepId: ended });
           setLogError('');
         }
       })
@@ -4684,7 +4940,7 @@ function RunHistory({
     return () => {
       disposed = true;
     };
-  }, [id, expanded, status, step]);
+  }, [id, expanded, status, step, onLastStep]);
   useEffect(() => {
     if (openLog && id) {
       logHeading.current?.focus({ preventScroll: true });
@@ -4737,7 +4993,8 @@ function RunHistory({
       setSavingInstructions(false);
     }
   }
-  const currentIndex = executionSteps.findIndex((item) => item.id === step);
+  const lastStep = step ?? events.findLast((event) => event.stepId)?.stepId;
+  const currentIndex = executionSteps.findIndex((item) => item.id === lastStep);
   const targetIndex = targetId
     ? executionSteps.findIndex((item) => item.id === targetId)
     : -1;
@@ -4800,7 +5057,7 @@ function RunHistory({
       {!run.summary.master &&
         executionSteps.some(
           (s) => s.kind === 'review' && s.startNextSession,
-        ) && <SessionRequests summary={run.summary} />}
+        ) && <SessionRequests key={run.summary.id} summary={run.summary} />}
       <h3>실행 순서 · v{run.summary.workflowVersion}</h3>
       <ol className={styles.sequence}>
         {executionSteps.map((item, index) => {
@@ -4827,7 +5084,7 @@ function RunHistory({
                       {item.title || item.id}
                     </strong>
                     <small>
-                      {item.kind === 'review' ? '검토' : '작업'} ·{' '}
+                      {item.kind === 'review' ? 'Review' : 'Task'} ·{' '}
                       {stageStatus(run, item, index, currentIndex)}
                     </small>
                   </span>
@@ -4844,12 +5101,12 @@ function RunHistory({
                     {previous?.title || previous?.id || '시작'} →{' '}
                     {item.title || item.id} → {next?.title || next?.id || '끝'}
                   </dd>
-                  <dt>입력 문서</dt>
+                  <dt>예정된 입력 문서</dt>
                   <dd>
                     {planned?.inputs.map((id) => id + '.md').join(', ') ||
                       '연결된 입력 문서 없음'}
                   </dd>
-                  <dt>출력 문서</dt>
+                  <dt>예정된 출력 문서</dt>
                   <dd>{planned?.output ?? '없음'}</dd>
                   <dt>출력을 전달받는 단계</dt>
                   <dd>
@@ -4858,16 +5115,28 @@ function RunHistory({
                       .join(', ') || '없음'}
                   </dd>
                 </dl>
-                {steps.some((stage) => stage.id === item.id) ? (
+                {saved?.definition.steps.some(
+                  (stage) => stage.id === item.id,
+                ) ? (
                   <button
                     type="button"
                     disabled={editDisabled}
                     onClick={() => editStep(item.id)}
                   >
-                    최신 저장본에서 이 단계 편집
+                    Edit step in latest version
                   </button>
                 ) : (
-                  <p>연결된 워크플로에 속한 단계입니다.</p>
+                  <p>
+                    {steps.some((stage) => stage.id === item.id)
+                      ? saved
+                        ? '실행 v' +
+                          run.summary.workflowVersion +
+                          '의 이 단계는 저장 v' +
+                          saved.version +
+                          '에 없습니다.'
+                        : '최신 버전을 확인하는 중입니다.'
+                      : '연결된 워크플로에 속한 단계입니다.'}
+                  </p>
                 )}
               </details>
             </li>
@@ -4887,7 +5156,7 @@ function RunHistory({
       )}
       {status === 'completed' && record && !run.retention?.expired && (
         <details>
-          <summary>단계 지침 저장 또는 다시 실행</summary>
+          <summary>Save instructions or rerun</summary>
           {saved && outdated && !instructionSaveResult && (
             <p role="status">
               최신 저장본은 v{saved.version}입니다. 지침을 변경하려면 최신 저장
@@ -4947,7 +5216,7 @@ function RunHistory({
                   }
                   onClick={saveInstructions}
                 >
-                  {savingInstructions ? '저장 중…' : '작성 지침만 저장'}
+                  {savingInstructions ? 'Saving…' : 'Save instructions only'}
                 </button>
                 {instructionSaveError && (
                   <p role="alert">{instructionSaveError}</p>
@@ -5002,7 +5271,7 @@ function RunHistory({
                   }
                   onClick={() => rerun(targetId, instructions.trim())}
                 >
-                  지침 저장하고 이 단계부터 다시 실행
+                  Save and rerun from this step
                 </button>
               </>
             )}
@@ -5014,7 +5283,7 @@ function RunHistory({
           open={expanded}
           onToggle={(e) => setExpanded(e.currentTarget.open)}
         >
-          <summary ref={logHeading}>실행 로그</summary>
+          <summary ref={logHeading}>Run log</summary>
           {logError ? (
             <p>{logError}</p>
           ) : (

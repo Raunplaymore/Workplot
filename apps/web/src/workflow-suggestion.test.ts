@@ -21,7 +21,7 @@ test('suggests only a gap in the requested outcome', () => {
     ],
     ['사실 확인', '문서의 사실을 원본과 대조해줘', '원본과 대조하세요.'],
   ] as const) {
-    expect(workflowSuggestion({ ...flow, goal })).toBe(label);
+    expect(workflowSuggestion({ ...flow, goal })?.request).toBe(label);
     expect(
       workflowSuggestion({
         ...flow,
@@ -30,9 +30,9 @@ test('suggests only a gap in the requested outcome', () => {
       }),
     ).toBeUndefined();
   }
-  expect(workflowSuggestion({ ...flow, goal: '세부 목표 수립' })).toContain(
-    '완료 기준',
-  );
+  expect(
+    workflowSuggestion({ ...flow, goal: '세부 목표 수립' })?.request,
+  ).toContain('완료 기준');
   expect(
     workflowSuggestion({
       ...flow,

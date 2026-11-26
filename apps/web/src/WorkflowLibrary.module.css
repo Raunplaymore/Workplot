@@ -40,6 +40,25 @@
   min-height: 42px;
   color: inherit;
 }
+.list button[data-tip] {
+  position: relative;
+}
+.list button[data-tip]:is(:hover, :focus-visible)::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: 100%;
+  inset-inline-end: 0;
+  white-space: nowrap;
+  z-index: 3;
+  background: var(--text);
+  color: var(--surface);
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+}
+.list li button:first-child[data-tip]::after {
+  inset-inline-start: 0;
+  inset-inline-end: auto;
+}
 .itemInfo {
   flex: 1;
   min-width: 0;

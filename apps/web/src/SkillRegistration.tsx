@@ -59,7 +59,7 @@ export function SkillRegistration({ flow }: { flow: WorkflowVersion }) {
       ))}
       {!open ? (
         <button type="button" onClick={() => setOpen(true)}>
-          {items.length ? '등록한 스킬 관리' : 'Codex 스킬로 등록'}
+          {items.length ? 'Manage skills' : 'Register as Codex skill'}
         </button>
       ) : (
         <form
@@ -87,10 +87,10 @@ export function SkillRegistration({ flow }: { flow: WorkflowVersion }) {
             type="submit"
             disabled={busy || !name || current?.version === flow.version}
           >
-            {current ? 'v' + flow.version + '로 업데이트' : '등록'}
+            {current ? 'Update to v' + flow.version : 'Register'}
           </button>{' '}
           <button type="button" disabled={busy} onClick={() => setOpen(false)}>
-            닫기
+            Close
           </button>
         </form>
       )}

@@ -80,8 +80,8 @@ export function RunWireComparison({
       }}
     >
       <summary>
-        와이어 비교 · 실행 v{record.version}
-        {saved ? ' / 저장 v' + saved.version : ''}
+        Compare wire · Run v{record.version}
+        {saved ? ' / Saved v' + saved.version : ''}
       </summary>
       <p>
         {saved

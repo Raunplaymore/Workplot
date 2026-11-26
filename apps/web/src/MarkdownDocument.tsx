@@ -40,7 +40,7 @@ export function MarkdownDocument({ text }: { text: string }) {
         </Markdown>
       </article>
       <details className={styles.source}>
-        <summary>원문 보기</summary>
+        <summary>View source</summary>
         <pre data-markdown-source="">{text}</pre>
       </details>
     </>

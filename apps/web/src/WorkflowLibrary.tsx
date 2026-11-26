@@ -63,7 +63,7 @@ function versionStatus(saved: number, runs: RunList | null, detail = false) {
 
 function libraryChoice() {
   return location.hash.startsWith('#/library/')
-    ? location.hash.slice('#/library/'.length)
+    ? location.hash.slice('#/library/'.length).split('?')[0]!
     : '';
 }
 function LibraryAutoSession({ run }: { run: RunList[number] }) {
@@ -155,7 +155,11 @@ export function WorkflowLibrary({
     typeof librarySchema.parse
   > | null>(null);
   type Entry = NonNullable<typeof entries>[number];
-  const [folder, setFolder] = useState<Entry['location']>('active');
+  function readFolder(): Entry['location'] {
+    const f = new URLSearchParams(location.hash.split('?')[1]).get('folder');
+    return f === 'archived' || f === 'trash' ? f : 'active';
+  }
+  const [folder, setFolder] = useState(readFolder);
   const [menu, setMenu] = useState<{
     item: Entry;
     position: MenuPosition;
@@ -193,18 +197,41 @@ export function WorkflowLibrary({
     );
     await fn(v);
   }
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(
+    () => new URLSearchParams(location.hash.split('?')[1]).get('q') ?? '',
+  );
   const [choice, updateChoice] = useState(libraryChoice);
   const [revealChoice, setRevealChoice] = useState('');
   const libraryRef = useRef<HTMLElement>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
-  function setChoice(id: string, revealDetail = false) {
+  function setChoice(
+    id: string,
+    revealDetail = false,
+    nextQuery = query,
+    nextFolder = folder,
+    replace = false,
+  ) {
+    const params = new URLSearchParams();
+    if (nextQuery) params.set('q', nextQuery);
+    if (nextFolder !== 'active') params.set('folder', nextFolder);
     updateChoice(id);
     setRevealChoice(revealDetail ? id : '');
-    location.hash = id ? '#/library/' + id : '#/library';
+    const url =
+      '#/library' + (id ? '/' + id : '') + (params.size ? '?' + params : '');
+    if (url !== location.hash)
+      window.history[replace ? 'replaceState' : 'pushState'](
+        window.history.state,
+        '',
+        url,
+      );
   }
   useEffect(() => {
-    const sync = () => updateChoice(libraryChoice());
+    const sync = () => {
+      updateChoice(libraryChoice());
+      setFolder(readFolder());
+      setQuery(new URLSearchParams(location.hash.split('?')[1]).get('q') ?? '');
+      setMenu(null);
+    };
     window.addEventListener('hashchange', sync);
     return () => window.removeEventListener('hashchange', sync);
   }, []);
@@ -256,11 +283,10 @@ export function WorkflowLibrary({
   const selected = choice ? requested : visible[0];
   const id = selected?.id;
   useEffect(() => {
-    if (!choice && id && !query && location.hash === '#/library') {
-      window.history.replaceState(window.history.state, '', '#/library/' + id);
-      updateChoice(id);
+    if (!choice && id && location.hash.split('?')[0] === '#/library') {
+      setChoice(id, false, query, folder, true);
     }
-  }, [choice, id, query]);
+  }, [choice, id, query, folder]);
   const [requestDraft, setRequestDraft] = useState({ key: '', text: '' });
   const requestKey = id + '/' + selected?.version;
   const [filesDraft, setFilesDraft] = useState<{
@@ -353,6 +379,11 @@ export function WorkflowLibrary({
   }
   const version =
     record?.id === id && record?.version === selectedVersion ? record : null;
+  useEffect(() => {
+    document.title = version
+      ? version.definition.name + ' · Library · Workplot'
+      : 'Library · Workplot';
+  }, [version]);
   const savedInput = version?.definition.input;
   useEffect(() => {
     if (!revealChoice) return;
@@ -360,15 +391,10 @@ export function WorkflowLibrary({
     setRevealChoice('');
     const library = libraryRef.current;
     const summary = summaryRef.current;
-    if (
-      revealChoice !== choice ||
-      !library ||
-      !summary ||
-      !window.matchMedia('(max-width: 800px)').matches
-    )
-      return;
+    if (revealChoice !== choice || !library || !summary) return;
     const view = library.getBoundingClientRect();
     const bounds = summary.getBoundingClientRect();
+    summary.focus({ preventScroll: true });
     if (bounds.top < view.top || bounds.bottom > view.bottom) {
       summary.focus({ preventScroll: true });
       summary.scrollIntoView({ block: 'start' });
@@ -388,7 +414,7 @@ export function WorkflowLibrary({
             value={currentFolder}
             onChange={(e) => {
               setFolder(e.target.value as Entry['location']);
-              setChoice('');
+              setChoice('', false, query, e.target.value as Entry['location']);
               setMenu(null);
             }}
           >
@@ -407,12 +433,26 @@ export function WorkflowLibrary({
             onChange={(e) => {
               setFolder(currentFolder);
               setQuery(e.target.value);
-              if (choice) setChoice('');
+              setChoice('', false, e.target.value, currentFolder, true);
             }}
           />
         </label>
         {entries === null ? (
-          <p>목록을 불러오는 중…</p>
+          error ? (
+            <p role="alert">
+              목록을 가져오지 못했습니다.{' '}
+              <button
+                onClick={() => {
+                  setError('');
+                  void act(refresh);
+                }}
+              >
+                Retry
+              </button>
+            </p>
+          ) : (
+            <p>목록을 불러오는 중…</p>
+          )
         ) : !visible.length ? (
           <p>
             {currentFolder === 'archived' && !folderEntries.length
@@ -420,6 +460,16 @@ export function WorkflowLibrary({
               : entries.length
                 ? '검색 결과가 없습니다.'
                 : '저장한 워크플로가 없습니다.'}{' '}
+            {query && (
+              <button
+                onClick={() => {
+                  setQuery('');
+                  setChoice('', false, '', currentFolder, true);
+                }}
+              >
+                Clear search
+              </button>
+            )}
             {!entries.length && <a href="#/design">흐름 설계 열기</a>}
           </p>
         ) : (
@@ -456,8 +506,13 @@ export function WorkflowLibrary({
                 >
                   <button
                     onClick={() => void favorite(item)}
+                    data-tip={
+                      item.favorite
+                        ? 'Remove from favorites'
+                        : 'Add to favorites'
+                    }
                     aria-pressed={item.favorite}
-                    aria-label={item.name + ' 즐겨찾기'}
+                    aria-label={item.name + ' · Toggle favorite'}
                     disabled={favBusy}
                   >
                     <Star
@@ -485,7 +540,8 @@ export function WorkflowLibrary({
                   </div>
                   <button
                     type="button"
-                    aria-label={item.name + ' 메뉴'}
+                    aria-label={item.name + ' · Menu'}
+                    data-tip="Workflow actions"
                     aria-haspopup="menu"
                     onClick={(e) => {
                       setChoice(item.id);
@@ -509,13 +565,13 @@ export function WorkflowLibrary({
             ...(menu.item.location !== 'trash'
               ? [
                   {
-                    label: '새 자료로 실행…',
+                    label: 'Run with new input…',
                     disabled: busy,
                     action: () =>
                       void act(() => withVersion(menu.item, prepare)),
                   },
                   {
-                    label: '저장된 자료로 실행',
+                    label: 'Run saved input',
                     disabled:
                       busy ||
                       !version?.definition.input?.trim() ||
@@ -526,13 +582,13 @@ export function WorkflowLibrary({
                       void act(() => withVersion(menu.item, startSaved)),
                   },
                   {
-                    label: '편집',
+                    label: 'Edit',
                     divider: true,
                     disabled: !canEdit,
                     action: () => edit(menu.item.id),
                   },
                   {
-                    label: '복제',
+                    label: 'Duplicate',
                     action: () =>
                       void act(() =>
                         withVersion(menu.item, async (v) => {
@@ -556,25 +612,25 @@ export function WorkflowLibrary({
               : []),
             menu.item.location === 'active'
               ? {
-                  label: '보관함으로 이동',
-                  hint: '예약 유지',
+                  label: 'Move to archive',
+                  hint: 'Keep schedule',
                   divider: true,
                   action: () => void act(() => move(menu.item, 'archive')),
                 }
               : {
-                  label: '복원',
+                  label: 'Restore',
                   divider: menu.item.location !== 'trash',
                   hint:
                     menu.item.location === 'trash'
-                      ? '원래 목록으로 복원 · 예약은 정지 상태'
+                      ? 'Restore to original list with schedule paused'
                       : undefined,
                   action: () => void act(() => move(menu.item, 'restore')),
                 },
             ...(menu.item.location !== 'trash'
               ? [
                   {
-                    label: '휴지통으로 이동',
-                    hint: '예약 일시정지',
+                    label: 'Move to trash',
+                    hint: 'Pause schedule',
                     danger: true,
                     action: () => void act(() => move(menu.item, 'trash')),
                   },
@@ -587,7 +643,7 @@ export function WorkflowLibrary({
         {choice && entries && !requested && (
           <p role="alert">이 주소의 워크플로를 찾을 수 없습니다.</p>
         )}
-        {error && <p role="alert">{error}</p>}
+        {entries && error && <p role="alert">{error}</p>}
         {version && (
           <>
             <div ref={summaryRef} tabIndex={-1}>
@@ -599,7 +655,7 @@ export function WorkflowLibrary({
                     onClick={() => edit(version.id)}
                     disabled={!canEdit || currentFolder === 'trash'}
                   >
-                    저장 v{version.version} 편집
+                    Edit saved v{version.version}
                   </button>
                   <small>
                     {versionStatus(version.version, rows ? runs : null, true)}
@@ -660,7 +716,7 @@ export function WorkflowLibrary({
                             )
                           }
                         >
-                          {starting ? '실행 접수 중…' : 'Run saved input'}
+                          {starting ? 'Starting…' : 'Run saved input'}
                         </button>
                       </>
                     )}
@@ -675,6 +731,31 @@ export function WorkflowLibrary({
                     >
                       New input
                     </button>
+                    {busy &&
+                      rows?.some((r) =>
+                        ['running', 'queued', 'waiting', 'unknown'].includes(
+                          r.status,
+                        ),
+                      ) && (
+                        <small>
+                          일반 실행은 진행 중인 작업이 끝난 뒤 사용할 수
+                          있습니다.
+                        </small>
+                      )}
+                    <button
+                      disabled={
+                        developmentBusy ||
+                        version.definition.steps.some(
+                          (s) => s.kind === 'task' && s.agent === 'unassigned',
+                        )
+                      }
+                      onClick={() =>
+                        develop(version, request.trim() || undefined, attached)
+                      }
+                    >
+                      Run development task
+                    </button>
+                    {slotInfo}
                   </div>
                 )}
               </header>
@@ -690,12 +771,12 @@ export function WorkflowLibrary({
               className={styles.secondaryAction}
               onClick={() => editSettings(version.id)}
             >
-              반복 설정 ·{' '}
+              Loop settings ·{' '}
               {version.definition.steps.some(
                 (s) => s.kind === 'review' && s.startNextSession,
               )
-                ? '승인 후 다음 회차'
-                : '한 번 실행'}
+                ? 'Next session after approval'
+                : 'Run once'}
             </button>
             <h3>필요한 자료</h3>
             <p>
@@ -722,23 +803,7 @@ export function WorkflowLibrary({
                   value={files ?? { references: [] }}
                   change={(files) => setFilesDraft({ key: requestKey, files })}
                 />
-                <div className={styles.runActions}>
-                  <button
-                    className={styles.secondaryAction}
-                    disabled={
-                      developmentBusy ||
-                      version.definition.steps.some(
-                        (s) => s.kind === 'task' && s.agent === 'unassigned',
-                      )
-                    }
-                    onClick={() =>
-                      develop(version, request.trim() || undefined, attached)
-                    }
-                  >
-                    개발 작업 실행
-                  </button>
-                  {slotInfo}
-                </div>
+
                 {activeRun && (
                   <LibraryAutoSession key={activeRun.id} run={activeRun} />
                 )}
@@ -766,7 +831,7 @@ export function WorkflowLibrary({
               <>
                 <h3>마지막 완성 문서</h3>
                 <a href={'#/runs/' + last.id}>
-                  {last.name} · v{last.workflowVersion} 결과 열기
+                  Open result · {last.name} · v{last.workflowVersion}
                 </a>
                 {result?.id === last.id && (
                   <pre aria-label="마지막 결과 미리보기">{result.text}</pre>
@@ -775,7 +840,7 @@ export function WorkflowLibrary({
             )}
             {runs.length > 1 && (
               <details className={styles.history}>
-                <summary>실행 기록 ({runs.length})</summary>
+                <summary>Run history ({runs.length})</summary>
                 <ul>
                   {runs.map((row) => (
                     <li key={row.id}>
@@ -798,6 +863,9 @@ export function WorkflowLibrary({
 }
 
 export function MaterialDialog({
+  goal,
+  taskRequest,
+  changeRequest,
   version,
   busy,
   start,
@@ -806,6 +874,9 @@ export function MaterialDialog({
 }: {
   version: WorkflowVersion;
   busy: boolean;
+  goal?: string;
+  taskRequest?: string;
+  changeRequest: (value: string | undefined) => void;
   start: (v: WorkflowVersion, m: RunMaterial) => void;
   close: () => void;
   error: string;
@@ -849,6 +920,32 @@ export function MaterialDialog({
         {version.definition.name} · v{version.version}
       </small>
       <h2 id="material-title">새 자료로 실행</h2>
+      {goal && (
+        <section aria-label="Original goal">
+          <h3>Original goal</h3>
+          <p>{goal}</p>
+          <label>
+            <input
+              type="checkbox"
+              checked={taskRequest !== undefined}
+              onChange={(e) =>
+                changeRequest(e.target.checked ? goal : undefined)
+              }
+            />
+            Use goal as task request
+          </label>
+        </section>
+      )}
+      {taskRequest !== undefined && (
+        <label>
+          Task request
+          <textarea
+            aria-label="Task request"
+            value={taskRequest}
+            onChange={(e) => changeRequest(e.target.value)}
+          />
+        </label>
+      )}
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -903,7 +1000,7 @@ export function MaterialDialog({
         {error && <p role="alert">{error}</p>}
         {source && (
           <details>
-            <summary>실행에 전달할 자료</summary>
+            <summary>Run input</summary>
             <pre className={styles.materialPreview}>{source}</pre>
           </details>
         )}
@@ -913,7 +1010,7 @@ export function MaterialDialog({
           </p>
         )}
         <div role="status" aria-live="polite" aria-atomic="true">
-          {busy && <p>실행 접수 중…</p>}
+          {busy && <p>Starting…</p>}
           {missing.length > 0 && (
             <p>입력이 필요한 필수 항목: {missing.join(', ')}</p>
           )}
@@ -925,11 +1022,11 @@ export function MaterialDialog({
               disabled={busy}
               onClick={() => update(emptyMaterialDraft)}
             >
-              입력 지우기
+              Clear input
             </button>
           )}
           <button type="button" disabled={busy} onClick={close}>
-            닫기
+            Close
           </button>
           <button
             className={styles.primary}
@@ -937,7 +1034,7 @@ export function MaterialDialog({
               busy || !source || source.length > 8000 || missing.length > 0
             }
           >
-            {busy ? '실행 접수 중…' : '실행 시작'}
+            {busy ? 'Starting…' : 'Start run'}
           </button>
         </footer>
       </form>

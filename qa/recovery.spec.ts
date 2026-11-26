@@ -64,7 +64,7 @@ async function retryFromBothTabs(tabs: Page[], id: string, failureId: string) {
           (r) => r.url().endsWith(path) && r.request().method() === 'POST',
         ),
         tab
-          .getByRole('button', { name: '실패한 단계 다시 실행', exact: true })
+          .getByRole('button', { name: 'Retry failed step', exact: true })
           .click(),
       ]);
       expect(reply.request().postDataJSON()).toEqual({ failureId });
@@ -137,18 +137,18 @@ for (const [code, title, step, target] of cases) {
     try {
       await server.ready;
       await page.goto('/');
-      await page.getByRole('link', { name: 'Editor' }).click();
-      await page.getByRole('button', { name: '흐름 목록' }).click();
+      await page.getByRole('link', { name: 'Editor', exact: true }).click();
+      await page.getByRole('button', { name: 'Workflow list' }).click();
       await page
         .getByLabel('저장한 흐름')
         .selectOption({ label: '모퉁이서점 안내문 · Codex 승인 검증 · v1' });
       const button = (name: string) =>
         page.getByRole('button', { name, exact: true });
-      await button('흐름 열기').click();
+      await button('Open workflow').click();
       const started = page.waitForResponse(
         (r) => r.request().method() === 'POST' && r.url().endsWith('/api/runs'),
       );
-      await button('저장한 버전 실행').click();
+      await button('Run saved version').click();
       const response = await started;
       expect(response.status()).toBe(200);
       const { summary } = await response.json(),
@@ -188,15 +188,15 @@ for (const [code, title, step, target] of cases) {
       }
       let reviewedDraft: string | undefined;
       if (step !== 'draft') {
-        await expect(button('검토할 문서 열기')).toBeVisible({
+        await expect(button('Open document for review')).toBeVisible({
           timeout: 145000,
         });
-        await button('검토할 문서 열기').click();
+        await button('Open document for review').click();
         reviewedDraft = await readFile(join(runDir, 'draft.md'), 'utf8');
         await expect(page.locator('[data-markdown-source]')).toHaveText(
           reviewedDraft.trim(),
         );
-        if (step === 'revision') await button('승인하고 계속').click();
+        if (step === 'revision') await button('Approve and continue').click();
       }
       let writer: number | undefined;
       if (step !== 'review') {
@@ -309,7 +309,7 @@ for (const [code, title, step, target] of cases) {
       expect(
         await page.evaluate(() => sessionStorage.getItem('studio-run')),
       ).toBe(id);
-      await expect(button('승인하고 계속')).toHaveCount(0);
+      await expect(button('Approve and continue')).toHaveCount(0);
       await expect(button('revision.md')).toHaveCount(0);
       const viewResponse = await page.request.get('/api/runs/' + id + '/view');
       expect(viewResponse.status()).toBe(200);
@@ -381,7 +381,7 @@ for (const [code, title, step, target] of cases) {
         await other
           .getByRole('row')
           .filter({ hasText: '모퉁이서점' })
-          .getByRole('button', { name: '실패 상세 열기' })
+          .getByRole('button', { name: 'View failure details' })
           .click();
         await expect(other.getByText('버전 1 · 실패')).toBeVisible();
         expect(
@@ -396,7 +396,7 @@ for (const [code, title, step, target] of cases) {
               r.request().method() === 'POST' &&
               r.url().endsWith('/runs/' + id + '/retry'),
           ),
-          button('실패한 단계 다시 실행').click(),
+          button('Retry failed step').click(),
         ]);
         expect(reply.request().postDataJSON()).toEqual({
           failureId: recovered.failureId,
@@ -471,7 +471,7 @@ for (const [code, title, step, target] of cases) {
             row.getByRole('cell', { name: '실패', exact: true }),
           ).toBeVisible();
           await row.getByRole('button').click();
-          await expect(button('실패한 단계 다시 실행')).toBeEnabled();
+          await expect(button('Retry failed step')).toBeEnabled();
           const reopened = await (
             await page.request.get('/api/runs/' + id + '/view')
           ).json();
@@ -539,7 +539,7 @@ for (const [code, title, step, target] of cases) {
           await restartServer();
         }
         await page.getByRole('link', { name: 'Runs' }).click();
-        await row.getByRole('button', { name: '실패 상세 열기' }).click();
+        await row.getByRole('button', { name: 'View failure details' }).click();
         if (concurrentRetry) {
           if (tabs.length === 1) tabs.push(await openOtherTab());
           expect(recovered.failureId).toBeTruthy();
@@ -572,7 +572,7 @@ for (const [code, title, step, target] of cases) {
             await completedRow.getByRole('button').click();
             await expect(tab.getByText('버전 1 · 완료')).toBeVisible();
             await expect(
-              tab.getByRole('button', { name: '실패한 단계 다시 실행' }),
+              tab.getByRole('button', { name: 'Retry failed step' }),
             ).toHaveCount(0);
             await tab
               .getByRole('button', { name: 'revision.md', exact: true })
@@ -636,7 +636,7 @@ for (const [code, title, step, target] of cases) {
           );
         } else {
           await row.getByRole('button').click();
-          await button('검토할 문서 열기').click();
+          await button('Open document for review').click();
           await expect(page.locator('[data-markdown-source]')).toHaveText(
             (await readFile(join(runDir, 'draft.md'), 'utf8')).trim(),
           );
@@ -703,7 +703,7 @@ test('정상 업데이트 후 같은 인계문을 두 탭에서 승인해 후속
     await page.goto(link);
     const view = async () => (await page.request.get(path + '/view')).json();
     const accept = (p: Page) =>
-      p.getByRole('button', { name: '승인하고 다음 세션 시작' });
+      p.getByRole('button', { name: 'Approve and start next session' });
     await expect(accept(page)).toBeEnabled({ timeout: 120000 });
     const before = await view();
     const body = (await page.locator('[data-markdown-source]').textContent())!;

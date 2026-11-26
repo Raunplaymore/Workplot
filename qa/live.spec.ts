@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createHash } from 'node:crypto';
 
-type Action = '승인하고 계속' | '거절' | '작업 중단';
+type Action = 'Approve and continue' | 'Decline' | 'Stop run';
 type Scenario = {
   name: string;
   actions: Action[];
@@ -17,40 +17,46 @@ type Scenario = {
 const scenarios: Scenario[] = [
   {
     name: 'Q01 검토 대기에서 다시 열고 승인',
-    actions: ['승인하고 계속'],
+    actions: ['Approve and continue'],
     reopen: true,
   },
-  { name: 'Q02 검토 거절', actions: ['거절'] },
+  { name: 'Q02 검토 거절', actions: ['Decline'] },
   { name: 'Q03 초안 작성 중 중단', actions: [], interrupt: 'draft' },
-  { name: 'Q04 검토 대기 중 중단', actions: ['작업 중단'] },
+  { name: 'Q04 검토 대기 중 중단', actions: ['Stop run'] },
   {
     name: 'Q05 첫 탭 승인 후 수정 작성 중 둘째 탭 중단',
-    actions: ['승인하고 계속'],
+    actions: ['Approve and continue'],
     interrupt: 'revision',
   },
-  { name: 'Q06 두 탭 동시 승인', actions: ['승인하고 계속', '승인하고 계속'] },
-  { name: 'Q07 두 탭 동시 거절', actions: ['거절', '거절'] },
-  { name: 'Q08 승인과 거절 동시 요청', actions: ['승인하고 계속', '거절'] },
+  {
+    name: 'Q06 두 탭 동시 승인',
+    actions: ['Approve and continue', 'Approve and continue'],
+  },
+  { name: 'Q07 두 탭 동시 거절', actions: ['Decline', 'Decline'] },
+  {
+    name: 'Q08 승인과 거절 동시 요청',
+    actions: ['Approve and continue', 'Decline'],
+  },
   {
     name: 'Q09 거절 직후 도착한 승인',
-    actions: ['거절', '승인하고 계속'],
+    actions: ['Decline', 'Approve and continue'],
     first: 0,
   },
   {
     name: 'Q10 승인 직후 도착한 거절',
-    actions: ['승인하고 계속', '거절'],
+    actions: ['Approve and continue', 'Decline'],
     first: 0,
   },
   {
     name: 'Q11 승인과 중단 동시 요청',
-    actions: ['승인하고 계속', '작업 중단'],
+    actions: ['Approve and continue', 'Stop run'],
   },
   {
     name: 'Q12 중단 직후 도착한 승인',
-    actions: ['작업 중단', '승인하고 계속'],
+    actions: ['Stop run', 'Approve and continue'],
     first: 0,
   },
-  { name: 'Q13 두 탭 동시 중단', actions: ['작업 중단', '작업 중단'] },
+  { name: 'Q13 두 탭 동시 중단', actions: ['Stop run', 'Stop run'] },
 ];
 const root = process.env.STUDIO_QA_DIR!;
 const button = (p: Page, name: string) =>
@@ -74,7 +80,7 @@ function present(pid: number) {
 async function decide(pages: Page[], id: string, scenario: Scenario) {
   const { actions, first } = scenario;
   const paths = actions.map(
-    (a) => '/api/runs/' + id + (a === '작업 중단' ? '/stop' : '/decision'),
+    (a) => '/api/runs/' + id + (a === 'Stop run' ? '/stop' : '/decision'),
   );
   const replies = actions.map((_, i) =>
     pages[i]!.waitForResponse(
@@ -117,16 +123,16 @@ for (const scenario of scenarios) {
   test(scenario.name, async ({ page, context }) => {
     const evidence: Record<string, unknown> = { scenario: scenario.name };
     await page.goto('/');
-    await page.getByRole('link', { name: 'Editor' }).click();
-    await page.getByRole('button', { name: '흐름 목록' }).click();
+    await page.getByRole('link', { name: 'Editor', exact: true }).click();
+    await page.getByRole('button', { name: 'Workflow list' }).click();
     await page
       .getByLabel('저장한 흐름')
       .selectOption({ label: '모퉁이서점 안내문 · Codex 승인 검증 · v1' });
-    await button(page, '흐름 열기').click();
+    await button(page, 'Open workflow').click();
     const started = page.waitForResponse(
       (r) => r.url().endsWith('/api/runs') && r.request().method() === 'POST',
     );
-    if (scenario.first !== undefined && scenario.actions.includes('거절')) {
+    if (scenario.first !== undefined && scenario.actions.includes('Decline')) {
       let startRequests = 0;
       await page.route('**/api/runs', async (route) => {
         if (route.request().method() === 'POST') {
@@ -135,14 +141,14 @@ for (const scenario of scenarios) {
         }
         await route.continue();
       });
-      await button(page, '저장한 버전 실행').evaluate((el) => {
+      await button(page, 'Run saved version').evaluate((el) => {
         (el as HTMLButtonElement).click();
         (el as HTMLButtonElement).click();
       });
-      await expect(button(page, '실행 접수 중…')).toBeDisabled();
+      await expect(button(page, 'Starting…')).toBeDisabled();
       await started;
       expect(startRequests).toBe(1);
-    } else await button(page, '저장한 버전 실행').click();
+    } else await button(page, 'Run saved version').click();
     const response = await started;
     expect(response.status()).toBe(200);
     const { summary } = await response.json();
@@ -193,7 +199,7 @@ for (const scenario of scenarios) {
           r.url().endsWith('/' + id + '/stop') &&
           r.request().method() === 'POST',
       );
-      await button(p, '작업 중단').click();
+      await button(p, 'Stop run').click();
       expect((await reply).status()).toBe(200);
       expect(present(pid)).toBe(false);
       expect(present(-pid)).toBe(false);
@@ -205,7 +211,7 @@ for (const scenario of scenarios) {
       if (scenario.interrupt === 'draft') {
         await interrupt(page, 'draft');
       } else {
-        await expect(button(page, '검토할 문서 열기')).toBeVisible({
+        await expect(button(page, 'Open document for review')).toBeVisible({
           timeout: 145000,
         });
         if (scenario.reopen) await page.reload();
@@ -228,10 +234,10 @@ for (const scenario of scenarios) {
           const other = await context.newPage();
           tabs.push(other);
           await other.goto('/');
-          await row(other).getByRole('button', { name: '검토 열기' }).click();
+          await row(other).getByRole('button', { name: 'Open review' }).click();
         }
         for (const tab of tabs) {
-          await button(tab, '검토할 문서 열기').click();
+          await button(tab, 'Open document for review').click();
           await expect(tab.locator('[data-markdown-source]')).toHaveText(
             before.toString().trim(),
           );
@@ -240,7 +246,7 @@ for (const scenario of scenarios) {
           ).toBe(id);
         }
         if (scenario.reopen) {
-          await expect(button(page, '승인하고 계속')).toBeEnabled();
+          await expect(button(page, 'Approve and continue')).toBeEnabled();
           await page.screenshot({
             path: join(root, 'Q01-before-approval.png'),
           });
@@ -249,24 +255,24 @@ for (const scenario of scenarios) {
         evidence.decisions = decisions;
         if (
           scenario.first !== undefined &&
-          scenario.actions.includes('거절') &&
-          scenario.actions.includes('승인하고 계속')
+          scenario.actions.includes('Decline') &&
+          scenario.actions.includes('Approve and continue')
         ) {
           for (const tab of tabs)
             await expect(
               tab.getByRole('status', { name: '최근 검토 결과' }),
             ).toHaveText(
               '사용자 검토 · ' +
-                (scenario.actions[scenario.first] === '거절'
+                (scenario.actions[scenario.first] === 'Decline'
                   ? '거절됨'
                   : '승인 완료'),
             );
         }
         const codes = decisions.map((d) => d.status);
         const approved = decisions.some(
-          (d) => d.action === '승인하고 계속' && d.status === 200,
+          (d) => d.action === 'Approve and continue' && d.status === 200,
         );
-        const stop = scenario.actions.includes('작업 중단');
+        const stop = scenario.actions.includes('Stop run');
         if (
           scenario.actions.length === 1 ||
           scenario.actions[0] === scenario.actions[1]
@@ -294,18 +300,18 @@ for (const scenario of scenarios) {
         });
         await tab.reload();
         await expect(row(tab)).toContainText(completed ? '완료' : '중단됨');
-        await row(tab).getByRole('button', { name: '결과 열기' }).click();
+        await row(tab).getByRole('button', { name: 'View results' }).click();
         if (
           scenario.first !== undefined &&
-          scenario.actions.includes('거절') &&
-          scenario.actions.includes('승인하고 계속')
+          scenario.actions.includes('Decline') &&
+          scenario.actions.includes('Approve and continue')
         ) {
           await tab.reload();
           await expect(
             tab.getByRole('status', { name: '최근 검토 결과' }),
           ).toHaveText('사용자 검토 · ' + (completed ? '승인 완료' : '거절됨'));
         }
-        await expect(button(tab, '승인하고 계속')).toHaveCount(0);
+        await expect(button(tab, 'Approve and continue')).toHaveCount(0);
         await expect(button(tab, 'draft.md')).toHaveCount(before ? 1 : 0);
         await expect(button(tab, 'revision.md')).toHaveCount(completed ? 1 : 0);
         if (before) {
@@ -319,8 +325,8 @@ for (const scenario of scenarios) {
       const events = await log(),
         final = events.at(-1);
       if (
-        scenario.actions.includes('거절') &&
-        !scenario.actions.includes('작업 중단')
+        scenario.actions.includes('Decline') &&
+        !scenario.actions.includes('Stop run')
       ) {
         expect(events.filter((e) => e.reviewDeclined)).toHaveLength(
           completed ? 0 : 1,
@@ -331,7 +337,7 @@ for (const scenario of scenarios) {
       }
       if (
         completed ||
-        (scenario.actions[0] === '거절' && scenario.actions.length === 1)
+        (scenario.actions[0] === 'Decline' && scenario.actions.length === 1)
       ) {
         const approvals = events.filter((e) => e.reviewCompleted);
         expect(approvals).toHaveLength(completed ? 1 : 0);
@@ -353,7 +359,7 @@ for (const scenario of scenarios) {
         }
       }
       if (scenario.reopen) {
-        await page.locator('summary').filter({ hasText: '실행 로그' }).click();
+        await page.locator('summary').filter({ hasText: 'Run log' }).click();
         const logList = page.getByRole('list', { name: '최근 실행 이벤트' });
         await expect(logList.getByText(/사용자 검토 · 승인 완료/)).toHaveCount(
           1,
@@ -420,7 +426,7 @@ for (const scenario of scenarios) {
         JSON.stringify(evidence, null, 2) + '\n',
       );
       if (!verified) {
-        const stop = button(page, '작업 중단');
+        const stop = button(page, 'Stop run');
         if (await stop.isVisible()) await stop.click().catch(() => {});
       }
     }
@@ -454,7 +460,7 @@ test('Q27 실제 Codex 변경안 취소·적용과 업무 미실행', async ({ p
     if (r.url().endsWith('/api/runs') && r.method() === 'POST') starts++;
   });
   const evidence = [];
-  for (const action of ['취소', '변경안 적용']) {
+  for (const action of ['취소', 'Apply changes']) {
     const dialog = page.getByRole('dialog');
     await page
       .getByRole('form', { name: '말로 흐름 수정' })
@@ -464,7 +470,7 @@ test('Q27 실제 Codex 변경안 취소·적용과 업무 미실행', async ({ p
       (r) => r.url().endsWith('/api/workflow-proposals'),
       { timeout: 145_000 },
     );
-    await button(page, '변경안 만들기').click();
+    await button(page, 'Propose changes').click();
     const response = await waiting;
     expect(response.status()).toBe(200);
     const { definition } = await response.json();
@@ -507,7 +513,7 @@ test('Q27 실제 Codex 변경안 취소·적용과 업무 미실행', async ({ p
       .filter({ hasText: '수정본 작성' });
     await expect(receiving).toContainText('초안 작성');
     await expect(receiving).toContainText(ai.title);
-    if (action === '변경안 적용')
+    if (action === 'Apply changes')
       await dialog.screenshot({ path: join(root, 'Q27-wire.png') });
     await dialog.getByRole('button', { name: action, exact: true }).click();
     await expect(dialog).toHaveCount(0);
@@ -518,7 +524,7 @@ test('Q27 실제 Codex 변경안 취소·적용과 업무 미실행', async ({ p
     );
     if (action === '취소') await expect(button(page, 'Save')).toBeDisabled();
     else {
-      await expect(button(page, '저장한 버전 실행')).toBeDisabled();
+      await expect(button(page, 'Run saved version')).toBeDisabled();
       const saved = page.waitForResponse(
         (r) =>
           r.url().endsWith('/api/workflows/' + original.id) &&
@@ -587,13 +593,13 @@ test('Q28 실제 Codex 목표 설계 취소·신규 저장과 업무 미실행',
   test.setTimeout(320_000);
   const goal = '매장 소개 초안을 쓰고 내 승인을 받은 뒤 수정본을 만들어줘';
   await page.goto('/#/design');
-  await button(page, '흐름 목록').click();
+  await button(page, 'Workflow list').click();
   const library = page.getByLabel('저장한 흐름');
   await library.selectOption({
     label: '모퉁이서점 안내문 · Codex 승인 검증 · v1',
   });
   const oldId = await library.inputValue();
-  await button(page, '흐름 열기').click();
+  await button(page, 'Open workflow').click();
   await expect(library).toBeHidden();
   const { get, activity } = designChecks(page);
   const original = await get('workflows/' + oldId);
@@ -604,16 +610,17 @@ test('Q28 실제 Codex 목표 설계 취소·신규 저장과 업무 미실행',
   page.on('request', (r) => {
     if (r.method() === 'POST' && r.url().endsWith('/api/runs')) runStarts++;
   });
-  for (const action of ['취소', '새 흐름 적용']) {
-    if (!(await library.isVisible())) await button(page, '흐름 목록').click();
-    await button(page, '목표로 새 흐름 만들기').click();
+  for (const action of ['취소', 'Apply new workflow']) {
+    if (!(await library.isVisible()))
+      await button(page, 'Workflow list').click();
+    await button(page, 'Create workflow from goal').click();
     const dialog = page.getByRole('dialog');
     await dialog.getByLabel('업무 목표').fill(goal);
     const responding = page.waitForResponse(
       (r) => r.url().endsWith('/api/workflow-proposals'),
       { timeout: 145_000 },
     );
-    await button(page, '설계안 만들기').click();
+    await button(page, 'Generate design').click();
     const response = await responding;
     expect(response.request().postDataJSON()).toEqual({
       mode: 'create',
@@ -640,7 +647,7 @@ test('Q28 실제 Codex 목표 설계 취소·신규 저장과 업무 미실행',
       await expect(wire).toContainText(step.title);
     await expect(wire).toContainText('사용자 승인');
     expect(await get('workflows')).toEqual(workflows);
-    if (action === '새 흐름 적용')
+    if (action === 'Apply new workflow')
       await dialog.screenshot({ path: join(root, 'Q28-wire.png') });
     await dialog.getByRole('button', { name: action, exact: true }).click();
     await expect(dialog).toHaveCount(0);
@@ -657,7 +664,7 @@ test('Q28 실제 Codex 목표 설계 취소·신규 저장과 업무 미실행',
       await expect(page.getByRole('heading', { level: 1 })).toHaveText(
         definition.name,
       );
-      await expect(button(page, '작업 실행 · 연결 준비 중')).toBeDisabled();
+      await expect(button(page, 'Run task · connecting')).toBeDisabled();
       const saving = page.waitForResponse(
         (r) =>
           r.url().endsWith('/api/workflows') && r.request().method() === 'POST',
@@ -718,11 +725,11 @@ for (const scenario of [
     test.setTimeout(320_000);
     const { request, answer, code } = scenario;
     await page.goto('/#/design');
-    await button(page, '흐름 목록').click();
+    await button(page, 'Workflow list').click();
     await expect(
       page.getByLabel('저장한 흐름').locator('option').nth(1),
     ).toBeAttached();
-    await button(page, '목표로 새 흐름 만들기').click();
+    await button(page, 'Create workflow from goal').click();
     const dialog = page.getByRole('dialog');
     const { get, activity } = designChecks(page);
     const workflows = await get('workflows');
@@ -767,7 +774,7 @@ for (const scenario of [
       return response.json();
     }
     await dialog.getByLabel('업무 목표').fill(request);
-    const first = await submit('설계안 만들기');
+    const first = await submit('Generate design');
     expect(first.kind).toBe('question');
     if (code === 'Q30') {
       expect(first.text).toMatch(/Slack|슬랙/i);
@@ -784,13 +791,13 @@ for (const scenario of [
     }
     await expect(dialog.getByText(first.text, { exact: true })).toBeVisible();
     await expect(dialog.getByLabel('변경안 와이어')).toHaveCount(0);
-    await expect(button(page, '새 흐름 적용')).toHaveCount(0);
-    await expect(button(page, '답변 보내기')).toBeDisabled();
+    await expect(button(page, 'Apply new workflow')).toHaveCount(0);
+    await expect(button(page, 'Send answer')).toBeDisabled();
     await dialog.screenshot({ path: join(root, code + '-question.png') });
     await unchanged();
     const entry = dialog.getByLabel('내 답변');
     await entry.fill('   ');
-    await expect(button(page, '답변 보내기')).toBeDisabled();
+    await expect(button(page, 'Send answer')).toBeDisabled();
     await entry.fill(answer);
     await expect(dialog.getByLabel('변경안 와이어')).toHaveCount(0);
     await unchanged();
@@ -803,7 +810,7 @@ for (const scenario of [
     expect(firstTrace[0].request).toBe(request);
     expect(firstTrace[1].pid).toBeGreaterThan(0);
     expect(firstTrace[2].edits.steps).toEqual([]);
-    const second = await submit('답변 보내기');
+    const second = await submit('Send answer');
     expect(second.kind).toBe('proposal');
     const { definition } = second;
     if (code === 'Q30') {
@@ -985,20 +992,20 @@ test('Q31 완료한 흐름의 AI 검토 지침을 바꾸고 새 승인 뒤 수�
       (c) => c.run === id,
     );
   async function readReview(id: string) {
-    await expect(button(page, '검토할 문서 열기')).toBeVisible({
+    await expect(button(page, 'Open document for review')).toBeVisible({
       timeout: 150000,
     });
     const gate = (await api('/runs/' + id + '/view')).data.gate;
     expect(gate.kind).toBe('review');
-    await expect(button(page, '승인하고 계속')).toBeEnabled();
+    await expect(button(page, 'Approve and continue')).toBeEnabled();
     await expect(page.locator('[data-markdown-source]')).toHaveText(
       (await readFile(pathFor(id, 'critique.md'), 'utf8')).trim(),
     );
     return gate.id;
   }
   const oldGate = await readReview(oldId);
-  await button(page, '승인하고 계속').click();
-  const restart = page.getByText('단계 지침 저장 또는 다시 실행', {
+  await button(page, 'Approve and continue').click();
+  const restart = page.getByText('Save instructions or rerun', {
     exact: true,
   });
   await expect(restart).toBeVisible({ timeout: 150000 });
@@ -1010,7 +1017,7 @@ test('Q31 완료한 흐름의 AI 검토 지침을 바꾸고 새 승인 뒤 수�
   const started = page.waitForResponse((r) =>
     r.url().endsWith('/' + oldId + '/rerun'),
   );
-  await button(page, '지침 저장하고 이 단계부터 다시 실행').click();
+  await button(page, 'Save and rerun from this step').click();
   const response = await started;
   expect(response.status()).toBe(200);
   const { summary } = await response.json();
@@ -1054,7 +1061,7 @@ test('Q31 완료한 흐름의 AI 검토 지침을 바꾸고 새 승인 뒤 수�
   const approval = page.waitForResponse((r) =>
     r.url().endsWith('/' + id + '/decision'),
   );
-  await button(page, '승인하고 계속').click();
+  await button(page, 'Approve and continue').click();
   expect((await approval).status()).toBe(200);
   await expect(page.getByText('버전 2 · 완료', { exact: true })).toBeVisible({
     timeout: 150000,
@@ -1244,7 +1251,7 @@ for (const [code, title, detail, status, field] of [
         .getByRole('row')
         .filter({ hasText: '비교 실습 · ' + title })
         .filter({ hasText: 'v2' });
-      await row.getByRole('link', { name: '문서 비교' }).click();
+      await row.getByRole('link', { name: 'Compare documents' }).click();
       const box = page.getByRole('region', { name: '원안과 수정안 비교' });
       const docs = box.locator('article');
       await expect(docs).toHaveCount(2);
@@ -1272,7 +1279,7 @@ for (const [code, title, detail, status, field] of [
         (r) => r.url().endsWith(path + '/review'),
         { timeout: 130000 },
       );
-      await button(page, 'Codex로 근거 대조').click();
+      await button(page, 'Check evidence with Codex').click();
       const response = await analyzed;
       expect(response.status()).toBe(200);
       const c = await response.json();
@@ -1309,7 +1316,7 @@ for (const [code, title, detail, status, field] of [
           conflict: '원본끼리 충돌',
         }[status],
       );
-      const apply = button(page, '선택한 변경 반영');
+      const apply = button(page, 'Apply selected changes');
       await expect(apply).toBeDisabled();
       const label = field === 'address' ? '주소' : '영업시간';
       await box
@@ -1407,7 +1414,7 @@ test('Q37 한 줄 제안은 선택한 때만 Codex 변경안을 만들고 승인
   await page.goto('/#/design');
   const composer = page.getByRole('form', { name: '말로 흐름 수정' });
   const suggestion = composer.getByRole('button', {
-    name: '[Quick response] 초안을 내가 확인한 뒤 수정해줘',
+    name: 'Review the draft before revision',
     exact: true,
   });
   let requests = 0;
@@ -1418,7 +1425,7 @@ test('Q37 한 줄 제안은 선택한 때만 Codex 변경안을 만들고 승인
   await expect(composer).toBeVisible();
   await expect(suggestion).toHaveCount(0);
   await page.getByLabel('편집할 단계').selectOption('review');
-  await button(page, '단계 삭제').click();
+  await button(page, 'Delete step').click();
   await expect(suggestion).toBeVisible();
   await composer.getByRole('textbox').fill('내가 입력하는 요청');
   await expect(suggestion).toHaveCount(0);
@@ -1428,7 +1435,7 @@ test('Q37 한 줄 제안은 선택한 때만 Codex 변경안을 만들고 승인
   const versions = await get('workflows');
   expect(requests).toBe(0);
   await composer.screenshot({ path: join(root, 'Q37-suggestion.png') });
-  for (const action of ['취소', '변경안 적용']) {
+  for (const action of ['취소', 'Apply changes']) {
     const response = page.waitForResponse(
       (r) => r.url().endsWith('/workflow-proposals'),
       { timeout: 130000 },
@@ -1446,7 +1453,7 @@ test('Q37 한 줄 제안은 선택한 때만 Codex 변경안을 만들고 승인
     await expect(dialog.getByLabel('변경안 와이어')).toContainText(
       '사용자 승인',
     );
-    if (action === '변경안 적용')
+    if (action === 'Apply changes')
       await dialog.screenshot({ path: join(root, 'Q37-wire.png') });
     await dialog.getByRole('button', { name: action, exact: true }).click();
     await expect(dialog).toHaveCount(0);
@@ -1487,7 +1494,9 @@ test('Q38 새 자료로 실행하고 예전 결과의 버전을 다시 사용한
   await page.getByRole('searchbox').fill('첫 방문자');
   const panel = page.getByRole('region', { name: '워크플로 보관함' });
   await expect(panel.getByRole('heading', { name: base.name })).toBeVisible();
-  const fav = panel.getByRole('button', { name: base.name + ' 즐겨찾기' });
+  const fav = panel.getByRole('button', {
+    name: base.name + ' · Toggle favorite',
+  });
   await fav.click();
   await expect(fav).toHaveAttribute('aria-pressed', 'true');
   await panel.getByRole('button', { name: 'New input' }).click();
@@ -1495,7 +1504,7 @@ test('Q38 새 자료로 실행하고 예전 결과의 버전을 다시 사용한
   const records = [];
   for (const [i, shop] of ['달빛서점', '봄날카페'].entries()) {
     if (i === 1)
-      await page.getByRole('button', { name: '이 버전으로 다시 사용' }).click();
+      await page.getByRole('button', { name: 'Reuse this version' }).click();
     await expect(dialog).toContainText('v1');
     await expect(dialog.getByLabel('이번 작업 자료')).toHaveValue('');
     await expect(dialog.getByLabel('매장명', { exact: true })).toHaveValue('');
@@ -1509,18 +1518,18 @@ test('Q38 새 자료로 실행하고 예전 결과의 버전을 다시 사용한
       .fill('매장명: ' + shop + '\n주소: ' + address);
     await expect(dialog.getByLabel('주소', { exact: true })).toHaveCount(0);
     await expect(
-      dialog.getByRole('button', { name: '실행 시작' }),
+      dialog.getByRole('button', { name: 'Start run' }),
     ).toBeDisabled();
     await dialog.getByLabel('영업시간', { exact: true }).fill(hours);
     const started = page.waitForResponse(
       (r) => r.url().endsWith('/api/runs') && r.request().method() === 'POST',
     );
-    await dialog.getByRole('button', { name: '실행 시작' }).click();
+    await dialog.getByRole('button', { name: 'Start run' }).click();
     const state = await (await started).json();
     expect(state.summary.workflowVersion).toBe(1);
     const id = state.summary.id;
     await expect(
-      page.getByRole('button', { name: '검토할 문서 열기' }),
+      page.getByRole('button', { name: 'Open document for review' }),
     ).toBeVisible({ timeout: 135000 });
     await page.getByRole('link', { name: 'Library', exact: true }).click();
     await page.getByRole('searchbox').fill('재사용 검증');
@@ -1528,9 +1537,9 @@ test('Q38 새 자료로 실행하고 예전 결과의 버전을 다시 사용한
       .getByRole('link', { name: '검토 이어가기 · ' + shop + ' 소개' })
       .click();
     await expect(page.locator('[data-markdown-body]')).toContainText(shop);
-    await page.getByRole('button', { name: '승인하고 계속' }).click();
+    await page.getByRole('button', { name: 'Approve and continue' }).click();
     await expect(
-      page.getByRole('button', { name: '이 버전으로 다시 사용' }),
+      page.getByRole('button', { name: 'Reuse this version' }),
     ).toBeVisible({ timeout: 135000 });
     const artifacts = await Promise.all(
       ['draft.md', 'revision.md'].map((f) =>
@@ -1576,7 +1585,7 @@ test('Q38 새 자료로 실행하고 예전 결과의 버전을 다시 사용한
     '봄날카페',
   );
   await expect(
-    panel.getByRole('button', { name: base.name + ' v2 즐겨찾기' }),
+    panel.getByRole('button', { name: base.name + ' v2 · Toggle favorite' }),
   ).toHaveAttribute('aria-pressed', 'true');
   await panel.screenshot({ path: join(root, 'Q38-library.png') });
   await writeFile(
@@ -1641,7 +1650,7 @@ test('Q40 설계 스킬 탐색·지침 확인 후 실제 Codex 변경안 미리�
     (r) => r.url().endsWith('/workflow-proposals'),
     { timeout: 135000 },
   );
-  await composer.getByRole('button', { name: '변경안 만들기' }).click();
+  await composer.getByRole('button', { name: 'Propose changes' }).click();
   const response = await waiting;
   expect(response.status()).toBe(200);
   const payload = response.request().postDataJSON();
@@ -1678,7 +1687,7 @@ test('Q40 설계 스킬 탐색·지침 확인 후 실제 Codex 변경안 미리�
     (await page.request.get('/api/workflows/' + original.id)).json();
   expect(await originalRead()).toEqual(original);
   await page.screenshot({ path: join(root, 'Q40-proposal.png') });
-  await dialog.getByRole('button', { name: '변경안 적용' }).click();
+  await dialog.getByRole('button', { name: 'Apply changes' }).click();
   await expect(button(page, 'Save')).toBeEnabled();
   expect(await originalRead()).toEqual(original);
   expect(await (await page.request.get('/api/runs')).json()).toEqual(
@@ -1729,7 +1738,7 @@ test('Q41 실행 스킬 적용 범위를 확인하고 저장 후 지정한 노�
   const skillName = 'workplot-review';
   const field = page.getByLabel('변경 요청');
   await field.fill('$workplot-review 써줘');
-  await button(page, '변경안 만들기').click();
+  await button(page, 'Propose changes').click();
   const dialog = page.getByRole('dialog');
   const answer = dialog.getByLabel('내 답변');
   await expect(answer).toBeVisible({ timeout: 120000 });
@@ -1738,13 +1747,13 @@ test('Q41 실행 스킬 적용 범위를 확인하고 저장 후 지정한 노�
   await answer.fill(
     '수정본 작성 노드에만 연결해서 매번 실행할 때 써줘. 기존 작업 지침은 그대로 유지해.',
   );
-  await button(page, '답변 보내기').click();
+  await button(page, 'Send answer').click();
   await expect(dialog.getByLabel('변경안 와이어')).toContainText(
     '$' + skillName,
     { timeout: 120000 },
   );
   await dialog.screenshot({ path: join(root, 'Q41-proposal.png') });
-  await button(page, '변경안 적용').click();
+  await button(page, 'Apply changes').click();
   expect(await readSaved()).toEqual(initial);
   const saving = page.waitForResponse(
     (r) =>
@@ -1769,29 +1778,29 @@ test('Q41 실행 스킬 적용 범위를 확인하고 저장 후 지정한 노�
     ref;
   expect(version.definition).toEqual(expected);
   await page.reload();
-  await button(page, '흐름 목록').click();
+  await button(page, 'Workflow list').click();
   await page.getByLabel('저장한 흐름').selectOption(initial.id);
-  await button(page, '흐름 열기').click();
+  await button(page, 'Open workflow').click();
   await expect(
     page.locator('.react-flow__node[data-id="revision"]'),
   ).toContainText('$' + skillName);
   const starting = page.waitForResponse(
     (r) => r.url().endsWith('/runs') && r.request().method() === 'POST',
   );
-  await button(page, '저장한 버전 실행').click();
+  await button(page, 'Run saved version').click();
   const { summary } = await (await starting).json();
   const writes = async () =>
     jsonLines(await readFile(join(root, 'cli.jsonl'), 'utf8')).filter(
       (e) => e.run === summary.id && e.event === 'write',
     );
-  await expect(button(page, '검토할 문서 열기')).toBeVisible({
+  await expect(button(page, 'Open document for review')).toBeVisible({
     timeout: 120000,
   });
   expect((await writes()).map((e) => [e.step, e.skillDigest])).toEqual([
     ['draft', undefined],
   ]);
-  await button(page, '검토할 문서 열기').click();
-  await button(page, '승인하고 계속').click();
+  await button(page, 'Open document for review').click();
+  await button(page, 'Approve and continue').click();
   await expect
     .poll(
       async () => (await get('runs/' + summary.id + '/view')).summary.status,
@@ -1846,10 +1855,10 @@ test('Q42 보관함에서 개인 스킬 등록 후 명시적 업데이트로만 
   const before = await (await page.request.get('/api/runs')).json();
   await page.getByRole('link', { name: 'Library', exact: true }).click();
   await page.getByRole('searchbox').fill(definition.name);
-  await button(page, 'Codex 스킬로 등록').click();
+  await button(page, 'Register as Codex skill').click();
   const alias = 'workplot-qa-' + flow.id.slice(0, 8);
   await page.getByLabel('Codex 스킬 이름').fill(alias);
-  await button(page, '등록').click();
+  await button(page, 'Register').click();
   const panel = page.getByRole('region', { name: '개인 Codex 스킬' });
   await expect(panel).toContainText('등록된 v1');
   const file = join(root, 'skills', alias, 'SKILL.md');
@@ -1867,8 +1876,8 @@ test('Q42 보관함에서 개인 스킬 등록 후 명시적 업데이트로만 
   await page.getByRole('searchbox').fill(definition.name);
   await expect(panel).toContainText('등록된 v1');
   expect(await readFile(file, 'utf8')).toBe(original);
-  await button(page, '등록한 스킬 관리').click();
-  await button(page, 'v2로 업데이트').click();
+  await button(page, 'Manage skills').click();
+  await button(page, 'Update to v2').click();
   await expect(panel).toContainText('등록된 v2');
   expect(await readFile(file, 'utf8')).toContain(flow.id + ' 2 5173');
   expect(await (await page.request.get('/api/runs')).json()).toEqual(before);
@@ -1912,14 +1921,14 @@ test('Q43 예약 시각에 최신 파일로 한 번 실행하고 사용자 승�
   await page.getByRole('link', { name: 'Library', exact: true }).click();
   await page.getByRole('searchbox').fill(definition.name);
   const panel = page.getByRole('region', { name: '예약 실행' });
-  await panel.getByRole('button', { name: '예약 추가' }).click();
+  await panel.getByRole('button', { name: 'Add schedule' }).click();
   await panel.getByLabel('반복').selectOption('daily');
   const target = Math.ceil((Date.now() + 15000) / 60000) * 60000;
   const time = new Date(target + 9 * 3600000).toISOString().slice(11, 16);
   await panel.getByLabel('시각 (서울)').fill(time);
   await panel.getByLabel('자료 방식').selectOption('file');
   await panel.getByLabel('자료 파일명').fill('weekly.md');
-  await panel.getByRole('button', { name: '예약 저장' }).click();
+  await panel.getByRole('button', { name: 'Save schedule' }).click();
   await expect(panel).toContainText('사용 중');
   expect((await state()).schedule.nextAt).toBe(target);
   expect(await runList()).toEqual([]);
@@ -1952,11 +1961,11 @@ test('Q43 예약 시각에 최신 파일로 한 번 실행하고 사용자 승�
     .poll(async () => (await state()).schedule.note, { timeout: 10000 })
     .toContain('건너뜀');
   expect(await runList()).toHaveLength(1);
-  await panel.getByRole('button', { name: '일시정지' }).click();
-  await expect(panel.getByRole('button', { name: '재개' })).toBeVisible();
+  await panel.getByRole('button', { name: 'Pause' }).click();
+  await expect(panel.getByRole('button', { name: 'Resume' })).toBeVisible();
   await page.goto('/#/runs/' + rid + '/review');
-  await button(page, '검토할 문서 열기').click();
-  await button(page, '승인하고 계속').click();
+  await button(page, 'Open document for review').click();
+  await button(page, 'Approve and continue').click();
   await expect
     .poll(async () => (await view()).summary.status, { timeout: 60000 })
     .toBe('completed');
@@ -1998,7 +2007,7 @@ test('Q44 개인 슬롯의 검토 노드를 실제 Codex로 맞추고 취소·�
     (await api('workflows')).map((w: { id: string }) => w.id),
   );
   await page
-    .getByRole('button', { name: '내 노드로 저장', exact: true })
+    .getByRole('button', { name: 'Save to my nodes', exact: true })
     .click();
   const modal = page.getByRole('dialog');
   await modal.getByLabel('노드 이름').fill('문장 리뷰 QA');
@@ -2011,19 +2020,21 @@ test('Q44 개인 슬롯의 검토 노드를 실제 Codex로 맞추고 취소·�
     .getByLabel('필요한 자료', { exact: false })
     .fill('초안 작성\n시설 점검 보고서');
   await modal.getByLabel('결과 문서').fill('문장 검토 의견');
-  await modal.getByRole('button', { name: '슬롯에 저장' }).click();
+  await modal.getByRole('button', { name: 'Save to slot' }).click();
   await expect(
     modal.getByRole('button', { name: /문장 리뷰 QA v1/ }),
   ).toBeFocused();
   await expect(modal.getByRole('status')).toContainText('슬롯에 저장했습니다');
-  await modal.getByRole('button', { name: '문장 리뷰 QA 즐겨찾기' }).click();
+  await modal
+    .getByRole('button', { name: '문장 리뷰 QA · Toggle favorite' })
+    .click();
   await expect(
-    modal.getByRole('button', { name: '문장 리뷰 QA 즐겨찾기' }),
+    modal.getByRole('button', { name: '문장 리뷰 QA · Toggle favorite' }),
   ).toHaveAttribute('aria-pressed', 'true');
-  await modal.getByRole('button', { name: '닫기' }).click();
+  await modal.getByRole('button', { name: 'Close' }).click();
   await picker.selectOption('draft');
   async function preview() {
-    await page.getByRole('button', { name: '내 노드함', exact: true }).click();
+    await page.getByRole('button', { name: 'My nodes', exact: true }).click();
     await modal.getByLabel('내 노드 검색').fill('문장 리뷰');
     await modal.getByRole('button', { name: /문장 리뷰 QA v1/ }).click();
     await expect(
@@ -2041,10 +2052,10 @@ test('Q44 개인 슬롯의 검토 노드를 실제 Codex로 맞추고 취소·�
     ).toHaveValue('draft');
   }
   await preview();
-  await modal.getByRole('button', { name: '취소' }).click();
+  await modal.getByRole('button', { name: 'Cancel' }).click();
   await expect(picker.locator('option')).toHaveCount(3);
   await preview();
-  await modal.getByRole('button', { name: '와이어에 적용' }).click();
+  await modal.getByRole('button', { name: 'Apply to wire' }).click();
   await expect(picker.locator('option')).toHaveCount(4);
   expect((await api('workflows')).length).toBe(priorIds.size);
   await page.getByRole('button', { name: 'Save', exact: true }).click();
@@ -2063,7 +2074,7 @@ test('Q44 개인 슬롯의 검토 노드를 실제 Codex로 맞추고 취소·�
   expect(nodes[3].inputFrom).toEqual(['draft', nodes[1].id]);
   await picker.selectOption(nodes[1].id);
   await page
-    .getByRole('button', { name: '내 노드로 저장', exact: true })
+    .getByRole('button', { name: 'Save to my nodes', exact: true })
     .click();
   await expect(modal.getByLabel('필요한 자료', { exact: false })).toHaveValue(
     '초안 작성\n시설 점검 보고서',
@@ -2072,7 +2083,7 @@ test('Q44 개인 슬롯의 검토 노드를 실제 Codex로 맞추고 취소·�
   await modal
     .getByLabel('재사용할 지침')
     .fill('다음 사용부터 표현의 일관성도 확인한다.');
-  await modal.getByRole('button', { name: '기존 슬롯 갱신' }).click();
+  await modal.getByRole('button', { name: 'Update existing slot' }).click();
   await expect(
     modal.getByRole('button', { name: /문장 리뷰 QA v2/ }),
   ).toBeVisible();
@@ -2084,9 +2095,9 @@ test('Q44 개인 슬롯의 검토 노드를 실제 Codex로 맞추고 취소·�
     output: '문장 검토 의견',
   });
   await modal
-    .getByRole('button', { name: '문장 리뷰 QA 노드함에서 삭제' })
+    .getByRole('button', { name: '문장 리뷰 QA · Delete from node shelf' })
     .click();
-  await modal.getByRole('button', { name: '삭제 확인' }).click();
+  await modal.getByRole('button', { name: 'Confirm deletion' }).click();
   await expect(
     modal.getByRole('button', { name: /문장 리뷰 QA v2/ }),
   ).toHaveCount(0);
@@ -2110,7 +2121,7 @@ test('Q45 미저장 편집을 같은 탭에서 복원하고 저장과 취소 후
   await expect(picker).toHaveValue('revision');
   await expect(prompt).toHaveValue('');
   await expect(page.getByText(/이 탭의 편집 내용 복원됨/)).toBeVisible();
-  await button('변경 취소').click();
+  await button('Discard changes').click();
   expect(await cache()).toBeNull();
   const created = page.waitForResponse(
     (r) => r.url().endsWith('/workflows') && r.request().method() === 'POST',
@@ -2122,7 +2133,7 @@ test('Q45 미저장 편집을 같은 탭에서 복원하고 저장과 취소 후
   await page.reload();
   await expect(picker).toHaveValue('revision');
   await expect(prompt).toHaveValue('휴관일의 대체 이용 방법을 적으세요. ');
-  await expect(button('저장한 버전 실행')).toBeDisabled();
+  await expect(button('Run saved version')).toBeDisabled();
   expect(
     (await (await page.request.get('/api/workflows/' + original.id)).json())
       .version,
@@ -2178,7 +2189,7 @@ test('보관함에서 마지막 완료 버전과 저장 자료를 구분해 실�
   await detail.getByRole('button', { name: 'New input' }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel('이번 작업 자료').fill('방문지: 우에노 공원');
-  await dialog.getByRole('button', { name: '실행 시작' }).click();
+  await dialog.getByRole('button', { name: 'Start run' }).click();
   const result = page.getByRole('button', { name: 'plan.md', exact: true });
   await result.click({ timeout: 120000 });
   await expect(page.locator('[data-markdown-body]')).toContainText(
@@ -2198,13 +2209,13 @@ test('보관함에서 마지막 완료 버전과 저장 자료를 구분해 실�
   const status = '저장 v2 · 마지막 완료 v1 · 최신 버전 실행 전';
   await expect(library.getByText(status, { exact: true })).toHaveCount(1);
   await expect(
-    detail.getByRole('button', { name: '저장 v2 편집' }),
+    detail.getByRole('button', { name: 'Edit saved v2' }),
   ).toBeVisible();
   await expect(
     detail.getByText('마지막 완료 v1 · 최신 버전 실행 전', { exact: true }),
   ).toBeVisible();
   await expect(
-    detail.getByRole('link', { name: /v1 결과 열기/ }),
+    detail.getByRole('link', { name: /Open result · .* · v1/ }),
   ).toHaveAttribute('href', new URL(first).hash);
   const request = page.waitForRequest(
     (r) => r.url().endsWith('/api/runs') && r.method() === 'POST',
@@ -2227,7 +2238,7 @@ test('보관함에서 마지막 완료 버전과 저장 자료를 구분해 실�
     detail.getByText('마지막 완료 v2', { exact: true }),
   ).toBeVisible();
   await expect(
-    detail.getByRole('link', { name: /v2 결과 열기/ }),
+    detail.getByRole('link', { name: /Open result · .* · v2/ }),
   ).toHaveAttribute('href', new URL(second).hash);
   const restarted = page.waitForResponse(
     (r) => r.url().endsWith('/api/runs') && r.request().method() === 'POST',
@@ -2288,7 +2299,7 @@ test('보관함에서 마지막 완료 버전과 저장 자료를 구분해 실�
           '최근 실행 실패 · 마지막 완료 v2',
       );
       await expect(
-        detail.getByRole('link', { name: /v2 결과 열기/ }),
+        detail.getByRole('link', { name: /Open result · .* · v2/ }),
       ).toHaveAttribute('href', new URL(second).hash);
       const logRequest = page.waitForResponse(
         (r) =>
@@ -2315,13 +2326,13 @@ test('보관함에서 마지막 완료 버전과 저장 자료를 구분해 실�
           .locator('..')
           .screenshot({ path: join(root, 'failure-reason.png') });
       await expect(
-        page.locator('summary').filter({ hasText: '실행 로그' }),
+        page.locator('summary').filter({ hasText: 'Run log' }),
       ).toBeFocused();
       await page.goBack();
       await page.getByRole('searchbox').fill(flow.name);
     }
   }
-  await detail.getByRole('link', { name: /v2 결과 열기/ }).click();
+  await detail.getByRole('link', { name: /Open result · .* · v2/ }).click();
   await result.click();
   await expect(page.locator('[data-markdown-body]')).toContainText('긴자 거리');
   await page.goto('/' + failureHash);
@@ -2375,7 +2386,9 @@ test('세션 승인으로 인계문이 연결되고 다음 승인에서 루프�
   await page.reload();
   await page.getByRole('searchbox').fill('세션 인계 QA');
   await page.getByRole('button', { name: 'Run saved input' }).click();
-  const accept = page.getByRole('button', { name: '승인하고 다음 세션 시작' });
+  const accept = page.getByRole('button', {
+    name: 'Approve and start next session',
+  });
   await expect(accept).toBeEnabled({ timeout: 120000 });
   const first = page.url();
   const parentPath = '/api/runs/' + new URL(first).hash.split('/')[2];
@@ -2395,9 +2408,9 @@ test('세션 승인으로 인계문이 연결되고 다음 승인에서 루프�
   expect(page.url()).not.toEqual(first);
   await expect(accept).toBeVisible({ timeout: 120000 });
   await expect(
-    page.getByRole('link', { name: '이전 세션', exact: true }),
+    page.getByRole('link', { name: 'Previous session', exact: true }),
   ).toHaveAttribute('href', new URL(first).hash);
-  await page.getByRole('button', { name: '거절', exact: true }).click();
+  await page.getByRole('button', { name: 'Decline', exact: true }).click();
   await expect(page.getByText(/버전 1 · 중단됨/).first()).toBeVisible();
   await expect(
     page.getByRole('link', { name: '다음 세션', exact: true }),
@@ -2413,7 +2426,7 @@ test('세션 승인으로 인계문이 연결되고 다음 승인에서 루프�
   expect(created.ok()).toBe(true);
   await page.goto('/#/runs/' + id + '/review');
   const finish = page.getByRole('button', {
-    name: '이번 세션 마치기',
+    name: 'Finish session',
     exact: true,
   });
   await expect(finish).toBeEnabled({ timeout: 120000 });

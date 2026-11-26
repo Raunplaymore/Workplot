@@ -23,16 +23,16 @@ test('tool detection shows partial availability without enabling work', async ({
   );
   await page.goto('/');
   await page
-    .getByText('내 에이전트 도구', { exact: true })
+    .getByText('Agent tools', { exact: true })
     .filter({ visible: true })
     .first()
     .click();
   await expect(page.getByText('설치 확인 · 2.1.293')).toBeVisible();
   await expect(page.getByText('서버에서 찾지 못함')).toBeVisible();
   await expect(page.getByText('로그인 미확인', { exact: true })).toHaveCount(2);
-  await page.getByRole('link', { name: 'Editor' }).click();
+  await page.getByRole('link', { name: 'Editor', exact: true }).click();
   await expect(
-    page.getByRole('button', { name: '작업 실행 · 연결 준비 중' }),
+    page.getByRole('button', { name: 'Run task · connecting' }),
   ).toBeDisabled();
 });
 
@@ -62,11 +62,11 @@ for (const width of [1440, 390]) {
     });
     await page.goto('/');
     await expect(
-      page.getByRole('button', { name: '목표로 시작' }),
+      page.getByRole('button', { name: 'Start with a goal' }),
     ).toBeDisabled();
     const panel = page.getByRole('region', { name: '내 에이전트 도구' });
     await expect(panel).toBeHidden();
-    const shortcut = page.getByRole('button', { name: 'Codex 설치 상태 보기' });
+    const shortcut = page.getByRole('button', { name: 'Check Codex setup' });
     const workspace = page.getByRole('main');
     const scrollTop = await workspace.evaluate((element) => element.scrollTop);
     if (width === 390) {
@@ -83,9 +83,7 @@ for (const width of [1440, 390]) {
     expect(bounds!.x).toBeGreaterThanOrEqual(0);
     expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
 
-    const summary = page
-      .locator('summary')
-      .filter({ hasText: '내 에이전트 도구' });
+    const summary = page.locator('summary').filter({ hasText: 'Agent tools' });
     await summary.click();
     await expect(panel).toBeHidden();
     await expect(summary).toBeFocused();
@@ -108,11 +106,11 @@ test('the built workspace connects to the local server without pretending to run
   await expect(
     page.getByRole('status').filter({ hasText: '로컬 서버' }),
   ).toHaveText('로컬 서버 연결됨');
-  await page.getByRole('link', { name: 'Editor' }).click();
+  await page.getByRole('link', { name: 'Editor', exact: true }).click();
   await expect(page.locator('.react-flow__node')).toHaveCount(1);
   await expect(page.locator('.react-flow__node')).toContainText('AI 작업');
   await expect(
-    page.getByRole('button', { name: '작업 실행 · 연결 준비 중' }),
+    page.getByRole('button', { name: 'Run task · connecting' }),
   ).toBeDisabled();
   await page.reload();
   await expect(
@@ -132,9 +130,9 @@ test('a failed server connection is visible on a narrow screen', async ({
   await expect(page.getByRole('status')).toHaveText(
     '로컬 서버에 연결할 수 없음',
   );
-  await page.getByRole('link', { name: 'Editor' }).click();
+  await page.getByRole('link', { name: 'Editor', exact: true }).click();
   await expect(
-    page.getByRole('button', { name: '작업 실행 · 연결 준비 중' }),
+    page.getByRole('button', { name: 'Run task · connecting' }),
   ).toBeDisabled();
   expect(
     await page.evaluate(
@@ -163,7 +161,9 @@ test('390px 실행 목록에서 완료 상태와 결과 열기가 한 줄로 표
   );
   await page.setViewportSize({ width: 390, height: 900 });
   await page.goto('/#/runs');
-  const result = page.getByRole('button', { name: '결과 열기', exact: true });
+  const result = page.getByRole('button', {
+    name: /^View results · 문서 전환 검증/,
+  });
   const row = page.getByRole('row').filter({ has: result });
   for (const label of [row.getByText('완료', { exact: true }), result]) {
     await expect(label).toBeVisible();
@@ -207,11 +207,11 @@ test('실행 목록에서 세션 묶음을 유지한 채 페이지와 표시 개
   await page.goto('/#/runs');
   const table = page.locator('tbody tr'),
     size = page.getByLabel('페이지당 실행 개수'),
-    next = page.getByLabel('다음 페이지'),
-    prev = page.getByLabel('이전 페이지');
+    next = page.getByLabel('Next page'),
+    prev = page.getByLabel('Previous page');
   await expect(table).toHaveCount(30);
   await expect(prev).toBeDisabled();
-  await table.first().getByText('이전 세션 보기').click();
+  await table.first().getByText('Previous sessions').click();
   await expect(table.first().getByRole('link')).toHaveAttribute(
     'href',
     '#/runs/' + uuid(104),
@@ -227,12 +227,12 @@ test('실행 목록에서 세션 묶음을 유지한 채 페이지와 표시 개
   await prev.click();
   await expect(table.first()).toContainText('기록 50');
   await size.selectOption('30');
-  await page.getByRole('button', { name: /진행 중/ }).click();
+  await page.getByRole('button', { name: /Running/ }).click();
   await expect(table).toHaveCount(30);
   await expect(
     page.getByRole('navigation', { name: '실행 목록 페이지' }),
   ).toHaveCount(0);
-  await page.getByRole('button', { name: /사용자 확인 대기/ }).click();
+  await page.getByRole('button', { name: /Awaiting input/ }).click();
   await expect(table).toHaveCount(30);
   await expect(table.first()).toContainText('기록 30');
   await next.click();
@@ -242,7 +242,7 @@ test('실행 목록에서 세션 묶음을 유지한 채 페이지와 표시 개
   await expect(table).toHaveCount(31);
   await expect(size).toHaveValue('50');
   await expect(next).toBeDisabled();
-  await page.getByRole('button', { name: /전체 실행/ }).click();
+  await page.getByRole('button', { name: /All runs/ }).click();
   await size.selectOption('100');
   await expect(table).toHaveCount(100);
   await page.reload();
@@ -262,18 +262,18 @@ for (const width of [390, 1280]) {
         name: '기록 1',
         gateKind: 'question',
         expectedStatus: '답변 대기',
-        action: '질문 열기',
+        action: 'Open question',
       },
       {
         name: '기록 2',
         gateKind: 'review',
         expectedStatus: '승인 대기',
-        action: '검토 열기',
+        action: 'Open review',
       },
       {
         name: '기록 3',
         expectedStatus: '사용자 확인 대기',
-        action: '대기 단계 열기',
+        action: 'View pending step',
       },
     ].map(({ expectedStatus, action, ...row }, index) => ({
       expectedStatus,
@@ -405,7 +405,7 @@ for (const width of [390, 1280]) {
     const jump = page.getByRole('button', { name: 'Run list', exact: true });
     if (width === 390) {
       await expect(jump).toBeInViewport({ ratio: 1 });
-      await rail.getByRole('link', { name: 'Editor' }).focus();
+      await rail.getByRole('link', { name: 'Editor', exact: true }).focus();
       await page.keyboard.press('Tab');
       await expect(jump).toBeFocused();
       await expect(jump).toHaveCSS('outline-style', 'solid');
@@ -413,14 +413,14 @@ for (const width of [390, 1280]) {
       await expect(page).toHaveURL(/#\/runs$/);
       const list = page.getByRole('region', { name: 'Run list' });
       const title = list.getByRole('heading', { name: 'Run list' });
-      const waiting = list.getByRole('button', { name: /사용자 확인 대기/ });
+      const waiting = list.getByRole('button', { name: /Awaiting input/ });
       await expect(title).toBeFocused();
       await expect(title).toBeInViewport({ ratio: 1 });
       await expect(waiting).toBeInViewport({ ratio: 1 });
       await expect(waiting).toHaveAttribute('aria-pressed', 'false');
       await page.keyboard.press('Tab');
       await expect(
-        list.getByRole('button', { name: /전체 실행/ }),
+        list.getByRole('button', { name: /All runs/ }),
       ).toBeFocused();
     } else {
       await expect(jump).toBeHidden();
@@ -432,7 +432,8 @@ for (const width of [390, 1280]) {
       cards.filter({ has: page.getByRole('heading', { name, exact: true }) });
     const cardAction = (name: string, action: string) =>
       cardFor(name).getByRole('link', {
-        name: (action === '검토 열기' ? '문서 검토 열기' : action) + ' ' + name,
+        name:
+          (action === 'Open review' ? 'Review document' : action) + ' ' + name,
         exact: true,
       });
     for (const {
@@ -457,8 +458,14 @@ for (const width of [390, 1280]) {
     } of rows) {
       const link = cardAction(name, action);
       if (gateKind === 'review') {
-        await cardAction('기록 1', '질문 열기').focus();
+        await cardAction('기록 1', 'Open question').focus();
         await page.keyboard.press('Tab');
+        if (
+          await cardFor('기록 1')
+            .getByText('Session details', { exact: true })
+            .evaluate((el) => el === document.activeElement)
+        )
+          await page.keyboard.press('Tab');
         await expect(link).toBeFocused();
         await expect(link).toHaveCSS('outline-style', 'solid');
         await page.keyboard.press('Enter');
@@ -476,13 +483,13 @@ for (const width of [390, 1280]) {
         });
         await expect(approval).toHaveCount(1);
         await expect(
-          page.getByRole('button', { name: '자동승인 해제' }),
+          page.getByRole('button', { name: 'Disable auto-approval' }),
         ).toHaveCount(1);
         const panel = page.getByRole('region', { name: '다음 회차 요청' });
         await panel
           .getByLabel('3회차 계획에 참고할 내용')
           .fill('승인 대기 화면을 살펴봐 주세요.');
-        await panel.getByRole('button', { name: '요청 남기기' }).click();
+        await panel.getByRole('button', { name: 'Submit request' }).click();
         await expect(panel.getByRole('status')).toHaveText(
           '3회차 계획에 참고하도록 저장했습니다.',
         );
@@ -520,11 +527,11 @@ for (const width of [390, 1280]) {
     } of rows) {
       await page.goto('/#/runs');
       const region = page.getByRole('region', { name: 'Run list' });
-      const filter = region.getByRole('button', { name: /사용자 확인 대기/ });
+      const filter = region.getByRole('button', { name: /Awaiting input/ });
       const list = region.locator('tbody');
       await expect(cards).toHaveCount(4);
       if (gateKind === 'question') {
-        await region.getByRole('button', { name: /진행 중/ }).focus();
+        await region.getByRole('button', { name: /Running/ }).focus();
         await page.keyboard.press('Tab');
         await expect(filter).toBeFocused();
         await expect(filter).toHaveCSS('outline-style', 'solid');
@@ -539,7 +546,9 @@ for (const width of [390, 1280]) {
       await expect(
         row.getByText(expectedStatus, { exact: true }),
       ).toBeVisible();
-      const open = row.getByRole('button', { name: action, exact: true });
+      const open = row.getByRole('button', {
+        name: new RegExp('^' + action + ' · ' + name),
+      });
       if (gateKind === 'question') {
         await page.keyboard.press('Tab');
         await expect(open).toBeFocused();
@@ -557,3 +566,18 @@ for (const width of [390, 1280]) {
     }
   });
 }
+
+test('an unavailable Library query can be retried without leaving the page', async ({
+  page,
+}) => {
+  let reads = 0;
+  await page.route('**/api/library', (route) =>
+    ++reads === 1 ? route.abort() : route.fulfill({ json: [] }),
+  );
+  await page.goto('/#/library');
+  await page.getByRole('button', { name: 'Retry' }).click();
+  await expect(
+    page.getByText('저장한 워크플로가 없습니다.', { exact: false }),
+  ).toBeVisible();
+  expect(reads).toBe(2);
+});

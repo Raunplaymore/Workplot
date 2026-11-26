@@ -83,7 +83,9 @@ export function GitRun({
     [preview, setPreview] = useState<GitTarget>(),
     [pending, setPending] = useState(false),
     [issue, setIssue] = useState('');
-  const title = configuring ? '기본 프로젝트 폴더 연결' : '개발 작업 실행';
+  const title = configuring
+    ? '기본 프로젝트 폴더 연결'
+    : 'Run development task';
   useEffect(() => {
     dialog.current?.showModal();
     let active = true;
@@ -182,7 +184,8 @@ export function GitRun({
                 <option value="">대상 선택</option>
                 {bindings.map((b, i) => (
                   <option key={b.serviceId + b.checkoutId + b.path} value={i}>
-                    {b.service} · {b.path}
+                    {b.path.split('/').filter(Boolean).at(-1)} · {b.service} ·{' '}
+                    {b.path}
                   </option>
                 ))}
               </select>
@@ -227,7 +230,7 @@ export function GitRun({
                 })
               }
             >
-              폴더 선택
+              Choose folder
             </button>{' '}
             <button
               type="button"
@@ -250,7 +253,7 @@ export function GitRun({
                 })
               }
             >
-              등록 · 대상 확인
+              Register and verify target
             </button>
           </div>
           {preview && (
@@ -283,10 +286,10 @@ export function GitRun({
         {(issue || error) && <p role="alert">{issue || error}</p>}
         <footer>
           <button type="button" disabled={locked} onClick={onClose}>
-            취소
+            Cancel
           </button>
           <button className={styles.primary} disabled={!preview || locked}>
-            {configuring ? '이 폴더 연결' : '이 대상으로 실행'}
+            {configuring ? 'Connect this folder' : 'Run on this target'}
           </button>
         </footer>
       </form>
@@ -305,7 +308,9 @@ export function GitRunInfo({ run }: { run: RunView }) {
       </p>
       {run.summary.sessionGit && (
         <p>
-          <a href={'#/runs/' + run.summary.sessionGit.sourceRun}>직전 회차</a>
+          <a href={'#/runs/' + run.summary.sessionGit.sourceRun}>
+            Previous session
+          </a>
           에서 이어받은 커밋 ·{' '}
           <code>{run.summary.sessionGit.head.slice(0, 12)}</code>
         </p>
@@ -324,7 +329,7 @@ export function GitRunInfo({ run }: { run: RunView }) {
         </p>
       )}
       <details>
-        <summary>작업 및 AI 호출 기록</summary>
+        <summary>Task and AI activity</summary>
         <p>작업 {run.summary.developmentTaskId}</p>
         <p>
           흐름 v{run.summary.workflowVersion} · 실행 {run.summary.id}
