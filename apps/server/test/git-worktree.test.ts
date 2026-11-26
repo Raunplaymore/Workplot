@@ -57,8 +57,27 @@ it('keeps sibling branches independent, preserves partial work and rejects edits
     ]);
     expect(a.common).toBe(b.common);
     expect(a.path).not.toBe(b.path);
+    const runDir = join(root, 'inspection-run');
+    await mkdir(runDir);
+    await writeFile(join(a.path, 'change-evidence.md'), 'original inspection');
+    await manager.rememberChanges(a);
+    expect(
+      await manager.archiveInspectionRecord(a, runDir, 'change-evidence'),
+    ).toBe('change-evidence.md');
+    expect(
+      await readFile(
+        join(runDir, 'worktree-records', 'change-evidence.md'),
+        'utf8',
+      ),
+    ).toBe('original inspection');
+    expect(store.worktree(a.task)?.dirtyHash).toBeNull();
+    expect(git(a.directory, 'rev-parse', 'HEAD')).toBe(a.head);
     const file = join(a.path, 'index.txt');
     await writeFile(file, 'partial');
+    await writeFile(join(a.path, 'another-review.md'), 'second inspection');
+    await manager.archiveInspectionRecord(a, runDir, 'another-review');
+    expect(store.worktree(a.task)?.dirtyHash).toBeTruthy();
+    expect(git(a.directory, 'diff', '--name-only')).toBe('web/index.txt');
     await manager.rememberChanges(a);
     const restarted = manageWorktrees(store, root);
     expect((await restarted.open(a.task, target)).head).toBe(a.head);

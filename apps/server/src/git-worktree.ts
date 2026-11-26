@@ -1,6 +1,16 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  unlink,
+} from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, relative, sep } from 'node:path';
 import { promisify } from 'node:util';
@@ -217,6 +227,52 @@ export function manageWorktrees(store: StudioStore, root: string) {
         () => {},
       );
       return work;
+    },
+    async archiveInspectionRecord(
+      tree: Awaited<ReturnType<typeof open>>,
+      runDirectory: string,
+      stepId: string,
+    ) {
+      const name = stepId + '.md';
+      const source = join(tree.path, name);
+      const archive = join(runDirectory, 'worktree-records');
+      const destination = join(archive, name);
+      const relativeName = relative(tree.directory, source);
+      // Only a new, unstaged output of an executed inspection node is a session record.
+      if (
+        (await git(
+          tree.directory,
+          'status',
+          '--porcelain=v1',
+          '-z',
+          '--',
+          relativeName,
+        )) !==
+          '?? ' + relativeName + '\0' ||
+        (await git(tree.directory, 'ls-tree', '-z', 'HEAD', '--', relativeName))
+      )
+        return;
+      if (
+        !(await lstat(source)).isFile() ||
+        (await realpath(source)) !== source
+      )
+        problem('점검 기록의 파일 경로를 확인하세요.');
+      await mkdir(archive, { recursive: true, mode: 0o700 });
+      if ((await realpath(archive)) !== archive)
+        problem('점검 기록 보관 위치가 변경됐습니다.');
+      try {
+        await copyFile(source, destination, constants.COPYFILE_EXCL);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      }
+      if (
+        !(await lstat(destination)).isFile() ||
+        !(await readFile(destination)).equals(await readFile(source))
+      )
+        problem('기존 점검 기록과 다른 내용을 덮어쓸 수 없습니다.');
+      await unlink(source);
+      await this.rememberChanges(tree);
+      return name;
     },
     async rememberChanges(tree: Awaited<ReturnType<typeof open>>) {
       store.saveWorktreeChanges(tree.task, await dirtyDigest(tree.directory));

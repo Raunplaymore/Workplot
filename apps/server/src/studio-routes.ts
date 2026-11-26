@@ -56,6 +56,7 @@ import {
 } from '@studio/contracts';
 import {
   HandoffConflict,
+  RetrySlotBusy,
   StoreConflict,
   StoreNotFound,
   type StudioStore,
@@ -1179,6 +1180,8 @@ export function registerStudioRoutes(
         try {
           return await runs.retry(id.data, body.data.failureId);
         } catch (error) {
+          if (error instanceof RetrySlotBusy)
+            return reply.code(409).send({ error: 'retry_slot_busy' });
           if (error instanceof StoreConflict)
             return reply.code(409).send({ error: 'retry_conflict' });
           if (error instanceof RunnerError)

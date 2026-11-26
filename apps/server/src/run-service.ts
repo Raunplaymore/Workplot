@@ -1577,29 +1577,52 @@ export function createRunService(
                 throw new StoreConflict();
               commitNote = '복구 실행에서 검증된 커밋 · ' + tree.head;
             } else if (!tree) commitNote = 'Git 작업 폴더 미지정 · 커밋 생략';
-            else if (
-              response.text.trim().split(/\r?\n/, 1)[0] !== '검증 통과'
-            ) {
-              await worktrees.rememberChanges(tree);
-              if (store.worktree(tree.task)?.dirtyHash)
-                throw new AttachmentError(
-                  '검증을 통과하지 못해 변경이 작업 폴더에 남아 있습니다. 검증 결과를 확인하고 이 커밋 단계를 다시 실행하세요.',
+            else {
+              const archived = [];
+              for (const source of steps.slice(0, index)) {
+                if (
+                  source.kind === 'task' &&
+                  source.tool === 'workplot-ui' &&
+                  produced.has(source.id)
+                ) {
+                  const name = await worktrees.archiveInspectionRecord(
+                    tree,
+                    directory,
+                    source.id,
+                  );
+                  if (name) archived.push(name);
+                }
+              }
+              if (archived.length && !store.worktree(tree.task)?.dirtyHash)
+                commitNote = '제품 변경 없음 · 커밋 생략';
+              else if (
+                response.text.trim().split(/\r?\n/, 1)[0] !== '검증 통과'
+              ) {
+                await worktrees.rememberChanges(tree);
+                if (store.worktree(tree.task)?.dirtyHash)
+                  throw new AttachmentError(
+                    '검증을 통과하지 못해 변경이 작업 폴더에 남아 있습니다. 검증 결과를 확인하고 이 커밋 단계를 다시 실행하세요.',
+                  );
+                commitNote = '세션 검증 미충족 · 커밋 생략';
+              } else {
+                const sha = await worktrees.checkpoint(
+                  tree,
+                  id,
+                  step.id,
+                  signal,
+                  (log) =>
+                    writeFile(join(directory, step.id + '.log'), log, {
+                      mode: 0o600,
+                    }),
                 );
-              commitNote = '세션 검증 미충족 · 커밋 생략';
-            } else {
-              const sha = await worktrees.checkpoint(
-                tree,
-                id,
-                step.id,
-                signal,
-                (log) =>
-                  writeFile(join(directory, step.id + '.log'), log, {
-                    mode: 0o600,
-                  }),
-              );
-              commitNote = sha
-                ? '작업 브랜치 커밋 · ' + sha
-                : '변경 없음 · 커밋 생략';
+                commitNote = sha
+                  ? '작업 브랜치 커밋 · ' + sha
+                  : '변경 없음 · 커밋 생략';
+              }
+              if (archived.length)
+                commitNote +=
+                  '\n점검 원문 보존 · ' +
+                  archived.map((name) => 'worktree-records/' + name).join(', ');
             }
           } else if (gitWrite) {
             if (

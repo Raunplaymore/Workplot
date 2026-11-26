@@ -27,6 +27,8 @@ const errorText: Record<string, string> = {
     'Codex가 유효한 변경안을 만들지 못했습니다. 요청을 구체화해 다시 시도하세요.',
   rerun_conflict:
     '재실행할 수 없습니다. 다른 실행이 진행 중이거나 저장 버전 또는 선행 문서가 달라졌는지 확인하세요.',
+  retry_slot_busy:
+    '실행 슬롯이나 같은 작업 폴더를 사용 중입니다. 실행 현황에서 확인한 뒤 실패 단계만 다시 시도하세요.',
   retry_conflict:
     '재실행 조건이 달라졌습니다. 실행 상태와 이전 결과 문서를 확인하세요.',
   stale_version:
