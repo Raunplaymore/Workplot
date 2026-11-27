@@ -18,9 +18,10 @@ for (const width of [1440, 390]) {
     await entry.press('Enter');
     await expect(entry).toHaveAttribute('aria-current', 'page');
     const panel = page.getByRole('region', { name: '와이어 편집기' });
-    const save = panel.getByRole('button', { name: 'Save', exact: true });
-    const viewRuns = panel.getByRole('link', { name: 'View Runs' });
-    const status = panel
+    const header = page.locator('main > header');
+    const save = header.getByRole('button', { name: 'Save', exact: true });
+    const viewRuns = header.getByRole('link', { name: 'View Runs' });
+    const status = header
       .getByRole('status')
       .filter({ hasText: /Saved|Unsaved|Saving/ });
     await expect(viewRuns).toHaveCount(0);
@@ -38,13 +39,15 @@ for (const width of [1440, 390]) {
     await expect(save).toBeInViewport({ ratio: 1 });
     await expect(panel.getByLabel('AI에게 지침 수정 요청')).toBeHidden();
     await page.screenshot({ path: info.outputPath('after-edit.png') });
-    for (
-      let i = 0;
-      i < 16 && !(await save.evaluate((el) => el === document.activeElement));
-      i++
-    ) {
-      await page.keyboard.press('Tab');
-    }
+    const titleBox = await header.getByRole('heading').boundingBox();
+    const saveBox = await save.boundingBox();
+    expect(
+      Math.abs(
+        titleBox!.y + titleBox!.height / 2 - (saveBox!.y + saveBox!.height / 2),
+      ),
+    ).toBeLessThan(5);
+    await header.getByRole('heading').focus();
+    await page.keyboard.press('Tab');
     await expect(save).toBeFocused();
     await expect(save).toHaveCSS('outline-style', 'solid');
     await page.screenshot({ path: info.outputPath('after-focus.png') });
@@ -53,7 +56,8 @@ for (const width of [1440, 390]) {
       if (route.request().method() !== 'PUT') return route.fallback();
       await route.fulfill({ status: 500, json: { error: 'storage_error' } });
     });
-    await page.keyboard.press('Enter');
+    await prompt.focus();
+    await page.keyboard.press('Control+s');
     await expect(page.getByRole('alert')).toBeVisible();
     await expect(save).toBeEnabled();
     await expect(save).toBeFocused();

@@ -1707,12 +1707,15 @@ export function WorkflowStudio({
   }
   const startHint = startDisabledReason(!!saved?.definition.projectFolder);
   const saveDisabled = !connected || busy || (!!saved && !dirty);
+  const saveTrigger = useRef<HTMLButtonElement>(null);
   const saveButton = (
     <button
       className={`${styles.saveButton} ${!saved || dirty ? styles.primary : ''}`}
       type="button"
       aria-disabled={saveDisabled}
-      title="Save all changes to this workflow"
+      ref={saveTrigger}
+      aria-keyshortcuts="Meta+S Control+S"
+      title="Save workflow (⌘S / Ctrl+S)"
       onClick={() => {
         if (!saveDisabled) save();
       }}
@@ -1923,7 +1926,27 @@ export function WorkflowStudio({
           Editor
         </a>
       </nav>
-      <main className={styles.workspace}>
+      <main
+        className={styles.workspace}
+        onKeyDown={(e) => {
+          if (
+            surface === 'design' &&
+            saveTrigger.current &&
+            (e.metaKey || e.ctrlKey) &&
+            !e.altKey &&
+            !e.shiftKey &&
+            e.key.toLowerCase() === 's' &&
+            !(e.target as HTMLElement).closest('dialog') &&
+            !document.querySelector('dialog[open]')
+          ) {
+            e.preventDefault();
+            if (!e.repeat) {
+              saveTrigger.current.focus();
+              requestAnimationFrame(() => saveTrigger.current?.click());
+            }
+          }
+        }}
+      >
         <header className={styles.header}>
           <div className={styles.identity}>
             <small>Workplot</small>
@@ -1945,144 +1968,158 @@ export function WorkflowStudio({
           </div>
           {surface === 'design' && !waitingForDesign && (
             <>
-              <div className={styles.version}>
-                {!properties && saveStatus}
-                {dirty && restored && <span>이 탭의 편집 내용 복원됨</span>}
-                {olderDraft &&
-                  olderDraft.id === saved?.id &&
-                  olderDraft.version < saved.version && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const url = URL.createObjectURL(
-                          new Blob(
-                            [JSON.stringify(olderDraft.draft, null, 2)],
-                            { type: 'application/json' },
-                          ),
-                        );
-                        const link = document.createElement('a');
-                        link.href = url;
-                        link.download =
-                          'workplot-v' + olderDraft.version + '-draft.json';
-                        link.click();
-                        setTimeout(() => URL.revokeObjectURL(url), 1000);
-                      }}
-                    >
-                      Download unsaved v{olderDraft.version} draft
-                    </button>
-                  )}
-                {storageFailed && (
-                  <span role="alert">
-                    {' '}
-                    · 임시 보관 실패. 떠나기 전에 흐름을 저장하세요.
-                  </span>
-                )}
+              <div className={styles.headerSave}>
+                {saveStatus}
+                {saveButton}
               </div>
-              <button
-                aria-expanded={library}
-                onClick={() => setLibrary(!library)}
-              >
-                <ListTree size={16} aria-hidden="true" /> Workflow list
-              </button>{' '}
-              <div className={styles.buttons}>
-                <div className={styles.runOptions} data-compact={narrowEditor}>
-                  <details open={!narrowEditor || undefined}>
-                    <summary>Run settings</summary>
-                    <div>
-                      {saved && (
-                        <button
-                          type="button"
-                          disabled={!!startDisabledReason(true)}
-                          title={startDisabledReason(true) || undefined}
-                          onClick={() => prepareGit(saved)}
-                        >
-                          Run development task
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setFlowSettings(true);
-                          setProperties(true);
-                          setConnectingProject(true);
-                        }}
-                      >
-                        {draft.projectFolder
-                          ? draft.projectFolder.service +
-                            ' · ' +
-                            draft.projectFolder.folder +
-                            ' · ' +
-                            draft.projectFolder.branch
-                          : 'Connect project folder'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setProperties(true);
-                          setFlowSettings(true);
-                          requestAnimationFrame(() =>
-                            stepPanel.current
-                              ?.querySelector<HTMLSelectElement>(
-                                'select[aria-label="모델"]',
-                              )
-                              ?.focus(),
-                          );
-                        }}
-                      >
-                        GPT settings
-                      </button>
-                      {saved && slotInfo}
-                    </div>
-                  </details>
-                </div>
-                {button('Undo', undo, busy || history.length === 0)}
-                {button(
-                  'Discard changes',
-                  () => {
-                    change(baseline);
-                    select(
-                      baseline.steps.some((s) => s.id === selected)
-                        ? selected
-                        : (orderedSteps(baseline)[0]?.id ?? ''),
-                    );
-                    setSelectedWire('');
-                  },
-                  busy || !dirty,
+              <div className={styles.headerActions}>
+                {saved && !dirty && !saving && (
+                  <a className={styles.viewRuns} href="#/runs">
+                    View Runs
+                  </a>
                 )}
-                {!properties && saveButton}
-                <span
-                  className={styles.startControl}
-                  tabIndex={startHint ? 0 : undefined}
-                  role={startHint ? 'group' : undefined}
-                  aria-label={
-                    startHint ? 'Why this run is unavailable' : undefined
-                  }
-                  aria-describedby={startHint ? 'run-start-hint' : undefined}
-                >
-                  <button
-                    className={saved && !dirty ? styles.primary : undefined}
-                    type="button"
-                    onClick={() => start()}
-                    disabled={!!startHint}
-                    aria-describedby={startHint ? 'run-start-hint' : undefined}
-                  >
-                    <Play size={15} aria-hidden="true" />{' '}
-                    {starting
-                      ? 'Starting…'
-                      : saved
-                        ? 'Run saved version'
-                        : 'Run task · connecting'}
-                  </button>
-                  {startHint && (
-                    <span
-                      role="tooltip"
-                      id="run-start-hint"
-                      className={styles.startHint}
-                    >
-                      {startHint}
+                <div className={styles.recoveryNotice}>
+                  {dirty && restored && <span>이 탭의 편집 내용 복원됨</span>}
+                  {olderDraft &&
+                    olderDraft.id === saved?.id &&
+                    olderDraft.version < saved.version && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const url = URL.createObjectURL(
+                            new Blob(
+                              [JSON.stringify(olderDraft.draft, null, 2)],
+                              { type: 'application/json' },
+                            ),
+                          );
+                          const link = document.createElement('a');
+                          link.href = url;
+                          link.download =
+                            'workplot-v' + olderDraft.version + '-draft.json';
+                          link.click();
+                          setTimeout(() => URL.revokeObjectURL(url), 1000);
+                        }}
+                      >
+                        Download unsaved v{olderDraft.version} draft
+                      </button>
+                    )}
+                  {storageFailed && (
+                    <span role="alert">
+                      {' '}
+                      · 임시 보관 실패. 떠나기 전에 흐름을 저장하세요.
                     </span>
                   )}
-                </span>
+                </div>
+                <button
+                  aria-expanded={library}
+                  onClick={() => setLibrary(!library)}
+                >
+                  <ListTree size={16} aria-hidden="true" /> Workflow list
+                </button>{' '}
+                <div className={styles.buttons}>
+                  <div
+                    className={styles.runOptions}
+                    data-compact={narrowEditor}
+                  >
+                    <details open={!narrowEditor || undefined}>
+                      <summary>Run settings</summary>
+                      <div>
+                        {saved && (
+                          <button
+                            type="button"
+                            disabled={!!startDisabledReason(true)}
+                            title={startDisabledReason(true) || undefined}
+                            onClick={() => prepareGit(saved)}
+                          >
+                            Run development task
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFlowSettings(true);
+                            setProperties(true);
+                            setConnectingProject(true);
+                          }}
+                        >
+                          {draft.projectFolder
+                            ? draft.projectFolder.service +
+                              ' · ' +
+                              draft.projectFolder.folder +
+                              ' · ' +
+                              draft.projectFolder.branch
+                            : 'Connect project folder'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setProperties(true);
+                            setFlowSettings(true);
+                            requestAnimationFrame(() =>
+                              stepPanel.current
+                                ?.querySelector<HTMLSelectElement>(
+                                  'select[aria-label="모델"]',
+                                )
+                                ?.focus(),
+                            );
+                          }}
+                        >
+                          GPT settings
+                        </button>
+                        {saved && slotInfo}
+                      </div>
+                    </details>
+                  </div>
+                  {button('Undo', undo, busy || history.length === 0)}
+                  {button(
+                    'Discard changes',
+                    () => {
+                      change(baseline);
+                      select(
+                        baseline.steps.some((s) => s.id === selected)
+                          ? selected
+                          : (orderedSteps(baseline)[0]?.id ?? ''),
+                      );
+                      setSelectedWire('');
+                    },
+                    busy || !dirty,
+                  )}
+                  <span
+                    className={styles.startControl}
+                    tabIndex={startHint ? 0 : undefined}
+                    role={startHint ? 'group' : undefined}
+                    aria-label={
+                      startHint ? 'Why this run is unavailable' : undefined
+                    }
+                    aria-describedby={startHint ? 'run-start-hint' : undefined}
+                  >
+                    <button
+                      className={saved && !dirty ? styles.primary : undefined}
+                      type="button"
+                      onClick={() => start()}
+                      disabled={!!startHint}
+                      aria-describedby={
+                        startHint ? 'run-start-hint' : undefined
+                      }
+                    >
+                      <Play size={15} aria-hidden="true" />{' '}
+                      {starting
+                        ? 'Starting…'
+                        : saved
+                          ? 'Run saved version'
+                          : 'Run task · connecting'}
+                    </button>
+                    {startHint && (
+                      <span
+                        role="tooltip"
+                        id="run-start-hint"
+                        className={styles.startHint}
+                      >
+                        {startHint}
+                      </span>
+                    )}
+                  </span>
+                </div>
               </div>
             </>
           )}
@@ -3820,17 +3857,6 @@ export function WorkflowStudio({
                     )}
                   </fieldset>
                 </aside>
-              )}
-              {properties && (
-                <div className={`${styles.buttons} ${styles.saveBar}`}>
-                  {saveStatus}
-                  {saveButton}
-                  {saved && !dirty && !saving && (
-                    <a className={styles.viewRuns} href="#/runs">
-                      View Runs
-                    </a>
-                  )}
-                </div>
               )}
             </section>
           </>

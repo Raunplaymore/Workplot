@@ -48,3 +48,34 @@
 .content > * {
   min-width: 0;
 }
+
+@media (prefers-color-scheme: dark) {
+  .panel {
+    background: #2c3037;
+    border-color: #525965;
+  }
+  .panel[data-open='true'] {
+    border-color: #56696c;
+  }
+  .panel .heading button {
+    background: #292c32;
+    color: #d4d7dc;
+  }
+  .panel .heading button[aria-expanded='true'] {
+    background: #35444a;
+    color: #f3f6f6;
+    box-shadow: inset 3px 0 #8dc9cd;
+  }
+  .panel .content :is(input:not([type='checkbox']), select, textarea) {
+    background: #191d23;
+    color: #f3f5f7;
+    border-color: #697481;
+  }
+  .panel .content :is(input, textarea)::placeholder {
+    color: #adb6c1;
+    opacity: 1;
+  }
+  .panel .content :focus-visible {
+    outline-color: #8dc9cd;
+  }
+}
