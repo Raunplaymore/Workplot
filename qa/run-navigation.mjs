@@ -147,13 +147,16 @@ try {
     const runUrl = origin + '/#/runs/' + ids[0];
     await page.goto(runUrl);
     const entry = (title) =>
-      page.locator('details').filter({
-        has: page
-          .locator('summary strong')
-          .filter({ hasText: new RegExp('^' + title + '$') }),
-      });
+      page
+        .getByRole('complementary', { name: '실행 상세 패널' })
+        .locator('li')
+        .filter({
+          has: page
+            .locator('button strong')
+            .filter({ hasText: new RegExp('^' + title + '$') }),
+        });
     const edit = entry('edit');
-    const summary = edit.locator('summary');
+    const summary = edit.locator('button').first();
     await summary.getByText('Task · Completed', { exact: true }).waitFor();
     assert.equal(await summary.locator('strong').innerText(), 'edit');
     assert.ok(
@@ -170,14 +173,14 @@ try {
       }),
       '접힌 실행 단계에는 한 줄과 기본 순번 하나만 표시',
     );
-    await edit.locator('summary').click();
+    await edit.locator('button').first().click();
     await edit.getByText('최초 지침 edit', { exact: true }).waitFor();
     await edit.getByText('draft → edit → removed').waitFor();
     await page.screenshot({ path: join(dir, 'steps-' + width + '.png') });
     await edit
       .getByRole('button', { name: 'Edit step in latest version' })
       .click();
-    await page.waitForURL(origin + '/#/design/' + wf.id);
+    await page.waitForURL((u) => u.hash.split('?')[0] === '#/design/' + wf.id);
     assert.equal(await page.getByLabel('단계 제목').inputValue(), '새 단계명');
     assert.equal(await page.getByLabel('Prompt').inputValue(), '최신 지침');
     const resultButton = page
@@ -205,7 +208,7 @@ try {
     );
     assert.match(
       await selector.locator('option').nth(1).textContent(),
-      /이전 결과 · 3회차 · .*\d{2}:\d{2}/,
+      /Previous result · Session 3 · .*\d{2}:\d{2}/,
     );
     assert.equal(await selector.locator('option').count(), 2);
     await dialog
@@ -264,7 +267,7 @@ try {
       path: join(dir, 'design-document-' + width + '.png'),
     });
     if (width === 390) {
-      await page.getByRole('button', { name: 'Save', exact: true }).click();
+      await dialog.getByRole('button', { name: 'Save', exact: true }).click();
       await page
         .getByRole('article')
         .getByText('결과 문서를 참고해 수정한 지침', { exact: true })
@@ -330,13 +333,16 @@ try {
     }
     await page.goto(runUrl);
     const removed = entry('removed');
-    await removed.locator('summary').click();
-    await removed
-      .getByRole('button', { name: 'Edit step in latest version' })
-      .click();
-    await page
-      .getByText('선택한 단계는 최신 저장 워크플로에서 삭제되었습니다.')
-      .waitFor();
+    await removed.locator('button').first().click();
+    const deletedStep = removed.getByRole('dialog');
+    await deletedStep.getByText(/이 단계는 저장 v.+에 없습니다/).waitFor();
+    assert.equal(
+      await deletedStep
+        .getByRole('button', { name: 'Edit step in latest version' })
+        .count(),
+      0,
+    );
+    await deletedStep.getByRole('button', { name: 'Close' }).click();
     assert.equal(page.url(), runUrl);
     for (const id of ids) {
       await page.goto(origin + '/#/runs/' + id + '/compare');
@@ -371,24 +377,36 @@ try {
     const address = origin + '/#/design/' + linked.id;
     await page.waitForURL(address);
     await page.reload();
-    await page.getByRole('heading', { level: 1, name: '화면 개선' }).waitFor();
-    await page.getByLabel('Prompt', { exact: true }).fill('주소별 미저장 지침');
+    await page
+      .getByRole('heading', { level: 1, name: '화면 개선', hidden: true })
+      .waitFor({ state: 'attached' });
+    await page
+      .getByRole('button', { name: 'Step properties', exact: true })
+      .click();
+    await page.getByLabel('Prompt').fill('주소별 미저장 지침');
     await page.reload();
     assert.equal(
-      await page.getByLabel('Prompt', { exact: true }).inputValue(),
+      await page.getByLabel('Prompt').inputValue(),
       '주소별 미저장 지침',
     );
     await page.goto(origin + '/#/design/' + wf.id);
-    await page.getByRole('heading', { level: 1, name: '이동 검증' }).waitFor();
+    await page
+      .getByRole('heading', { level: 1, name: '이동 검증', hidden: true })
+      .waitFor({ state: 'attached' });
+    await page
+      .getByRole('button', { name: 'Step properties', exact: true })
+      .click();
     assert.notEqual(
-      await page.getByLabel('Prompt', { exact: true }).inputValue(),
+      await page.getByLabel('Prompt').inputValue(),
       '주소별 미저장 지침',
     );
     await page.goBack();
     await page.waitForURL(address);
-    await page.getByRole('heading', { level: 1, name: '화면 개선' }).waitFor();
+    await page
+      .getByRole('heading', { level: 1, name: '화면 개선', hidden: true })
+      .waitFor({ state: 'attached' });
     assert.equal(
-      await page.getByLabel('Prompt', { exact: true }).inputValue(),
+      await page.getByLabel('Prompt').inputValue(),
       '주소별 미저장 지침',
     );
     await page.goto(origin + '/#/design/' + randomUUID());
@@ -396,7 +414,7 @@ try {
       .getByRole('alert')
       .filter({ hasText: '찾을 수 없습니다' })
       .waitFor();
-    assert.equal(await page.getByLabel('Prompt', { exact: true }).count(), 0);
+    assert.equal(await page.getByLabel('Prompt').count(), 0);
     await ctx.close();
   }
   console.log('PASS', dir);

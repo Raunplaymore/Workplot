@@ -1,7 +1,9 @@
 import { StepProperties } from './StepProperties';
 import { ApprovalChanges } from './ApprovalChanges';
 import { ActiveSessionCard } from './ActiveSessionCard';
-import { projectFolder, GitRun, GitRunInfo } from './GitRun';
+import { RunDetailDialog } from './RunDetailDialog';
+import { WorkflowSettingsDialog } from './WorkflowSettingsDialog';
+import { projectFolder, GitRun } from './GitRun';
 import { NodeInstructions } from './NodeInstructions';
 import { LinkedInstructions } from './LinkedInstructions';
 import { documentSourceLabel, type DocumentSource } from './document-source';
@@ -4152,7 +4154,9 @@ export function WorkflowStudio({
                 <p>
                   실패 복구 · {run.recovery.state}{' '}
                   {run.recovery.repair === run.summary.id ? (
-                    <a href={'#/runs/' + run.recovery.source}>원본 실행</a>
+                    <a href={'#/runs/' + run.recovery.source}>
+                      Open original run
+                    </a>
                   ) : (
                     run.recovery.state !== '접수' && (
                       <a href={'#/runs/' + run.recovery.repair}>
@@ -4161,48 +4165,6 @@ export function WorkflowStudio({
                     )
                   )}
                 </p>
-              )}
-              {run && <GitRunInfo run={run} />}
-              {run?.summary.requestFiles && (
-                <details>
-                  <summary>Attachments and work folder</summary>
-                  {run.summary.requestFiles.references.map((path) => (
-                    <p key={path}>참고 · {path}</p>
-                  ))}
-                  {run.summary.requestFiles.workspace && (
-                    <p>수정할 폴더 · {run.summary.requestFiles.workspace}</p>
-                  )}
-                </details>
-              )}
-              {run && (
-                <details>
-                  <summary>AI settings and activity</summary>
-                  <p>
-                    요청 모델 {run.summary.modelSettings?.model ?? '자동'} ·
-                    추론 강도 {run.summary.modelSettings?.effort ?? '자동'}
-                  </p>
-                  {run.modelCalls?.length ? (
-                    <ul>
-                      {run.modelCalls.map((c, i) => (
-                        <li key={i}>
-                          {executionSteps.find((s) => s.id === c.step)?.title ??
-                            c.step}{' '}
-                          · {c.model} · {c.effort}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p>CLI에서 확인된 호출 기록이 없습니다.</p>
-                  )}
-                </details>
-              )}
-              {run?.summary.taskRequest && (
-                <details>
-                  <summary>Task request</summary>
-                  <p style={{ whiteSpace: 'pre-wrap' }}>
-                    {run.summary.taskRequest}
-                  </p>
-                </details>
               )}
               <p aria-live="polite">
                 {run
@@ -4216,7 +4178,7 @@ export function WorkflowStudio({
                     (executionSteps.find((s) => s.id === run.stepId)?.title ??
                       run.stepId)}
                 {run?.summary.status === 'failed' && run.stepId
-                  ? ` · ${run.quotaRetryAt ? '대기' : '실패'} 단계 ${run.stepId}`
+                  ? ` · ${run.quotaRetryAt ? '대기' : '실패'} 단계 ${executionSteps.find((s) => s.id === run.stepId)?.title ?? run.stepId}`
                   : ''}
                 {run?.quotaRetryAt && (
                   <span>
@@ -4227,6 +4189,14 @@ export function WorkflowStudio({
                   </span>
                 )}
                 {run?.note ? ` · ${run.note}` : ''}
+                {run?.summary.status === 'failed' &&
+                  !run.retention?.expired && (
+                    <>
+                      {' '}
+                      ·{' '}
+                      <a href={'#/runs/' + run.summary.id + '/log'}>View log</a>
+                    </>
+                  )}
               </p>
               {run?.workspaceBlocked && run.stepId && (
                 <div>
@@ -4247,7 +4217,7 @@ export function WorkflowStudio({
               )}
               {run && (run.timedOut || run.hasTimeoutHistory) && (
                 <TimeoutHistory
-                  key={run.summary.id}
+                  key={'timeout-' + run.summary.id}
                   id={run.summary.id}
                   status={run.summary.status}
                   steps={executionSteps}
@@ -4521,6 +4491,14 @@ export function WorkflowStudio({
                     </>
                   )}
                 </div>
+              )}
+              {run && (
+                <WorkflowSettingsDialog
+                  key={'settings-' + run.summary.id}
+                  run={run}
+                  record={record}
+                  steps={executionSteps}
+                />
               )}
               <RunHistory
                 onLastStep={setEndedStep}
@@ -4910,7 +4888,8 @@ function RunHistory({
   const [targetId, setTargetId] = useState('');
   const [instructions, setInstructions] = useState('');
   const [expanded, setExpanded] = useState(openLog);
-  const logHeading = useRef<HTMLElement>(null);
+  const [selectedStage, setSelectedStage] = useState<string>();
+  const logButton = useRef<HTMLButtonElement>(null);
   const [events, setEvents] = useState<
     ReturnType<typeof runEventsSchema.parse>
   >([]);
@@ -4941,12 +4920,6 @@ function RunHistory({
       disposed = true;
     };
   }, [id, expanded, status, step, onLastStep]);
-  useEffect(() => {
-    if (openLog && id) {
-      logHeading.current?.focus({ preventScroll: true });
-      logHeading.current?.scrollIntoView({ block: 'center' });
-    }
-  }, [openLog, id]);
   const { saved, refresh } = useSavedVersion(run?.summary.workflowId);
   if (!run) return null;
   const outdated =
@@ -5077,68 +5050,93 @@ function RunHistory({
                   : undefined
               }
             >
-              <details>
-                <summary>
-                  <span className={styles.stageLine}>
-                    <strong title={item.title || item.id}>
-                      {item.title || item.id}
-                    </strong>
-                    <small>
-                      {item.kind === 'review' ? 'Review' : 'Task'} ·{' '}
-                      {stageStatus(run, item, index, currentIndex)}
-                    </small>
-                  </span>
-                </summary>
-                <dl>
-                  <dt>실행 당시 지침</dt>
-                  <dd style={{ whiteSpace: 'pre-wrap' }}>
-                    {item.kind === 'task'
-                      ? item.instructions
-                      : '사용자가 문서를 검토하고 승인합니다.'}
-                  </dd>
-                  <dt>실행 순서 연결</dt>
-                  <dd>
-                    {previous?.title || previous?.id || '시작'} →{' '}
-                    {item.title || item.id} → {next?.title || next?.id || '끝'}
-                  </dd>
-                  <dt>예정된 입력 문서</dt>
-                  <dd>
-                    {planned?.inputs.map((id) => id + '.md').join(', ') ||
-                      '연결된 입력 문서 없음'}
-                  </dd>
-                  <dt>예정된 출력 문서</dt>
-                  <dd>{planned?.output ?? '없음'}</dd>
-                  <dt>출력을 전달받는 단계</dt>
-                  <dd>
-                    {consumers
-                      .map((stage) => stage.title || stage.id)
-                      .join(', ') || '없음'}
-                  </dd>
-                </dl>
-                {saved?.definition.steps.some(
-                  (stage) => stage.id === item.id,
-                ) ? (
-                  <button
-                    type="button"
-                    disabled={editDisabled}
-                    onClick={() => editStep(item.id)}
-                  >
-                    Edit step in latest version
-                  </button>
-                ) : (
-                  <p>
-                    {steps.some((stage) => stage.id === item.id)
-                      ? saved
-                        ? '실행 v' +
-                          run.summary.workflowVersion +
-                          '의 이 단계는 저장 v' +
-                          saved.version +
-                          '에 없습니다.'
-                        : '최신 버전을 확인하는 중입니다.'
-                      : '연결된 워크플로에 속한 단계입니다.'}
-                  </p>
-                )}
-              </details>
+              <button
+                type="button"
+                className={styles.stepTrigger}
+                aria-haspopup="dialog"
+                onClick={() => setSelectedStage(item.id)}
+              >
+                <span className={styles.stageLine}>
+                  <strong title={item.title || item.id}>
+                    {item.title || item.id}
+                  </strong>
+                  <small>
+                    {item.kind === 'review' ? 'Review' : 'Task'} ·{' '}
+                    {stageStatus(run, item, index, currentIndex)}
+                  </small>
+                </span>
+              </button>
+              {selectedStage === item.id && (
+                <RunDetailDialog
+                  title={item.title || item.id}
+                  close={() => setSelectedStage(undefined)}
+                >
+                  <dl>
+                    <dt>실행 당시 지침</dt>
+                    <dd style={{ whiteSpace: 'pre-wrap' }}>
+                      {item.kind === 'task'
+                        ? item.instructions
+                        : '사용자가 문서를 검토하고 승인합니다.'}
+                    </dd>
+                    <dt>실행 순서 연결</dt>
+                    <dd>
+                      {previous?.title || previous?.id || '시작'} →{' '}
+                      {item.title || item.id} →{' '}
+                      {next?.title || next?.id || '끝'}
+                    </dd>
+                    <dt>예정된 입력 문서</dt>
+                    <dd>
+                      {planned?.inputs.map((id) => id + '.md').join(', ') ||
+                        '연결된 입력 문서 없음'}
+                    </dd>
+                    <dt>예정된 출력 문서</dt>
+                    <dd>{planned?.output ?? '없음'}</dd>
+                    <dt>출력을 전달받는 단계</dt>
+                    <dd>
+                      {consumers
+                        .map((stage) => stage.title || stage.id)
+                        .join(', ') || '없음'}
+                    </dd>
+                  </dl>
+                  {saved?.definition.steps.some(
+                    (stage) => stage.id === item.id,
+                  ) ? (
+                    <button
+                      type="button"
+                      disabled={editDisabled}
+                      onClick={() => editStep(item.id)}
+                    >
+                      Edit step in latest version
+                    </button>
+                  ) : (
+                    <p>
+                      {steps.some((stage) => stage.id === item.id)
+                        ? saved
+                          ? '실행 v' +
+                            run.summary.workflowVersion +
+                            '의 이 단계는 저장 v' +
+                            saved.version +
+                            '에 없습니다.'
+                          : '최신 버전을 확인하는 중입니다.'
+                        : '연결된 워크플로에 속한 단계입니다.'}
+                    </p>
+                  )}
+                  <div className={styles.stepNavigation}>
+                    <button
+                      disabled={!previous}
+                      onClick={() => setSelectedStage(previous?.id)}
+                    >
+                      Previous step
+                    </button>
+                    <button
+                      disabled={!next}
+                      onClick={() => setSelectedStage(next?.id)}
+                    >
+                      Next step
+                    </button>
+                  </div>
+                </RunDetailDialog>
+              )}
             </li>
           );
         })}
@@ -5279,73 +5277,93 @@ function RunHistory({
         </details>
       )}
       {!run.retention?.expired && (
-        <details
-          open={expanded}
-          onToggle={(e) => setExpanded(e.currentTarget.open)}
-        >
-          <summary ref={logHeading}>Run log</summary>
-          {logError ? (
-            <p>{logError}</p>
-          ) : (
-            <ol
-              className={styles.log}
-              role="list"
-              aria-label="최근 실행 이벤트"
-            >
-              {events.map((event, i) => {
-                const next = events[i + 1];
-                const eventStep = executionSteps.find(
-                  (s) => s.id === event.stepId,
-                );
-                const missingApproval =
-                  event.status === 'waiting' &&
-                  event.gate === 'review' &&
-                  eventStep?.kind === 'review' &&
-                  !eventStep.startNextSession &&
-                  next &&
-                  (next.stepId !== event.stepId ||
-                    next.status === 'completed') &&
-                  !events.some(
-                    (e) => e.stepId === event.stepId && e.reviewCompleted,
+        <>
+          <button
+            ref={logButton}
+            aria-haspopup="dialog"
+            onClick={() => setExpanded(true)}
+          >
+            Run log
+          </button>
+          {expanded && (
+            <RunDetailDialog
+              title="Run log"
+              close={() => {
+                setExpanded(false);
+                if (openLog)
+                  history.replaceState(
+                    history.state,
+                    '',
+                    '#/runs/' + run.summary.id,
                   );
-                return (
-                  <li key={i}>
-                    <span className={styles.logNumber} aria-hidden="true">
-                      {i + 1}
-                    </span>
-                    <time dateTime={event.at}>
-                      {new Date(event.at).toLocaleTimeString('ko-KR')}
-                    </time>
-                    <div className={styles.logEntry}>
-                      <div>
-                        <strong>{eventStep?.title ?? event.stepId}</strong> ·{' '}
-                        <span className={styles.logStatus}>
-                          {event.reviewCompleted
-                            ? '승인 완료'
-                            : event.reviewDeclined
-                              ? '거절됨'
-                              : runLabels[event.status]}
+                logButton.current?.focus();
+              }}
+            >
+              {logError ? (
+                <p>{logError}</p>
+              ) : (
+                <ol
+                  className={styles.log}
+                  role="list"
+                  aria-label="최근 실행 이벤트"
+                >
+                  {events.map((event, i) => {
+                    const next = events[i + 1];
+                    const eventStep = executionSteps.find(
+                      (s) => s.id === event.stepId,
+                    );
+                    const missingApproval =
+                      event.status === 'waiting' &&
+                      event.gate === 'review' &&
+                      eventStep?.kind === 'review' &&
+                      !eventStep.startNextSession &&
+                      next &&
+                      (next.stepId !== event.stepId ||
+                        next.status === 'completed') &&
+                      !events.some(
+                        (e) => e.stepId === event.stepId && e.reviewCompleted,
+                      );
+                    return (
+                      <li key={i}>
+                        <span className={styles.logNumber} aria-hidden="true">
+                          {i + 1}
                         </span>
-                      </div>
-                      {missingApproval && (
-                        <p className={styles.logNote}>
-                          승인 완료 여부를 확인할 수 없음
-                        </p>
-                      )}
-                      {event.status === 'failed' && (
-                        <p className={styles.failureReason}>
-                          <strong>실패 사유</strong>{' '}
-                          {event.failureReason ??
-                            '저장된 실패 사유가 없습니다.'}
-                        </p>
-                      )}
-                    </div>
-                  </li>
-                );
-              })}
-            </ol>
+                        <time dateTime={event.at}>
+                          {new Date(event.at).toLocaleTimeString('ko-KR')}
+                        </time>
+                        <div className={styles.logEntry}>
+                          <div>
+                            <strong>{eventStep?.title ?? event.stepId}</strong>{' '}
+                            ·{' '}
+                            <span className={styles.logStatus}>
+                              {event.reviewCompleted
+                                ? '승인 완료'
+                                : event.reviewDeclined
+                                  ? '거절됨'
+                                  : runLabels[event.status]}
+                            </span>
+                          </div>
+                          {missingApproval && (
+                            <p className={styles.logNote}>
+                              승인 완료 여부를 확인할 수 없음
+                            </p>
+                          )}
+                          {event.status === 'failed' && (
+                            <p className={styles.failureReason}>
+                              <strong>실패 사유</strong>{' '}
+                              {event.failureReason ??
+                                '저장된 실패 사유가 없습니다.'}
+                            </p>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ol>
+              )}
+            </RunDetailDialog>
           )}
-        </details>
+        </>
       )}
     </>
   );

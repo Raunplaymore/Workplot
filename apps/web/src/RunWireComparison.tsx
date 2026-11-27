@@ -4,6 +4,7 @@ import {
   workflowVersionSchema,
   type WorkflowVersion,
 } from '@studio/contracts';
+import { RunDetailDialog } from './RunDetailDialog';
 import { localRequest } from './local-request';
 import styles from './WorkflowStudio.module.css';
 
@@ -73,27 +74,37 @@ export function RunWireComparison({
   refresh: () => void;
 }) {
   const changed = saved && saved.version !== record.version;
+  const [open, setOpen] = useState(false);
+  const title =
+    'Compare wire · Run v' +
+    record.version +
+    (saved ? ' / Saved v' + saved.version : '');
   return (
-    <details
-      onToggle={(e) => {
-        if (e.currentTarget.open) refresh();
-      }}
-    >
-      <summary>
-        Compare wire · Run v{record.version}
-        {saved ? ' / Saved v' + saved.version : ''}
-      </summary>
-      <p>
-        {saved
-          ? changed
-            ? '이 실행은 시작 당시의 와이어와 입력을 유지합니다. 저장본 변경은 새 실행부터 적용됩니다.'
-            : '실행본과 최신 저장본의 버전이 같습니다.'
-          : '최신 저장본을 확인할 수 없습니다.'}
-      </p>
-      <div className={styles.wireComparison}>
-        <Wire version={record} label="실행 당시" />
-        {changed && <Wire version={saved} label="최신 저장본" />}
-      </div>
-    </details>
+    <>
+      <button
+        aria-haspopup="dialog"
+        onClick={() => {
+          refresh();
+          setOpen(true);
+        }}
+      >
+        {title}
+      </button>
+      {open && (
+        <RunDetailDialog title={title} close={() => setOpen(false)}>
+          <p>
+            {saved
+              ? changed
+                ? '이 실행은 시작 당시의 와이어와 입력을 유지합니다. 저장본 변경은 새 실행부터 적용됩니다.'
+                : '실행본과 최신 저장본의 버전이 같습니다.'
+              : '최신 저장본을 확인할 수 없습니다.'}
+          </p>
+          <div className={styles.wireComparison}>
+            <Wire version={record} label="실행 당시" />
+            {changed && <Wire version={saved} label="최신 저장본" />}
+          </div>
+        </RunDetailDialog>
+      )}
+    </>
   );
 }

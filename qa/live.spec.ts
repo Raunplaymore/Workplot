@@ -359,7 +359,9 @@ for (const scenario of scenarios) {
         }
       }
       if (scenario.reopen) {
-        await page.locator('summary').filter({ hasText: 'Run log' }).click();
+        await page
+          .getByRole('button', { name: 'Run log', exact: true })
+          .click();
         const logList = page.getByRole('list', { name: '최근 실행 이벤트' });
         await expect(logList.getByText(/사용자 검토 · 승인 완료/)).toHaveCount(
           1,
@@ -2326,7 +2328,9 @@ test('보관함에서 마지막 완료 버전과 저장 자료를 구분해 실�
           .locator('..')
           .screenshot({ path: join(root, 'failure-reason.png') });
       await expect(
-        page.locator('summary').filter({ hasText: 'Run log' }),
+        page
+          .getByRole('dialog', { name: 'Run log' })
+          .getByRole('button', { name: 'Close' }),
       ).toBeFocused();
       await page.goBack();
       await page.getByRole('searchbox').fill(flow.name);

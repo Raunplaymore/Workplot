@@ -309,6 +309,10 @@ test('edits a saved flow by keyboard and passes that version through review to t
     await expect(
       page.getByRole('list', { name: '최근 실행 이벤트' }),
     ).toContainText('완료');
+    await page
+      .getByRole('dialog', { name: 'Run log' })
+      .getByRole('button', { name: 'Close' })
+      .click();
     await page.setViewportSize({ width: 1440, height: 960 });
     await page.getByRole('button', { name: 'Edit saved workflow' }).click();
     await expect(
@@ -369,10 +373,22 @@ test('edits a saved flow by keyboard and passes that version through review to t
     await expect(page.getByLabel('모델 ID', { exact: true })).toHaveCount(0);
     await page.getByLabel('추론 강도').selectOption('medium');
     await page.getByRole('button', { name: 'Run saved version' }).click();
-    await page.getByText('AI settings and activity', { exact: true }).click();
+    const settings = page
+      .getByRole('complementary', { name: '실행 상세 패널' })
+      .getByRole('button', {
+        name: 'Workflow settings',
+        exact: true,
+      });
+    await settings.click();
+    const info = page.getByRole('dialog', { name: 'Workflow settings' });
+    await expect(info.getByText('gpt-6.2-sol', { exact: true })).toBeVisible();
+    await expect(info.getByText('medium', { exact: true })).toBeVisible();
+    await info.getByRole('button', { name: 'Activity' }).click();
     await expect(
-      page.getByText('요청 모델 gpt-6.2-sol · 추론 강도 medium'),
+      info.getByRole('heading', { name: 'AI activity' }),
     ).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(settings).toBeFocused();
     await expect(page.getByText('검토 후 계속할까요?')).toBeVisible();
     expect(
       prompts.slice(3).map((prompt) => JSON.parse(prompt).currentStepId),

@@ -3,7 +3,6 @@ import {
   gitTargetSchema,
   type GitTarget,
   type WorkflowDefinition,
-  type RunView,
 } from '@studio/contracts';
 import { localRequest } from './local-request';
 import styles from './WorkflowLibrary.module.css';
@@ -294,73 +293,5 @@ export function GitRun({
         </footer>
       </form>
     </dialog>
-  );
-}
-export function GitRunInfo({ run }: { run: RunView }) {
-  const target = run.summary.requestFiles?.gitTarget;
-  if (!target) return null;
-  return (
-    <section>
-      <h3>개발 작업</h3>
-      <strong>{label(target)}</strong>
-      <p>
-        {target.branch} · {target.sha.slice(0, 12)}
-      </p>
-      {run.summary.sessionGit && (
-        <p>
-          <a href={'#/runs/' + run.summary.sessionGit.sourceRun}>
-            Previous session
-          </a>
-          에서 이어받은 커밋 ·{' '}
-          <code>{run.summary.sessionGit.head.slice(0, 12)}</code>
-        </p>
-      )}
-      {run.summary.requestFiles?.handoff && run.worktree && (
-        <p>
-          작업 브랜치 <code>{run.worktree.branch}</code> · 현재 HEAD{' '}
-          <code>{run.worktree.head}</code>
-          {run.summary.master ? (
-            <a href={'#/masters/' + run.summary.master.runId}>
-              통합 검증과 반영 결과
-            </a>
-          ) : (
-            ' · 통합 큐 등록 기록 없음'
-          )}
-        </p>
-      )}
-      <details>
-        <summary>Task and AI activity</summary>
-        <p>작업 {run.summary.developmentTaskId}</p>
-        <p>
-          흐름 v{run.summary.workflowVersion} · 실행 {run.summary.id}
-        </p>
-        <p>원본 폴더 {target.path}</p>
-        {run.worktree && (
-          <>
-            <p>독립 작업 폴더 {run.worktree.path}</p>
-            <p>
-              작업 브랜치 {run.worktree.branch} · 현재 커밋{' '}
-              <code>{run.worktree.head}</code>
-            </p>
-          </>
-        )}
-        <p>
-          원본 기준 커밋 <code>{target.sha}</code> ·{' '}
-          {target.dirty ? '시작 당시 미커밋 변경 있음' : '시작 당시 깨끗함'}
-        </p>
-        {run.aiCalls?.length ? (
-          <ol>
-            {run.aiCalls.map((call, i) => (
-              <li key={i}>
-                {call.step} · PID {call.pid} ·{' '}
-                {call.session ?? '세션 ID 미확인'}
-              </li>
-            ))}
-          </ol>
-        ) : (
-          <p>기록된 AI 호출이 없습니다.</p>
-        )}
-      </details>
-    </section>
   );
 }

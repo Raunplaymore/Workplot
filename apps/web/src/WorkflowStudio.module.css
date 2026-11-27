@@ -1670,3 +1670,21 @@
     vertical-align: 0.1em;
   }
 }
+.sequence .stepTrigger {
+  width: 100%;
+  background: transparent;
+  color: var(--text);
+  border: 0;
+  padding: 0;
+  text-align: start;
+  font: inherit;
+  cursor: pointer;
+}
+.sequence .stepTrigger:hover {
+  background: var(--wash);
+}
+.stepNavigation {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 16px;
+}
