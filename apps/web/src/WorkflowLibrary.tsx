@@ -270,7 +270,9 @@ export function WorkflowLibrary({
   );
   const visible = folderEntries
     .filter((e) =>
-      (e.name + ' ' + e.goal)
+      [e.name, e.goal, e.project, ...(e.tags ?? []).map((tag) => '#' + tag)]
+        .filter(Boolean)
+        .join(' ')
         .toLocaleLowerCase()
         .includes(query.trim().toLocaleLowerCase()),
     )
@@ -427,8 +429,8 @@ export function WorkflowLibrary({
           <Search size={17} aria-hidden="true" />
           <input
             type="search"
-            aria-label="이름 또는 목적으로 검색"
-            placeholder="이름 또는 목적으로 검색"
+            aria-label="Search by name, goal, project or tag"
+            placeholder="Name, goal, project or tag"
             value={query}
             onChange={(e) => {
               setFolder(currentFolder);
@@ -650,6 +652,19 @@ export function WorkflowLibrary({
               <header>
                 <div className={styles.summaryInfo}>
                   <h2>{version.definition.name}</h2>
+                  {version.definition.project ||
+                  version.definition.tags?.length ? (
+                    <small aria-label="Classification">
+                      {[
+                        version.definition.project,
+                        ...(version.definition.tags ?? []).map(
+                          (tag) => '#' + tag,
+                        ),
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </small>
+                  ) : null}
                   {version.definition.goal && <p>{version.definition.goal}</p>}
                   <button
                     onClick={() => edit(version.id)}

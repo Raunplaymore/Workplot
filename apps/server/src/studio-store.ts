@@ -87,6 +87,7 @@ export function openStudioStore(db: Database.Database) {
   }
   const library = db.prepare(`
     SELECT w.id, w.version, w.saved_at AS savedAt, json_extract(w.definition,'$.name') AS name,
+           json_extract(w.definition,'$.project') AS project, json_extract(w.definition,'$.tags') AS tags,
            coalesce(json_extract(w.definition,'$.goal'),'') AS goal, coalesce(l.location,'active') AS location, f.workflow_id IS NOT NULL AS favorite
     FROM workflow_versions w JOIN (SELECT id,max(version) AS version FROM workflow_versions GROUP BY id) latest USING (id,version)
     LEFT JOIN workflow_locations l ON l.id=w.id LEFT JOIN workflow_favorites f ON f.workflow_id=w.id ORDER BY w.saved_at DESC
@@ -710,10 +711,18 @@ export function openStudioStore(db: Database.Database) {
       },
     ).immediate,
     listLibrary: () =>
-      library.all().map((row) => ({
-        ...(row as Record<string, unknown>),
-        favorite: Boolean((row as { favorite: number }).favorite),
-      })),
+      library.all().map((row) => {
+        const { project, tags, favorite, ...entry } = row as Record<
+          string,
+          unknown
+        >;
+        return {
+          ...entry,
+          ...(typeof project === 'string' && { project }),
+          ...(typeof tags === 'string' && { tags: JSON.parse(tags) }),
+          favorite: Boolean(favorite),
+        };
+      }),
     favorite(id: string, on: boolean) {
       workflow(id);
       db.prepare(

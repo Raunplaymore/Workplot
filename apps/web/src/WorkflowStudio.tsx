@@ -1,4 +1,5 @@
 import { EditorChat, type ChatTarget } from './EditorChat';
+import { WorkflowClassification } from './WorkflowClassification';
 import { StepProperties } from './StepProperties';
 import { ApprovalChanges } from './ApprovalChanges';
 import { ActiveSessionCard } from './ActiveSessionCard';
@@ -3293,6 +3294,12 @@ export function WorkflowStudio({
                             }
                           />
                         </label>
+                        <WorkflowClassification
+                          key={saved?.id ?? canvasSession}
+                          project={draft.project}
+                          tags={draft.tags}
+                          update={(fields) => change({ ...draft, ...fields })}
+                        />
                         <label>
                           새 실행 필수 항목 (쉼표로 구분)
                           <input

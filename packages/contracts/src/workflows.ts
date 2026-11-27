@@ -29,10 +29,16 @@ const stepFields = {
   position: z.strictObject({ x: z.number(), y: z.number() }),
 };
 
+const classificationFields = {
+  project: z.string().trim().min(1).max(100).optional(),
+  tags: z.array(z.string().trim().min(1).max(40)).max(12).optional(),
+};
+
 export const workflowDefinitionSchema = z
   .strictObject({
     name: z.string().trim().min(1).max(100),
     input: z.string().max(8_000).optional(),
+    ...classificationFields,
     projectFolder: z
       .strictObject({
         serviceId: z.uuid(),
@@ -230,6 +236,7 @@ export const librarySchema = z.array(
     version: versionSchema,
     name: z.string(),
     goal: z.string(),
+    ...classificationFields,
     savedAt: z.iso.datetime(),
     favorite: z.boolean(),
     location: libraryLocationSchema.default('active'),
