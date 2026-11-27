@@ -1,3 +1,4 @@
+import { EditorChat, type ChatTarget } from './EditorChat';
 import { StepProperties } from './StepProperties';
 import { ApprovalChanges } from './ApprovalChanges';
 import { ActiveSessionCard } from './ActiveSessionCard';
@@ -663,6 +664,49 @@ export function WorkflowStudio({
   const step = steps.find((item) => item.id === selected) ?? steps[0];
   const link = step?.kind === 'task' ? step.workflowRef : undefined;
   const [documentRequest, setDocumentRequest] = useState(readDocumentRoute);
+  const [chatTargets, setChatTargets] = useState<ChatTarget[]>([]);
+  const [openChat, setOpenChat] = useState('');
+  function askEditor(
+    targetStep: Step | undefined,
+    file?: string,
+    sessions?: ChatTarget['sessions'],
+  ) {
+    const key = JSON.stringify([
+      saved?.id,
+      targetStep?.id,
+      file,
+      sessions?.map((r) => r.id),
+    ]);
+    const editable = targetStep?.kind === 'task' && !targetStep.workflowRef;
+    const target: ChatTarget = {
+      key,
+      label: [
+        draft.name,
+        targetStep?.title ?? (file ? undefined : 'Wire'),
+        file,
+        sessions?.map((r) => 'Session ' + r.runNumber).join(' / '),
+      ]
+        .filter(Boolean)
+        .join(' › '),
+      context: JSON.stringify({
+        goal: draft.goal,
+        doneWhen: draft.doneWhen,
+        steps: steps.map((s) => ({
+          id: s.id,
+          title: s.title,
+          kind: s.kind,
+          inputs: s.kind === 'task' ? s.inputFrom : undefined,
+        })),
+        links: draft.links,
+      }).slice(0, 8000),
+      prompt: editable ? targetStep.instructions : null,
+      stepId: targetStep?.id,
+      file,
+      sessions,
+    };
+    setChatTargets((items) => [...items.filter((i) => i.key !== key), target]);
+    setOpenChat(key);
+  }
   const documentTrigger = useRef<HTMLElement | null>(null);
   function openDocument(route: DocumentRoute) {
     documentTrigger.current =
@@ -912,6 +956,8 @@ export function WorkflowStudio({
     record: WorkflowVersion | null,
     keepView = false,
   ) {
+    setChatTargets([]);
+    setOpenChat('');
     setSelectedWire('');
     setEditSession((n) => n + 1);
     setDraft(definition);
@@ -1806,12 +1852,37 @@ export function WorkflowStudio({
   return (
     <>
       {surface === 'design' &&
+        chatTargets.map((target) => {
+          const item = draft.steps.find((s) => s.id === target.stepId);
+          const editable =
+            item?.kind === 'task' && !item.workflowRef ? item : null;
+          return (
+            <EditorChat
+              key={target.key}
+              target={target}
+              open={openChat === target.key}
+              close={() => setOpenChat('')}
+              currentPrompt={editable?.instructions ?? null}
+              apply={(instructions) => {
+                if (editable) replaceStep({ ...editable, instructions });
+              }}
+            />
+          );
+        })}
+      {surface === 'design' &&
         saved &&
         documentRequest?.workflow === saved.id && (
           <DesignDocument
             key={[saved.id, documentRequest.version, documentRequest.step].join(
               '/',
             )}
+            ask={(sessions) =>
+              askEditor(
+                draft.steps.find((s) => s.id === documentRequest.step),
+                documentRequest.step + '.md',
+                sessions,
+              )
+            }
             workflowId={saved.id}
             version={documentRequest.version}
             file={documentRequest.step + '.md'}
@@ -2776,6 +2847,19 @@ export function WorkflowStudio({
                     <small>흐름 설계</small>
                     <h2>와이어 편집기</h2>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      askEditor(
+                        flowSettings || chosenWire || !properties
+                          ? undefined
+                          : step,
+                      )
+                    }
+                    disabled={!connected || !codexAvailable}
+                  >
+                    Ask AI
+                  </button>
                   {chosenWire && (
                     <button
                       aria-label="Wire menu"

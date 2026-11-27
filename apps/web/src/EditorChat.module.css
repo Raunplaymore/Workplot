@@ -1,0 +1,104 @@
+.panel {
+  box-sizing: border-box;
+  position: fixed;
+  inset: 0 0 0 auto;
+  margin: auto 0;
+  width: min(28rem, 100%);
+  height: 100dvh;
+  max-height: 100dvh;
+  max-width: 100%;
+  padding: 1rem;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border, GrayText);
+}
+.panel[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.panel::backdrop {
+  background: rgb(0 0 0 / 18%);
+}
+.panel header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.panel h2,
+.thread p {
+  margin: 0.25rem 0;
+}
+.thread {
+  flex: 1;
+  overflow: auto;
+}
+.thread section {
+  padding: 0.8rem 0;
+  border-bottom: 1px solid var(--border, GrayText);
+}
+.thread p,
+.thread pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.panel textarea {
+  box-sizing: border-box;
+  width: 100%;
+}
+.panel form button {
+  float: right;
+}
+.panel {
+  box-shadow: -6px 0 24px rgb(0 0 0 / 14%);
+  padding: clamp(14px, 2vw, 24px);
+  font: var(--type-reading)/var(--leading-reading) var(--font-ui);
+}
+.panel h2 {
+  font-size: var(--type-title);
+}
+.panel > small {
+  font-size: var(--type-caption);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.panel button,
+.panel textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.45rem 0.75rem;
+}
+.panel button {
+  cursor: pointer;
+  font-size: var(--type-ui);
+  min-height: 40px;
+}
+.panel button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.panel form {
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+}
+.panel textarea {
+  resize: vertical;
+  max-height: 25dvh;
+}
+.panel form button {
+  background: var(--text);
+  color: var(--surface);
+}
+.thread section strong {
+  font-size: var(--type-ui);
+}
+.thread section {
+  padding: 12px;
+}
+.thread section:nth-child(odd) {
+  background: var(--wash);
+  border-radius: 8px;
+}

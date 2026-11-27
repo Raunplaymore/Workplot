@@ -153,6 +153,32 @@ test('edits a saved flow by keyboard and passes that version through review to t
       3,
     );
     await page.getByLabel('편집할 단계').selectOption('draft');
+    await page.route('**/api/editor-chat', async (route) => {
+      const body = route.request().postDataJSON();
+      expect(body.target).toContain('초안 작성');
+      const revise = body.messages.length > 1;
+      if (revise) expect(body.messages[1].text).toBe('완료 기준을 보완하세요.');
+      await route.fulfill({
+        json: {
+          answer: revise ? '수정안을 준비했습니다.' : '완료 기준을 보완하세요.',
+          replacement: revise ? '검증된 지침' : '',
+        },
+      });
+    });
+    const ask = page.getByRole('button', { name: 'Ask AI', exact: true });
+    await ask.click();
+    const chat = page.getByRole('dialog', { name: 'Ask AI' });
+    await chat.getByLabel('Message').fill('지침 평가');
+    await chat.getByRole('button', { name: 'Send' }).click();
+    await expect(chat.getByText('완료 기준을 보완하세요.')).toBeVisible();
+    await expect(
+      chat.getByRole('button', { name: 'Apply to draft' }),
+    ).toHaveCount(0);
+    await chat.getByLabel('Message').fill('반영할 지침 제안');
+    await chat.getByRole('button', { name: 'Send' }).click();
+    await chat.getByRole('button', { name: 'Apply to draft' }).click();
+    await page.keyboard.press('Escape');
+    await expect(page.getByLabel('Prompt')).toHaveValue('검증된 지침');
     await page.getByLabel('Prompt').fill('브라우저에서 편집한 지침');
     await page
       .getByRole('button', { name: 'Tools and permissions', exact: true })

@@ -9,6 +9,7 @@ import { MarkdownDocument } from './MarkdownDocument';
 import { documentSourceLabel, type DocumentSource } from './document-source';
 export function DesignDocument({
   close,
+  ask,
   children,
   busy,
   run,
@@ -19,6 +20,7 @@ export function DesignDocument({
   file,
 }: {
   close: () => void;
+  ask: (sessions: DocumentSource[]) => void;
   children?: ReactNode;
   busy: boolean;
   run?: string;
@@ -81,6 +83,16 @@ export function DesignDocument({
     >
       <header>
         <h2>{file}</h2>
+        <button
+          type="button"
+          disabled={!current}
+          onClick={() =>
+            current &&
+            ask(compare && previous ? [current, previous] : [current])
+          }
+        >
+          Ask AI
+        </button>
         <button type="button" disabled={busy} onClick={close}>
           Close
         </button>
