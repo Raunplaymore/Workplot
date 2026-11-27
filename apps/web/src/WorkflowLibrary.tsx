@@ -1,5 +1,10 @@
 import { WorkflowUsage } from './WorkflowLinks';
 import {
+  downloadWorkflow,
+  WorkflowImport,
+  WorkflowOrigin,
+} from './WorkflowPackage';
+import {
   readMaterialDraft,
   storeMaterialDraft,
   emptyMaterialDraft,
@@ -410,6 +415,15 @@ export function WorkflowLibrary({
       aria-label="워크플로 보관함"
     >
       <div className={styles.list}>
+        <WorkflowImport
+          imported={async (flow) => {
+            await refresh();
+            setRecord(flow);
+            setQuery('');
+            setFolder('active');
+            setChoice(flow.id, true, '', 'active');
+          }}
+        />
         <label>
           목록{' '}
           <select
@@ -591,6 +605,10 @@ export function WorkflowLibrary({
                     action: () => edit(menu.item.id),
                   },
                   {
+                    label: 'Export workflow',
+                    action: () => void act(() => downloadWorkflow(menu.item)),
+                  },
+                  {
                     label: 'Duplicate',
                     action: () =>
                       void act(() =>
@@ -653,6 +671,10 @@ export function WorkflowLibrary({
               <header>
                 <div className={styles.summaryInfo}>
                   <h2>{version.definition.name}</h2>
+                  <WorkflowOrigin
+                    key={version.id + '/' + version.version}
+                    flow={version}
+                  />
                   {version.definition.project ||
                   version.definition.tags?.length ? (
                     <small aria-label="Classification">

@@ -1,3 +1,4 @@
+import { registerWorkflowPackages } from './workflow-packages.js';
 import type { createGitPromotions } from './git-promotion.js';
 import { git } from './git-worktree.js';
 import { inspectGit } from './git-target.js';
@@ -363,6 +364,7 @@ export function registerStudioRoutes(
           .send(await runs.verifiedCapture(req.params.id, req.params.name)),
     );
     registerWorkflowLinks(protectedRoutes, store, db);
+    registerWorkflowPackages(protectedRoutes, db, store);
     registerNodeShelf(protectedRoutes, db, generateProposal);
     protectedRoutes.register(async (routes) => {
       routes.setErrorHandler((error, _request, reply) => {

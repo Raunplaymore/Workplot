@@ -33,3 +33,4 @@ export * from './evidence-markdown.js';
 export * from './master-plan.js';
 
 export * from './workflow-link.js';
+export * from './workflow-package.js';
