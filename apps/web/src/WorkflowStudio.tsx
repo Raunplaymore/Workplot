@@ -1,3 +1,4 @@
+import { WorkflowLinkPicker } from './WorkflowLinks';
 import { EditorChat, type ChatTarget } from './EditorChat';
 import { WorkflowClassification } from './WorkflowClassification';
 import { StepProperties } from './StepProperties';
@@ -3560,69 +3561,17 @@ export function WorkflowStudio({
                                     있습니다.
                                   </p>
                                 )}
-                                <label>
-                                  연결할 워크플롯
-                                  <select
-                                    value={
-                                      link ? link.id + '/' + link.version : ''
-                                    }
-                                    onChange={(e) => {
-                                      const [id, version] =
-                                        e.target.value.split('/');
-                                      const picked = list.find(
-                                        (row) => row.id === id,
-                                      );
-                                      if (!picked) {
-                                        replaceStep({
-                                          ...step,
-                                          workflowRef: undefined,
-                                        });
-                                        return;
-                                      }
-                                      replaceStep({
-                                        ...step,
-                                        workflowRef: {
-                                          id: picked.id,
-                                          version: Number(version),
-                                        },
-                                        improvementRoutes: undefined,
-                                        title: picked.name,
-                                        instructions:
-                                          '연결한 워크플롯의 마지막 작업 문서를 반환합니다.',
-                                        agent: 'codex',
-                                        codexSkill: undefined,
-                                        tool: undefined,
-                                        skill: undefined,
-                                      });
-                                    }}
-                                  >
-                                    <option value="">연결 없음</option>
-                                    {link &&
-                                      !list.some(
-                                        (row) =>
-                                          row.id === link.id &&
-                                          row.version === link.version,
-                                      ) && (
-                                        <option
-                                          value={link.id + '/' + link.version}
-                                        >
-                                          {linkedRecord?.definition.name ??
-                                            '연결된 흐름'}{' '}
-                                          · v{link.version}
-                                        </option>
-                                      )}
-                                    {list
-                                      .filter((row) => row.id !== saved?.id)
-                                      .map((row) => (
-                                        <option
-                                          key={row.id}
-                                          value={row.id + '/' + row.version}
-                                        >
-                                          {row.name} · v{row.version}
-                                        </option>
-                                      ))}
-                                  </select>
-                                </label>
+                                <WorkflowLinkPicker
+                                  parent={saved?.id ?? null}
+                                  draft={draft}
+                                  step={step}
+                                  pinnedName={
+                                    linkedRecord?.id === link?.id
+                                      ? linkedRecord?.definition.name
+                                      : undefined
+                                  }
+                                  change={replaceStep}
+                                />
                                 {link &&
                                   linkedRecord?.id === link.id &&
                                   linkedRecord.version === link.version && (

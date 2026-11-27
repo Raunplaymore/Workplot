@@ -31,3 +31,5 @@ export * from './node-shelf.js';
 
 export * from './evidence-markdown.js';
 export * from './master-plan.js';
+
+export * from './workflow-link.js';

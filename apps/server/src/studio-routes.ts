@@ -12,6 +12,7 @@ import {
   SkillConflict,
 } from './workflow-skills.js';
 import type Database from 'better-sqlite3';
+import { registerWorkflowLinks } from './workflow-link-routes.js';
 import { registerNodeShelf } from './node-shelf.js';
 import { ScheduleMaterialError, type createScheduler } from './scheduler.js';
 import { readFile } from 'node:fs/promises';
@@ -361,6 +362,7 @@ export function registerStudioRoutes(
           .type('image/png')
           .send(await runs.verifiedCapture(req.params.id, req.params.name)),
     );
+    registerWorkflowLinks(protectedRoutes, store, db);
     registerNodeShelf(protectedRoutes, db, generateProposal);
     protectedRoutes.register(async (routes) => {
       routes.setErrorHandler((error, _request, reply) => {

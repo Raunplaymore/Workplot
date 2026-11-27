@@ -34,18 +34,18 @@ export function expandWorkflow(
       call.codexSkill ||
       call.skill === 'source-check'
     )
-      throw new InvalidWorkflowLink();
+      throw new InvalidWorkflowLink('Incompatible calling step');
     const child = lookup(ref.id, ref.version).definition;
     const steps = orderedSteps(child);
     const last = steps.at(-1);
-    if (
-      steps[0]?.kind !== 'task' ||
-      last?.kind !== 'task' ||
-      steps.some((s) =>
-        s.kind === 'review' ? s.startNextSession : s.workflowRef,
-      )
-    )
-      throw new InvalidWorkflowLink();
+    if (steps.some((s) => s.kind === 'review' && s.startNextSession))
+      throw new InvalidWorkflowLink('Starts a next session');
+    if (steps.some((s) => s.kind === 'task' && s.workflowRef))
+      throw new InvalidWorkflowLink('Contains a linked workflow');
+    if (steps[0]?.kind !== 'task')
+      throw new InvalidWorkflowLink('Starts with approval');
+    if (last?.kind !== 'task')
+      throw new InvalidWorkflowLink('Ends with approval');
     const plan = workflowPlan(child);
     function mapped(id: string) {
       if (id === last?.id) return call.id;
@@ -81,6 +81,10 @@ export function expandWorkflow(
       .map((s, i) => ({ from: expanded[i]!.id, to: s.id })),
   };
   if (!workflowDefinitionSchema.safeParse(runtime).success)
-    throw new InvalidWorkflowLink();
+    throw new InvalidWorkflowLink(
+      expanded.length > 32
+        ? 'Combined workflow exceeds 32 steps'
+        : 'Conflicting step IDs or document connections',
+    );
   return runtime;
 }

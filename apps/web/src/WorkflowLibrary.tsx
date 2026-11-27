@@ -1,3 +1,4 @@
+import { WorkflowUsage } from './WorkflowLinks';
 import {
   readMaterialDraft,
   storeMaterialDraft,
@@ -775,6 +776,10 @@ export function WorkflowLibrary({
                 )}
               </header>
             </div>
+            <WorkflowUsage
+              key={version.id + '/' + version.version}
+              id={version.id}
+            />
             <h3>작업 순서</h3>
             <p>
               {orderedSteps(version.definition)

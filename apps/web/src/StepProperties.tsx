@@ -1,6 +1,8 @@
-import { useId, useState, type ReactNode } from 'react';
+import { createContext, useId, useState, type ReactNode } from 'react';
 import { ChevronDown, GitBranch, NotebookPen, ShieldCheck } from 'lucide-react';
 import styles from './StepProperties.module.css';
+
+export const ConnectionsOpen = createContext(false);
 
 export function StepProperties({
   roleContent,
@@ -67,7 +69,13 @@ export function StepProperties({
               </button>
             </h3>
             <div id={panelId} className={styles.content} hidden={!open}>
-              {content}
+              {id === 'connections' ? (
+                <ConnectionsOpen.Provider value={open}>
+                  {content}
+                </ConnectionsOpen.Provider>
+              ) : (
+                content
+              )}
             </div>
           </section>
         );
