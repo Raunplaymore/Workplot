@@ -336,6 +336,10 @@ export function WorkflowStudio({
     () => routeRun() ?? sessionStorage.getItem('studio-run'),
   );
   const [busy, setBusy] = useState(false);
+  const [lastSaved, setLastSaved] = useState<{
+    id: string;
+    version: number;
+  } | null>(null);
   const [saving, setSaving] = useState(false);
   const busyRef = useRef(false);
   const requestedStart = useRef<{ id: string; key: string } | null>(null);
@@ -1241,6 +1245,7 @@ export function WorkflowStudio({
         if (screen() === 'design' && designTarget() !== record.id)
           location.hash = designUrl(record.id);
         setSaved(record);
+        setLastSaved({ id: record.id, version: record.version });
         setDraft(record.definition);
         setBaseline(record.definition);
         setChoice(record.id);
@@ -2045,6 +2050,17 @@ export function WorkflowStudio({
                 {saveStatus}
                 {saveButton}
               </div>
+              {(dirty ||
+                (saved &&
+                  lastSaved?.id === saved.id &&
+                  lastSaved.version === saved.version)) && (
+                <small role="status" style={{ flexBasis: '100%' }}>
+                  {dirty ? '저장하면' : '저장 완료 ·'} 새로 시작하는 실행에 v
+                  {dirty ? (saved?.version ?? 0) + 1 : saved?.version}이
+                  적용됩니다. 진행 중인 실행과 그 루프의 다음 회차는 시작 버전을
+                  유지합니다.
+                </small>
+              )}
               <div className={styles.headerActions}>
                 {saved && !dirty && !saving && (
                   <a className={styles.viewRuns} href="#/runs">
