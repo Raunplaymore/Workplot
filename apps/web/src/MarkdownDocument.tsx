@@ -1,4 +1,6 @@
 import { formatUiEvidenceMarkdown } from '@studio/contracts';
+import { isValidElement, type ReactElement } from 'react';
+import { StateDiagram } from './StateDiagram';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import styles from './MarkdownDocument.module.css';
@@ -15,6 +17,22 @@ export function MarkdownDocument({ text }: { text: string }) {
           remarkPlugins={[remarkGfm]}
           skipHtml
           components={{
+            pre: ({ children }) => {
+              const code = children as ReactElement<{
+                className?: string;
+                children?: string;
+              }>;
+              return (
+                <>
+                  {isValidElement(code) &&
+                    code.props.className === 'language-mermaid' &&
+                    typeof code.props.children === 'string' && (
+                      <StateDiagram source={code.props.children} />
+                    )}
+                  <pre>{children}</pre>
+                </>
+              );
+            },
             table: ({ children }) => (
               <div
                 className={styles.tableScroll}

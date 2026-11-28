@@ -4151,16 +4151,14 @@ export function WorkflowStudio({
                       {preview.evidenceQuote}
                     </blockquote>
                   )}
-                  {run &&
-                    !run.retention?.expired &&
-                    /\.png\b/.test(preview.text) && (
-                      <EvidenceCaptures
-                        key={run.summary.id + preview.name}
-                        runId={run.summary.id}
-                        file={preview.name}
-                        text={preview.text}
-                      />
-                    )}
+                  {run && !run.retention?.expired && (
+                    <EvidenceCaptures
+                      key={run.summary.id + preview.name}
+                      runId={run.summary.id}
+                      file={preview.name}
+                      text={preview.text}
+                    />
+                  )}
                   {run?.editedFiles?.includes(preview.name) && (
                     <ApprovalChanges
                       key={run.summary.id + preview.name}

@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import styles from './DesignDocument.module.css';
 import { localRequest } from './local-request';
 import { DocumentChanges } from './DocumentChanges';
+import { EvidenceCaptures } from './EvidenceCaptures';
 import { MarkdownDocument } from './MarkdownDocument';
 
 import { documentSourceLabel, type DocumentSource } from './document-source';
@@ -207,6 +208,14 @@ function Body({
       current={current}
     />
   ) : (
-    <MarkdownDocument text={texts[0]!} />
+    <>
+      <EvidenceCaptures
+        key={id + file}
+        runId={id}
+        file={file}
+        text={texts[0]!}
+      />
+      <MarkdownDocument text={texts[0]!} />
+    </>
   );
 }

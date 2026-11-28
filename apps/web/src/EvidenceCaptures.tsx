@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { VisualDialog } from './VisualDialog';
 import { localRequest } from './local-request';
 
 type Capture = { image: string; phases: string[] };
@@ -47,56 +48,57 @@ export function EvidenceCaptures({
   if (!active) return null;
   return (
     <section aria-label="전후 캡처">
-      <h3>전후 캡처</h3>
-      <label>
-        비교 화면{' '}
-        <select value={active.image} onChange={(e) => select(e.target.value)}>
-          {captures.map((c) => (
-            <option key={c.image} value={c.image}>
-              {scene(c.image)}
-            </option>
-          ))}
-        </select>
-      </label>
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,220px),1fr))',
-          gap: '1rem',
-          marginBlock: '1rem',
-        }}
-      >
-        {['before', 'after'].map((phase) => {
-          const label = phase === 'before' ? '수정 전' : '수정 후';
-          const url = '/api' + path + '/' + phase + '/' + active.image;
-          return (
-            <figure key={phase} style={{ margin: 0 }}>
-              <figcaption>{label}</figcaption>
-              {active.phases.includes(phase) ? (
-                <a
-                  href={url}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-label={label + ' 원본 열기'}
-                >
-                  <img
-                    alt={label + ' ' + scene(active.image)}
-                    src={url}
-                    style={{
-                      width: '100%',
-                      height: 160,
-                      objectFit: 'contain',
-                      objectPosition: 'top left',
-                    }}
-                  />
-                </a>
-              ) : (
-                <span>저장된 캡처 없음</span>
-              )}
-            </figure>
-          );
-        })}
-      </div>
+      <VisualDialog label="Compare captures">
+        <label>
+          비교 화면{' '}
+          <select value={active.image} onChange={(e) => select(e.target.value)}>
+            {captures.map((c) => (
+              <option key={c.image} value={c.image}>
+                {scene(c.image)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,220px),1fr))',
+            gap: '1rem',
+            marginBlock: '1rem',
+          }}
+        >
+          {['before', 'after'].map((phase) => {
+            const label = phase === 'before' ? '수정 전' : '수정 후';
+            const url = '/api' + path + '/' + phase + '/' + active.image;
+            return (
+              <figure key={phase} style={{ margin: 0 }}>
+                <figcaption>{label}</figcaption>
+                {active.phases.includes(phase) ? (
+                  <a
+                    href={url}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label={label + ' 원본 열기'}
+                  >
+                    <img
+                      alt={label + ' ' + scene(active.image)}
+                      src={url}
+                      style={{
+                        width: '100%',
+                        height: 'auto',
+                        objectFit: 'contain',
+                        objectPosition: 'top left',
+                      }}
+                    />
+                  </a>
+                ) : (
+                  <span>저장된 캡처 없음</span>
+                )}
+              </figure>
+            );
+          })}
+        </div>
+      </VisualDialog>
     </section>
   );
 }

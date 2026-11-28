@@ -89,3 +89,38 @@
   width: fit-content;
   font-size: var(--type-caption);
 }
+
+.visualDialog {
+  box-sizing: border-box;
+  width: min(96vw, 88rem);
+  max-height: 91dvh;
+  overflow: auto;
+  padding: 1rem;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+}
+.visualDialog::backdrop {
+  background: #0009;
+}
+.visualDialog header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+.diagramScroll {
+  max-width: 100%;
+  overflow: auto;
+  padding-block: 0.5rem;
+}
+.diagramScroll text {
+  fill: currentColor;
+}
+
+.visualDialog:has(.diagramScroll) {
+  width: fit-content;
+  max-width: 96vw;
+}
